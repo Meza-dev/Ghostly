@@ -1,0 +1,8 @@
+{
+  "extends": "@ghosttester/tsconfig/base.json",
+  "include": ["src/**/*.ts", "tsup.config.ts"],
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "baseUrl": "https://example.com",
+  "headless": true,
+  "captureA11yAfterEachStep": false,
+  "steps": [
+    { "action": "goto", "url": "/" },
+    { "action": "waitForSelector", "selector": "h1" },
+    { "action": "snapshot" }
+  ]
+}

@@ -1,0 +1,39 @@
+@import "./styles/tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--leading-body);
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    margin: 0;
+    min-height: 100vh;
+  }
+}
+
+@layer utilities {
+  .font-title {
+    font-weight: var(--weight-title);
+  }
+  .font-nav-active {
+    font-weight: var(--weight-nav-active);
+  }
+  .font-nav {
+    font-weight: var(--weight-nav);
+  }
+  .font-overline {
+    font-weight: var(--weight-overline);
+  }
+  .font-badge {
+    font-weight: var(--weight-badge);
+  }
+  .font-button {
+    font-weight: var(--weight-button);
+  }
+}
