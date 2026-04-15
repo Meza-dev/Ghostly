@@ -11,6 +11,9 @@ const inputFields = {
     .describe("JSON array of steps with { action, ... }"),
   headless: z.boolean().optional(),
   captureA11yAfterEachStep: z.boolean().optional(),
+  captureScreenshotAfterEachStep: z.boolean().optional(),
+  recordVideoOnFailure: z.boolean().optional(),
+  artifactsDir: z.string().min(1).optional(),
   defaultTimeoutMs: z.number().int().positive().optional(),
 };
 
@@ -46,6 +49,9 @@ server.tool(
       steps,
       headless: args.headless,
       captureA11yAfterEachStep: args.captureA11yAfterEachStep,
+      captureScreenshotAfterEachStep: args.captureScreenshotAfterEachStep,
+      recordVideoOnFailure: args.recordVideoOnFailure,
+      artifactsDir: args.artifactsDir,
       defaultTimeoutMs: args.defaultTimeoutMs,
     });
 

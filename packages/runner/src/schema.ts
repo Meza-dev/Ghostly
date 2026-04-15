@@ -22,6 +22,9 @@ export const runInputSchema = z.object({
   steps: z.array(stepSchema).min(1),
   headless: z.boolean().optional().default(true),
   captureA11yAfterEachStep: z.boolean().optional().default(false),
+  captureScreenshotAfterEachStep: z.boolean().optional().default(false),
+  recordVideoOnFailure: z.boolean().optional().default(false),
+  artifactsDir: z.string().min(1).optional().default("artifacts"),
   defaultTimeoutMs: z.number().int().positive().optional().default(30_000),
 });
 

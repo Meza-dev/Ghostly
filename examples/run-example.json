@@ -2,6 +2,9 @@
   "baseUrl": "https://example.com",
   "headless": true,
   "captureA11yAfterEachStep": false,
+  "captureScreenshotAfterEachStep": true,
+  "recordVideoOnFailure": true,
+  "artifactsDir": "artifacts",
   "steps": [
     { "action": "goto", "url": "/" },
     { "action": "waitForSelector", "selector": "h1" },
