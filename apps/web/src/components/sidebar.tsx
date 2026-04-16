@@ -9,6 +9,14 @@ import {
 } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAppContext } from "../context/app-context";
+import { useAuth } from "../context/auth-context";
+
+function initialsFromEmail(email: string): string {
+  const local = email.split("@")[0] ?? "";
+  const parts = local.split(/[._-]/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
+  return (local.slice(0, 2) || "??").toUpperCase();
+}
 
 const navMain = [
   { label: "Overview", icon: LayoutDashboard, path: "/" },
@@ -22,8 +30,14 @@ const navSys = [
 
 export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useAppContext();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  function handleLogout() {
+    logout();
+    navigate("/login", { replace: true });
+  }
 
   const w = sidebarCollapsed ? "w-[64px]" : "w-[260px]";
 
@@ -105,22 +119,23 @@ export function Sidebar() {
       </nav>
 
       <div className={`mt-auto border-t border-border py-4 ${sidebarCollapsed ? "px-2" : "px-5"}`}>
-        {!sidebarCollapsed && (
-          <div className="flex items-center gap-3 mb-3">
+        {user && !sidebarCollapsed && (
+          <div className="mb-3 flex items-center gap-3">
             <div
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] border-2 border-primary bg-accent text-caption font-badge text-primary"
               aria-hidden
             >
-              JM
+              {initialsFromEmail(user.email)}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-small font-nav-active text-sidebar-emphasis">Jonas Meza</p>
-              <p className="truncate text-caption text-sidebar-fg">jonas@ghosttester.local</p>
+              <p className="truncate text-small font-nav-active text-sidebar-emphasis">{user.email}</p>
+              <p className="truncate text-caption capitalize text-sidebar-fg">{user.role}</p>
             </div>
           </div>
         )}
         <button
           type="button"
+          onClick={handleLogout}
           title={sidebarCollapsed ? "Cerrar sesión" : undefined}
           className={`flex w-full items-center justify-center gap-2 rounded-pill border border-border bg-transparent py-2 text-small font-button text-foreground hover:bg-muted ${sidebarCollapsed ? "px-2" : ""}`}
         >

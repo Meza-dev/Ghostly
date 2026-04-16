@@ -1,4 +1,4 @@
-import { Copy, Key, LogOut, Plus, Trash2 } from "lucide-react";
+import { Copy, Key, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAuth } from "../context/auth-context";
 import { apiFetch } from "../lib/api";
@@ -11,7 +11,7 @@ type ApiKeyRecord = {
 };
 
 export function SettingsPage() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
   const [label, setLabel] = useState("");
   const [creating, setCreating] = useState(false);
@@ -56,31 +56,20 @@ export function SettingsPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-auto pb-4">
-      {/* Perfil */}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-title font-title text-foreground">Cuenta</h2>
-        <div className="flex items-center justify-between rounded-ui border border-border bg-card px-5 py-4">
-          <div className="flex flex-col gap-0.5">
-            <span className="text-body font-nav-active text-foreground">{user?.email}</span>
-            <span className="text-caption text-muted-fg capitalize">{user?.role}</span>
-          </div>
-          <button
-            type="button"
-            onClick={logout}
-            className="inline-flex items-center gap-2 rounded-pill border border-border px-4 py-2 text-small font-button text-foreground hover:bg-accent"
-          >
-            <LogOut className="h-3.5 w-3.5" strokeWidth={2} />
-            Cerrar sesión
-          </button>
-        </div>
-      </section>
-
-      {/* API Keys */}
       <section className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
-          <h2 className="text-title font-title text-foreground">API Keys</h2>
+          <h2 className="text-title font-title text-foreground">Preferencias</h2>
           <p className="text-caption text-muted-fg">
-            Usa estas claves para autenticar requests desde apps externas o el SDK.
+            Sesión iniciada como <span className="font-nav-active text-foreground">{user?.email}</span> (
+            <span className="capitalize">{user?.role}</span>). Cierra sesión desde la barra lateral.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <h3 className="text-body font-nav-active text-foreground">API Keys</h3>
+          <p className="text-caption text-muted-fg">
+            Para scripts, CI o el paquete <code className="rounded bg-muted px-1 py-0.5 font-mono text-caption">@ghosttester/client</code>: crea una key y envíala en el header{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-caption">X-Api-Key</code>.
           </p>
         </div>
 
