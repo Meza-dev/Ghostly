@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { projectsRouter } from "./routes/projects.js";
 import { runRouter } from "./routes/run.js";
 
 // artifacts/ relativo al CWD del proceso (donde corre tsx/node)
@@ -32,6 +33,7 @@ export function createApp(): Hono {
   );
 
   app.route("/v1", runRouter);
+  app.route("/v1", projectsRouter);
 
   // Sirve archivos de artifacts/ usando el CWD real del proceso
   app.get("/artifacts/*", async (c) => {

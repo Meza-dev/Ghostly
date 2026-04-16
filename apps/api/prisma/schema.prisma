@@ -7,6 +7,15 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Project {
+  id        String   @id @default(uuid())
+  label     String
+  color     String   @default("#6366f1")
+  createdAt DateTime @default(now())
+
+  @@map("projects")
+}
+
 model Run {
   id         String   @id @default(uuid())
   status     String   // "pass" | "fail" | "running"

@@ -1,4 +1,4 @@
-import { CheckCircle2, CirclePlay, FolderOpen, Plus, XCircle } from "lucide-react";
+import { CheckCircle2, CirclePlay, FolderOpen, Plus, Trash2, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/app-context";
@@ -35,11 +35,14 @@ function useProjectStats(projectId: string) {
 function NewProjectModal({ onClose }: { onClose: () => void }) {
   const { addProject } = useAppContext();
   const [label, setLabel] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!label.trim()) return;
-    addProject(label.trim());
+    setLoading(true);
+    await addProject(label.trim());
+    setLoading(false);
     onClose();
   }
 
@@ -67,15 +70,17 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               onClick={onClose}
-              className="rounded-pill border border-border px-4 py-2 text-small font-button text-foreground hover:bg-accent"
+              disabled={loading}
+              className="rounded-pill border border-border px-4 py-2 text-small font-button text-foreground hover:bg-accent disabled:opacity-50"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95"
+              disabled={loading}
+              className="rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95 disabled:opacity-50"
             >
-              Crear
+              {loading ? "Creando…" : "Crear"}
             </button>
           </div>
         </form>
@@ -86,12 +91,19 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
 
 function ProjectCard({ proj, onOpen }: { proj: { id: string; label: string; color: string }; onOpen: () => void }) {
   const stats = useProjectStats(proj.id);
+  const { deleteProject } = useAppContext();
+
+  async function handleDelete(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!confirm(`¿Eliminar proyecto "${proj.label}"?`)) return;
+    await deleteProject(proj.id);
+  }
 
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="flex flex-col gap-4 rounded-ui border border-border bg-card p-5 text-left transition-colors hover:border-primary hover:bg-sidebar-active"
+      className="group flex flex-col gap-4 rounded-ui border border-border bg-card p-5 text-left transition-colors hover:border-primary hover:bg-sidebar-active"
     >
       <div className="flex items-center gap-3">
         <div
@@ -110,6 +122,14 @@ function ProjectCard({ proj, onOpen }: { proj: { id: string; label: string; colo
         {stats.lastStatus === "fail" && (
           <XCircle className="h-5 w-5 shrink-0 text-destructive" strokeWidth={2} />
         )}
+        <button
+          type="button"
+          onClick={handleDelete}
+          className="ml-1 hidden shrink-0 rounded p-1 text-muted-fg opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 group-hover:flex"
+          aria-label="Eliminar proyecto"
+        >
+          <Trash2 className="h-4 w-4" strokeWidth={2} />
+        </button>
       </div>
 
       <div className="flex items-center gap-4 rounded-[6px] bg-muted px-3 py-2 text-caption text-muted-fg">
