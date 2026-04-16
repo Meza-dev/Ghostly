@@ -2,10 +2,12 @@ import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { authMiddleware } from "./middleware/auth.js";
+import { apiKeysRouter } from "./routes/api-keys.js";
+import { authRouter } from "./routes/auth.js";
 import { projectsRouter } from "./routes/projects.js";
 import { runRouter } from "./routes/run.js";
 
-// artifacts/ relativo al CWD del proceso (donde corre tsx/node)
 const ARTIFACTS_ROOT = resolve(process.cwd(), "artifacts");
 
 const MIME: Record<string, string> = {
@@ -20,22 +22,28 @@ const MIME: Record<string, string> = {
 export function createApp(): Hono {
   const app = new Hono();
 
-  app.use("*", cors());
+  app.use("*", cors({ origin: "*", allowHeaders: ["Authorization", "Content-Type", "X-Api-Key"] }));
 
   app.get("/health", (c) => c.json({ status: "ok" }));
 
+  // Rutas públicas (sin auth)
+  app.route("/v1", authRouter);
+
+  // Rutas protegidas
+  app.use("/v1/*", async (c, next) => {
+    // Excluir login del middleware
+    if (c.req.path === "/v1/auth/login") return next();
+    return authMiddleware(c, next);
+  });
+
   app.get("/v1/ping", (c) =>
-    c.json({
-      ok: true,
-      service: "ghosttester-api",
-      env: process.env.NODE_ENV ?? "development",
-    }),
+    c.json({ ok: true, service: "ghosttester-api", env: process.env.NODE_ENV ?? "development" }),
   );
 
   app.route("/v1", runRouter);
   app.route("/v1", projectsRouter);
+  app.route("/v1", apiKeysRouter);
 
-  // Sirve archivos de artifacts/ usando el CWD real del proceso
   app.get("/artifacts/*", async (c) => {
     const relative = c.req.path.replace(/^\/artifacts\//, "");
     const filePath = resolve(ARTIFACTS_ROOT, relative);

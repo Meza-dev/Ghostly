@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { RunRecord } from "../../../../packages/runner/src/schema.js";
 import { useAppContext } from "../context/app-context";
+import { apiFetch } from "../lib/api";
 import { NewRunModal } from "./new-run-modal";
 
 function StatusBadge({ status }: { status: RunRecord["status"] }) {
@@ -46,7 +47,7 @@ export function RunsPanel() {
   const fetchRuns = useCallback(async () => {
     try {
       const url = activeProjectId ? `/v1/runs?project=${encodeURIComponent(activeProjectId)}` : "/v1/runs";
-      const res = await fetch(url);
+      const res = await apiFetch(url);
       if (!res.ok) return;
       const data = (await res.json()) as RunRecord[];
       setRuns(data);

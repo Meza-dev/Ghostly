@@ -2,6 +2,7 @@ import { ArrowLeft, CheckCircle, Film, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { RunRecord } from "../../../../packages/runner/src/schema.js";
+import { apiFetch } from "../lib/api";
 
 function artifactUrl(filePath: string): string {
   // Extrae todo lo que va después de "artifacts\" o "artifacts/"
@@ -21,7 +22,7 @@ export function RunDetail() {
 
   useEffect(() => {
     if (!id) return;
-    fetch(`/v1/runs/${id}`)
+    apiFetch(`/v1/runs/${id}`)
       .then((r) => {
         if (r.status === 404) { setNotFound(true); return null; }
         return r.json() as Promise<RunRecord>;

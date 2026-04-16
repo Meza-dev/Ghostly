@@ -7,17 +7,44 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         String   @default("member") // "admin" | "member"
+  createdAt    DateTime @default(now())
+  apiKeys      ApiKey[]
+  projects     Project[]
+  runs         Run[]
+
+  @@map("users")
+}
+
+model ApiKey {
+  id        String   @id @default(uuid())
+  userId    String
+  key       String   @unique
+  label     String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
 model Project {
   id        String   @id @default(uuid())
+  userId    String
   label     String
   color     String   @default("#6366f1")
   createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("projects")
 }
 
 model Run {
   id         String   @id @default(uuid())
+  userId     String
   status     String   // "pass" | "fail" | "running"
   startedAt  DateTime @default(now())
   durationMs Int      @default(0)
@@ -25,6 +52,7 @@ model Run {
   project    String?
   videoPath  String?
   steps      Step[]
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("runs")
 }

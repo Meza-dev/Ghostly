@@ -2,6 +2,7 @@ import { CheckCircle2, CirclePlay, FolderOpen, Plus, Trash2, XCircle } from "luc
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/app-context";
+import { apiFetch } from "../lib/api";
 
 type RunSummary = {
   total: number;
@@ -15,7 +16,7 @@ function useProjectStats(projectId: string) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/v1/runs?project=${encodeURIComponent(projectId)}`)
+    apiFetch(`/v1/runs?project=${encodeURIComponent(projectId)}`)
       .then((r) => (r.ok ? r.json() : []))
       .then((runs: Array<{ status: string }>) => {
         if (cancelled) return;

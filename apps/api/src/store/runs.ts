@@ -1,10 +1,11 @@
 import type { RunRecord } from "@ghosttester/runner";
 import { prisma } from "../lib/prisma.js";
 
-export async function saveRun(record: RunRecord): Promise<void> {
+export async function saveRun(record: RunRecord, userId: string): Promise<void> {
   await prisma.run.create({
     data: {
       id: record.id,
+      userId,
       status: record.status,
       startedAt: new Date(record.startedAt),
       durationMs: record.durationMs,
@@ -25,18 +26,18 @@ export async function saveRun(record: RunRecord): Promise<void> {
   });
 }
 
-export async function getRun(id: string): Promise<RunRecord | null> {
+export async function getRun(id: string, userId: string): Promise<RunRecord | null> {
   const run = await prisma.run.findUnique({
     where: { id },
     include: { steps: { orderBy: { index: "asc" } } },
   });
-  if (!run) return null;
+  if (!run || run.userId !== userId) return null;
   return toRecord(run);
 }
 
-export async function getAllRuns(project?: string): Promise<RunRecord[]> {
+export async function getAllRuns(userId: string, project?: string): Promise<RunRecord[]> {
   const runs = await prisma.run.findMany({
-    where: project ? { project } : undefined,
+    where: { userId, ...(project ? { project } : {}) },
     include: { steps: { orderBy: { index: "asc" } } },
     orderBy: { startedAt: "desc" },
   });

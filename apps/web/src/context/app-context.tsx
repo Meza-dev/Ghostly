@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { apiFetch } from "../lib/api";
 
 export type Project = {
   id: string;
@@ -30,7 +31,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const loadProjects = useCallback(async () => {
     try {
-      const res = await fetch("/v1/projects");
+      const res = await apiFetch("/v1/projects");
       if (!res.ok) return;
       const data = (await res.json()) as Project[];
       setProjects(data);
@@ -45,9 +46,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   async function addProject(label: string) {
     const color = COLORS[Math.floor(Math.random() * COLORS.length)];
-    const res = await fetch("/v1/projects", {
+    const res = await apiFetch("/v1/projects", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ label, color }),
     });
     if (!res.ok) return;
@@ -56,7 +56,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function deleteProject(id: string) {
-    await fetch(`/v1/projects/${id}`, { method: "DELETE" });
+    await apiFetch(`/v1/projects/${id}`, { method: "DELETE" });
     setProjects((prev) => prev.filter((p) => p.id !== id));
     if (activeProjectId === id) setActiveProjectId(null);
   }

@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { useState } from "react";
 import { useAppContext } from "../context/app-context";
+import { apiFetch } from "../lib/api";
 
 const DEFAULT_STEPS = JSON.stringify(
   [
@@ -36,9 +37,8 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
     }
     setLoading(true);
     try {
-      const res = await fetch("/v1/run", {
+      const res = await apiFetch("/v1/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           baseUrl,
           steps,
