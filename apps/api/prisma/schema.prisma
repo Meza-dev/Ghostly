@@ -13,6 +13,7 @@ model Run {
   startedAt  DateTime @default(now())
   durationMs Int      @default(0)
   baseUrl    String
+  project    String?
   videoPath  String?
   steps      Step[]
 

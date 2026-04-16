@@ -39,6 +39,7 @@ export type RunRecord = {
   startedAt: string;
   durationMs: number;
   baseUrl: string;
+  project?: string;
   steps: import("./run.js").StepOutcome[];
   videoPath?: string;
 };

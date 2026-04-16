@@ -9,6 +9,7 @@ export async function saveRun(record: RunRecord): Promise<void> {
       startedAt: new Date(record.startedAt),
       durationMs: record.durationMs,
       baseUrl: record.baseUrl,
+      project: record.project ?? null,
       videoPath: record.videoPath ?? null,
       steps: {
         create: record.steps.map((s) => ({
@@ -33,8 +34,9 @@ export async function getRun(id: string): Promise<RunRecord | null> {
   return toRecord(run);
 }
 
-export async function getAllRuns(): Promise<RunRecord[]> {
+export async function getAllRuns(project?: string): Promise<RunRecord[]> {
   const runs = await prisma.run.findMany({
+    where: project ? { project } : undefined,
     include: { steps: { orderBy: { index: "asc" } } },
     orderBy: { startedAt: "desc" },
   });
@@ -52,6 +54,7 @@ function toRecord(run: DbRun): RunRecord {
     startedAt: run.startedAt.toISOString(),
     durationMs: run.durationMs,
     baseUrl: run.baseUrl,
+    ...(run.project ? { project: run.project } : {}),
     ...(run.videoPath ? { videoPath: run.videoPath } : {}),
     steps: run.steps.map((s) => ({
       index: s.index,

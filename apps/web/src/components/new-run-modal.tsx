@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { useState } from "react";
+import { useAppContext } from "../context/app-context";
 
 const DEFAULT_STEPS = JSON.stringify(
   [
@@ -16,8 +17,10 @@ type Props = {
 };
 
 export function NewRunModal({ onClose, onRunStarted }: Props) {
+  const { projects, activeProjectId } = useAppContext();
   const [baseUrl, setBaseUrl] = useState("https://example.com");
   const [stepsJson, setStepsJson] = useState(DEFAULT_STEPS);
+  const [projectId, setProjectId] = useState(activeProjectId ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,6 +42,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         body: JSON.stringify({
           baseUrl,
           steps,
+          project: projectId || undefined,
           headless: true,
           captureScreenshotAfterEachStep: true,
           recordVideoOnFailure: true,
@@ -72,6 +76,23 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         </div>
 
         <form onSubmit={(e) => void handleSubmit(e)} className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-caption text-muted-fg" htmlFor="proj-select">
+              Proyecto
+            </label>
+            <select
+              id="proj-select"
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              className="rounded-[6px] border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="">Sin proyecto</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+
           <div className="flex flex-col gap-1">
             <label className="text-caption text-muted-fg" htmlFor="baseUrl">
               URL base

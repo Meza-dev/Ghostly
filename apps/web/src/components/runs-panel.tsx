@@ -40,24 +40,24 @@ export function RunsPanel() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { activeProjectId } = useAppContext();
 
-  const visibleRuns = activeProjectId
-    ? runs.filter((r) => r.baseUrl.includes(activeProjectId))
-    : runs;
+  // El filtro ahora lo hace la API via ?project=... — runs ya viene filtrado
+  const visibleRuns = runs;
 
   const fetchRuns = useCallback(async () => {
     try {
-      const res = await fetch("/v1/runs");
+      const url = activeProjectId ? `/v1/runs?project=${encodeURIComponent(activeProjectId)}` : "/v1/runs";
+      const res = await fetch(url);
       if (!res.ok) return;
       const data = (await res.json()) as RunRecord[];
       setRuns(data);
     } catch {
       // ignorar errores de red silenciosamente
     }
-  }, []);
+  }, [activeProjectId]);
 
   useEffect(() => {
     void fetchRuns();
-  }, [fetchRuns]);
+  }, [fetchRuns, activeProjectId]);
 
   useEffect(() => {
     const hasRunning = runs.some((r) => r.status === "running");

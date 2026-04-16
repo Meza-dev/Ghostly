@@ -1,7 +1,36 @@
-import { CirclePlay, FolderOpen, Plus } from "lucide-react";
-import { useState } from "react";
+import { CheckCircle2, CirclePlay, FolderOpen, Plus, XCircle } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/app-context";
+
+type RunSummary = {
+  total: number;
+  pass: number;
+  fail: number;
+  lastStatus: "pass" | "fail" | "running" | null;
+};
+
+function useProjectStats(projectId: string) {
+  const [stats, setStats] = useState<RunSummary>({ total: 0, pass: 0, fail: 0, lastStatus: null });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/v1/runs?project=${encodeURIComponent(projectId)}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((runs: Array<{ status: string }>) => {
+        if (cancelled) return;
+        const total = runs.length;
+        const pass = runs.filter((r) => r.status === "pass").length;
+        const fail = runs.filter((r) => r.status === "fail").length;
+        const lastStatus = runs[0]?.status as RunSummary["lastStatus"] ?? null;
+        setStats({ total, pass, fail, lastStatus });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  return stats;
+}
 
 function NewProjectModal({ onClose }: { onClose: () => void }) {
   const { addProject } = useAppContext();
@@ -55,6 +84,52 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+function ProjectCard({ proj, onOpen }: { proj: { id: string; label: string; color: string }; onOpen: () => void }) {
+  const stats = useProjectStats(proj.id);
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex flex-col gap-4 rounded-ui border border-border bg-card p-5 text-left transition-colors hover:border-primary hover:bg-sidebar-active"
+    >
+      <div className="flex items-center gap-3">
+        <div
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px]"
+          style={{ backgroundColor: proj.color + "22", color: proj.color }}
+        >
+          <FolderOpen className="h-5 w-5" strokeWidth={2} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-nav-active text-body text-foreground">{proj.label}</p>
+          <p className="text-caption text-muted-fg">{stats.total} ejecuciones</p>
+        </div>
+        {stats.lastStatus === "pass" && (
+          <CheckCircle2 className="h-5 w-5 shrink-0 text-success" strokeWidth={2} />
+        )}
+        {stats.lastStatus === "fail" && (
+          <XCircle className="h-5 w-5 shrink-0 text-destructive" strokeWidth={2} />
+        )}
+      </div>
+
+      <div className="flex items-center gap-4 rounded-[6px] bg-muted px-3 py-2 text-caption text-muted-fg">
+        <span className="flex items-center gap-1">
+          <CheckCircle2 className="h-3 w-3 text-success" strokeWidth={2} />
+          {stats.pass}
+        </span>
+        <span className="flex items-center gap-1">
+          <XCircle className="h-3 w-3 text-destructive" strokeWidth={2} />
+          {stats.fail}
+        </span>
+        <span className="ml-auto flex items-center gap-1">
+          <CirclePlay className="h-3 w-3" strokeWidth={2} />
+          Ver ejecuciones →
+        </span>
+      </div>
+    </button>
+  );
+}
+
 export function Overview() {
   const { projects, setActiveProjectId } = useAppContext();
   const navigate = useNavigate();
@@ -87,30 +162,7 @@ export function Overview() {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {projects.map((proj) => (
-            <button
-              key={proj.id}
-              type="button"
-              onClick={() => openProject(proj.id)}
-              className="flex flex-col gap-4 rounded-ui border border-border bg-card p-5 text-left transition-colors hover:border-primary hover:bg-sidebar-active"
-            >
-              <div className="flex items-center gap-3">
-                <div
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px]"
-                  style={{ backgroundColor: proj.color + "22", color: proj.color }}
-                >
-                  <FolderOpen className="h-5 w-5" strokeWidth={2} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-nav-active text-body text-foreground">{proj.label}</p>
-                  <p className="text-caption text-muted-fg">proyecto</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 rounded-[6px] bg-muted px-3 py-2">
-                <CirclePlay className="h-3.5 w-3.5 shrink-0 text-muted-fg" strokeWidth={2} />
-                <span className="text-caption text-muted-fg">Ver ejecuciones →</span>
-              </div>
-            </button>
+            <ProjectCard key={proj.id} proj={proj} onOpen={() => openProject(proj.id)} />
           ))}
 
           <button

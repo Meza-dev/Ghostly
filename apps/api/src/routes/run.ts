@@ -6,7 +6,8 @@ import { getAllRuns, getRun, saveRun } from "../store/runs.js";
 export const runRouter = new Hono();
 
 runRouter.get("/runs", async (c) => {
-  const runs = await getAllRuns();
+  const project = c.req.query("project");
+  const runs = await getAllRuns(project ?? undefined);
   return c.json(runs);
 });
 
@@ -17,9 +18,9 @@ runRouter.get("/runs/:id", async (c) => {
 });
 
 runRouter.post("/run", async (c) => {
-  let body: unknown;
+  let body: Record<string, unknown>;
   try {
-    body = await c.req.json();
+    body = (await c.req.json()) as Record<string, unknown>;
   } catch {
     return c.json({ ok: false, error: "cuerpo JSON inválido" }, 400);
   }
@@ -32,6 +33,8 @@ runRouter.post("/run", async (c) => {
     );
   }
 
+  const project = typeof body.project === "string" && body.project ? body.project : undefined;
+
   const id = crypto.randomUUID();
   const startedAt = new Date().toISOString();
 
@@ -43,6 +46,7 @@ runRouter.post("/run", async (c) => {
       startedAt,
       durationMs: result.durationMs,
       baseUrl: parsed.data.baseUrl,
+      ...(project ? { project } : {}),
       steps: result.steps,
       ...(result.videoPath !== undefined ? { videoPath: result.videoPath } : {}),
     };
