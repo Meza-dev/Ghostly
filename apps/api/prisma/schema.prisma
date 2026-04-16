@@ -1,0 +1,34 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Run {
+  id         String   @id @default(uuid())
+  status     String   // "pass" | "fail" | "running"
+  startedAt  DateTime @default(now())
+  durationMs Int      @default(0)
+  baseUrl    String
+  videoPath  String?
+  steps      Step[]
+
+  @@map("runs")
+}
+
+model Step {
+  id             Int     @id @default(autoincrement())
+  runId          String
+  index          Int
+  action         String
+  ok             Boolean
+  error          String?
+  screenshotPath String?
+  a11y           String?
+  run            Run     @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@map("steps")
+}

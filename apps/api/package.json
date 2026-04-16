@@ -7,13 +7,19 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsup",
     "start": "node dist/index.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "db:migrate": "prisma migrate deploy --schema prisma/schema.prisma",
+    "db:migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
+    "db:studio": "prisma studio --schema prisma/schema.prisma"
   },
   "dependencies": {
     "@ghosttester/runner": "workspace:*",
     "@hono/node-server": "^1.13.7",
+    "@prisma/client": "5",
     "dotenv": "^16.4.7",
-    "hono": "^4.6.12"
+    "hono": "^4.6.12",
+    "prisma": "5"
   },
   "devDependencies": {
     "@ghosttester/tsconfig": "workspace:*",

@@ -5,12 +5,13 @@ import { getAllRuns, getRun, saveRun } from "../store/runs.js";
 
 export const runRouter = new Hono();
 
-runRouter.get("/runs", (c) => {
-  return c.json(getAllRuns());
+runRouter.get("/runs", async (c) => {
+  const runs = await getAllRuns();
+  return c.json(runs);
 });
 
-runRouter.get("/runs/:id", (c) => {
-  const record = getRun(c.req.param("id"));
+runRouter.get("/runs/:id", async (c) => {
+  const record = await getRun(c.req.param("id"));
   if (!record) return c.json({ ok: false, error: "not found" }, 404);
   return c.json(record);
 });
@@ -45,7 +46,7 @@ runRouter.post("/run", async (c) => {
       steps: result.steps,
       ...(result.videoPath !== undefined ? { videoPath: result.videoPath } : {}),
     };
-    saveRun(record);
+    await saveRun(record);
     return c.json(record, 200);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
