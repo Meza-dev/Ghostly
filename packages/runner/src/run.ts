@@ -123,6 +123,12 @@ export async function runFlow(input: RunInput): Promise<RunResult> {
 
     for (let index = 0; index < input.steps.length; index++) {
       const step = input.steps[index]!;
+      // Logging básico de cada paso para depuración interactiva
+      // eslint-disable-next-line no-console
+      console.log(
+        `[runner] Ejecutando paso ${index + 1}/${input.steps.length}`,
+        JSON.stringify(step),
+      );
       try {
         await applyStep(page, input.baseUrl, step, input.defaultTimeoutMs);
         let a11y: unknown | undefined;
@@ -142,6 +148,11 @@ export async function runFlow(input: RunInput): Promise<RunResult> {
         });
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
+        // eslint-disable-next-line no-console
+        console.error(
+          `[runner] Error en paso ${index + 1}/${input.steps.length}`,
+          message,
+        );
         let screenshotPath: string | undefined;
         if (artifactsDir) {
           try {

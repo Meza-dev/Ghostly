@@ -30,3 +30,15 @@ export const runInputSchema = z.object({
 
 export type Step = z.infer<typeof stepSchema>;
 export type RunInput = z.infer<typeof runInputSchema>;
+
+export type RunStatus = "pass" | "fail" | "running";
+
+export type RunRecord = {
+  id: string;
+  status: RunStatus;
+  startedAt: string;
+  durationMs: number;
+  baseUrl: string;
+  steps: import("./run.js").StepOutcome[];
+  videoPath?: string;
+};

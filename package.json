@@ -9,9 +9,13 @@
     "typecheck": "pnpm --filter @ghosttester/runner run typecheck && pnpm --filter @ghosttester/api run typecheck && pnpm --filter @ghosttester/mcp-server run typecheck && pnpm --filter @ghosttester/web run typecheck",
     "start": "pnpm --filter @ghosttester/api start",
     "pw:install": "pnpm --filter @ghosttester/runner exec playwright install chromium",
-    "mcp:build": "pnpm --filter @ghosttester/mcp-server build"
+    "mcp:build": "pnpm --filter @ghosttester/mcp-server build",
+    "test:tms-login": "pnpm exec tsx scripts/test-tms-login.ts"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
   }
 }
