@@ -5,6 +5,7 @@ import { cors } from "hono/cors";
 import { authMiddleware } from "./middleware/auth.js";
 import { apiKeysRouter } from "./routes/api-keys.js";
 import { authRouter } from "./routes/auth.js";
+import { planRouter } from "./routes/plan.js";
 import { projectsRouter } from "./routes/projects.js";
 import { runRouter } from "./routes/run.js";
 
@@ -41,6 +42,7 @@ export function createApp(): Hono {
   );
 
   app.route("/v1", runRouter);
+  app.route("/v1", planRouter);
   app.route("/v1", projectsRouter);
   app.route("/v1", apiKeysRouter);
 

@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronUp, Plus, Trash2, X } from "lucide-react";
-import { useState } from "react";
-import type { Step } from "../../../../packages/runner/src/schema.js";
+import { useEffect, useState } from "react";
+import type { AssistedMeta, Step } from "../../../../packages/runner/src/schema.js";
 import { useAppContext } from "../context/app-context";
 import { apiFetch } from "../lib/api";
 
@@ -109,20 +109,44 @@ type Props = {
   onRunStarted: () => void;
 };
 
+type AssistPlanResponse = {
+  ok: true;
+  draft: {
+    baseUrl: string;
+    steps: Step[];
+  };
+  meta: AssistedMeta;
+};
+
 export function NewRunModal({ onClose, onRunStarted }: Props) {
   const { projects, activeProjectId } = useAppContext();
-  const [tab, setTab] = useState<"simple" | "advanced">("simple");
+  const [tab, setTab] = useState<"simple" | "advanced" | "assisted">("simple");
   const [startUrl, setStartUrl] = useState("https://example.com/");
-  const [projectId, setProjectId] = useState(activeProjectId ?? "");
+  const [projectId, setProjectId] = useState(activeProjectId ?? projects[0]?.id ?? "");
   const [loading, setLoading] = useState(false);
+  const [planning, setPlanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [simpleRows, setSimpleRows] = useState<SimpleRow[]>(() => [{ ...emptyRow("waitForSelector"), selector: "h1" }]);
 
   const [stepsJson, setStepsJson] = useState(DEFAULT_STEPS_JSON);
+  const [assistGoal, setAssistGoal] = useState("");
+  const [assistStepsJson, setAssistStepsJson] = useState("[]");
+  const [assistMeta, setAssistMeta] = useState<AssistedMeta | null>(null);
   const [headless, setHeadless] = useState(true);
   const [captureScreenshotAfterEachStep, setCaptureScreenshotAfterEachStep] = useState(true);
   const [recordVideoOnFailure, setRecordVideoOnFailure] = useState(true);
+
+  useEffect(() => {
+    if (projectId) return;
+    if (activeProjectId) {
+      setProjectId(activeProjectId);
+      return;
+    }
+    if (projects.length > 0) {
+      setProjectId(projects[0]!.id);
+    }
+  }, [activeProjectId, projectId, projects]);
 
   function updateRow(id: string, patch: Partial<SimpleRow>) {
     setSimpleRows((rows) => rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -148,9 +172,58 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
     });
   }
 
+  async function handleGenerateAssistPlan() {
+    setError(null);
+    if (!projectId) {
+      setError("Debes seleccionar un proyecto para generar un plan.");
+      return;
+    }
+    const goal = assistGoal.trim();
+    if (!goal) {
+      setError("Escribe un objetivo antes de generar el plan.");
+      return;
+    }
+    const parsedUrl = parseStartUrl(startUrl);
+    if (!parsedUrl.ok) {
+      setError(parsedUrl.message);
+      return;
+    }
+    setPlanning(true);
+    try {
+      const res = await apiFetch("/v1/plan", {
+        method: "POST",
+        body: JSON.stringify({
+          project: projectId,
+          baseUrl: parsedUrl.baseUrl,
+          goal,
+        }),
+      });
+      const body = (await res.json()) as { ok?: boolean; error?: string } & Partial<AssistPlanResponse>;
+      if (!res.ok || !body.ok || !body.draft || !body.meta) {
+        setAssistMeta(null);
+        setAssistStepsJson("[]");
+        setError(typeof body.error === "string" ? body.error : "No se pudo generar el plan asistido.");
+        return;
+      }
+      setAssistMeta(body.meta);
+      setAssistStepsJson(JSON.stringify(body.draft.steps, null, 2));
+    } catch (err) {
+      setAssistMeta(null);
+      setAssistStepsJson("[]");
+      setError(err instanceof Error ? err.message : "Error de red");
+    } finally {
+      setPlanning(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    if (!projectId) {
+      setError("Debes seleccionar un proyecto para ejecutar la corrida.");
+      return;
+    }
 
     const parsedUrl = parseStartUrl(startUrl);
     if (!parsedUrl.ok) {
@@ -161,6 +234,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
     const firstGoto: Step = { action: "goto", url: gotoPath };
 
     let steps: Step[];
+    let assisted: AssistedMeta | undefined;
     if (tab === "simple") {
       const built = simpleRowsToExtraSteps(simpleRows);
       if (!built.ok) {
@@ -168,7 +242,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         return;
       }
       steps = [firstGoto, ...built.steps];
-    } else {
+    } else if (tab === "advanced") {
       let extra: Step[];
       try {
         extra = JSON.parse(stepsJson) as Step[];
@@ -187,6 +261,24 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         return;
       }
       steps = [firstGoto, ...extra];
+    } else {
+      if (!assistMeta) {
+        setError("Primero genera el plan asistido antes de ejecutar.");
+        return;
+      }
+      let planned: Step[];
+      try {
+        planned = JSON.parse(assistStepsJson) as Step[];
+      } catch {
+        setError("El plan asistido no es JSON válido.");
+        return;
+      }
+      if (!Array.isArray(planned) || planned.length === 0) {
+        setError("El plan asistido debe contener al menos un paso.");
+        return;
+      }
+      steps = planned;
+      assisted = assistMeta;
     }
 
     setLoading(true);
@@ -196,7 +288,8 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         body: JSON.stringify({
           baseUrl,
           steps,
-          project: projectId || undefined,
+          project: projectId,
+          ...(assisted ? { assisted } : {}),
           headless,
           captureScreenshotAfterEachStep,
           recordVideoOnFailure,
@@ -256,6 +349,17 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
           >
             Avanzado (JSON)
           </button>
+          <button
+            type="button"
+            onClick={() => setTab("assisted")}
+            className={`flex-1 rounded-[6px] px-3 py-2 text-small font-button transition-colors ${
+              tab === "assisted"
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-fg hover:text-foreground"
+            }`}
+          >
+            Asistido (IA)
+          </button>
         </div>
 
         <form onSubmit={(e) => void handleSubmit(e)} className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
@@ -267,15 +371,20 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
               id="proj-select"
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
+              required
               className="rounded-[6px] border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             >
-              <option value="">Sin proyecto</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.label}
                 </option>
               ))}
             </select>
+            {projects.length === 0 && (
+              <p className="text-caption text-error-fg">
+                Crea un proyecto primero para poder ejecutar corridas.
+              </p>
+            )}
           </div>
 
           <div className="flex flex-col gap-1">
@@ -417,7 +526,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
                 ))}
               </div>
             </div>
-          ) : (
+          ) : tab === "advanced" ? (
             <div className="flex min-h-0 flex-1 flex-col gap-1">
               <label className="text-caption text-muted-fg" htmlFor="stepsJson">
                 Pasos después del inicio (JSON)
@@ -434,6 +543,53 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
                 onChange={(e) => setStepsJson(e.target.value)}
                 className="min-h-[200px] flex-1 rounded-[6px] border border-border bg-background px-3 py-2 font-mono text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
               />
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+              <div className="flex flex-col gap-1">
+                <label className="text-caption text-muted-fg" htmlFor="assist-goal">
+                  Objetivo
+                </label>
+                <textarea
+                  id="assist-goal"
+                  rows={3}
+                  value={assistGoal}
+                  onChange={(e) => setAssistGoal(e.target.value)}
+                  placeholder="Ejemplo: crea un usuario nuevo y verifica que aparezca mensaje de éxito."
+                  className="rounded-[6px] border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-caption text-muted-fg">
+                  Genera el plan, revísalo y luego ejecuta. No se lanza ninguna corrida hasta confirmar.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleGenerateAssistPlan()}
+                  disabled={planning || loading || projects.length === 0}
+                  className="rounded-pill border border-border px-3 py-1.5 text-caption font-button text-foreground hover:bg-accent disabled:opacity-60"
+                >
+                  {planning ? "Generando…" : "Generar plan"}
+                </button>
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col gap-1">
+                <label className="text-caption text-muted-fg" htmlFor="assist-steps-json">
+                  Plan de pasos (editable)
+                </label>
+                <textarea
+                  id="assist-steps-json"
+                  rows={10}
+                  value={assistStepsJson}
+                  onChange={(e) => setAssistStepsJson(e.target.value)}
+                  className="min-h-[200px] flex-1 rounded-[6px] border border-border bg-background px-3 py-2 font-mono text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              {assistMeta && (
+                <p className="text-caption text-muted-fg">
+                  Plan generado con modelo <span className="font-mono">{assistMeta.model}</span> el{" "}
+                  {new Date(assistMeta.generatedAt).toLocaleString("es")}.
+                </p>
+              )}
             </div>
           )}
 
@@ -482,10 +638,10 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
             </button>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || planning || projects.length === 0 || (tab === "assisted" && !assistMeta)}
               className="rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95 disabled:opacity-60"
             >
-              {loading ? "Ejecutando…" : "Ejecutar"}
+              {loading ? "Ejecutando…" : tab === "assisted" ? "Ejecutar plan" : "Ejecutar"}
             </button>
           </div>
         </form>

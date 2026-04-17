@@ -1,5 +1,12 @@
 export type RunStatus = "pass" | "fail" | "running";
 
+export type AssistedMeta = {
+  goal: string;
+  model: string;
+  generatedAt: string;
+  promptVersion: string;
+};
+
 export type StepOutcome = {
   index: number;
   action: string;
@@ -15,6 +22,7 @@ export type RunRecord = {
   durationMs: number;
   baseUrl: string;
   project?: string;
+  assisted?: AssistedMeta;
   steps: StepOutcome[];
   videoPath?: string;
 };
@@ -25,12 +33,25 @@ export type Step =
   | { action: "fill"; selector: string; value: string }
   | { action: "press"; key: string }
   | { action: "waitForSelector"; selector: string; timeoutMs?: number }
-  | { action: "screenshot" };
+  | { action: "snapshot" };
+
+export type PlanAssistRequest = {
+  project: string;
+  baseUrl: string;
+  goal: string;
+};
+
+export type PlanAssistResponse = {
+  ok: true;
+  draft: RunFlowOptions;
+  meta: AssistedMeta;
+};
 
 export type RunFlowOptions = {
   baseUrl: string;
   steps: Step[];
-  project?: string;
+  project: string;
+  assisted?: AssistedMeta;
   headless?: boolean;
   captureScreenshotAfterEachStep?: boolean;
   recordVideoOnFailure?: boolean;
@@ -83,6 +104,16 @@ export class GhostTesterClient {
     return this.fetch<RunRecord>("/v1/run", {
       method: "POST",
       body: JSON.stringify(options),
+    });
+  }
+
+  /**
+   * Genera un plan de pasos desde un objetivo en lenguaje natural.
+   */
+  async planAssist(payload: PlanAssistRequest): Promise<PlanAssistResponse> {
+    return this.fetch<PlanAssistResponse>("/v1/plan", {
+      method: "POST",
+      body: JSON.stringify(payload),
     });
   }
 

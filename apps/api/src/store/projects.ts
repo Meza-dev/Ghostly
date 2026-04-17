@@ -25,6 +25,14 @@ export async function deleteProject(id: string, userId: string): Promise<void> {
   await prisma.project.delete({ where: { id } });
 }
 
+export async function projectExistsForUser(id: string, userId: string): Promise<boolean> {
+  const row = await prisma.project.findFirst({
+    where: { id, userId },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 function toRecord(row: { id: string; label: string; color: string; createdAt: Date }): ProjectRecord {
   return { id: row.id, label: row.label, color: row.color, createdAt: row.createdAt.toISOString() };
 }

@@ -51,6 +51,7 @@ model Run {
   baseUrl    String
   project    String?
   videoPath  String?
+  assistedMeta Json?
   steps      Step[]
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 

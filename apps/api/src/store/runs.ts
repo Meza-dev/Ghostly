@@ -1,28 +1,35 @@
 import type { RunRecord } from "@ghosttester/runner";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 
 export async function saveRun(record: RunRecord, userId: string): Promise<void> {
-  await prisma.run.create({
-    data: {
-      id: record.id,
-      userId,
-      status: record.status,
-      startedAt: new Date(record.startedAt),
-      durationMs: record.durationMs,
-      baseUrl: record.baseUrl,
-      project: record.project ?? null,
-      videoPath: record.videoPath ?? null,
-      steps: {
-        create: record.steps.map((s) => ({
-          index: s.index,
-          action: String(s.action),
-          ok: s.ok,
-          error: s.error ?? null,
-          screenshotPath: s.screenshotPath ?? null,
-          a11y: s.a11y != null ? String(s.a11y) : null,
-        })),
-      },
+  const data: Prisma.RunUncheckedCreateInput = {
+    id: record.id,
+    userId,
+    status: record.status,
+    startedAt: new Date(record.startedAt),
+    durationMs: record.durationMs,
+    baseUrl: record.baseUrl,
+    project: record.project ?? null,
+    videoPath: record.videoPath ?? null,
+    steps: {
+      create: record.steps.map((s) => ({
+        index: s.index,
+        action: String(s.action),
+        ok: s.ok,
+        error: s.error ?? null,
+        screenshotPath: s.screenshotPath ?? null,
+        a11y: s.a11y != null ? String(s.a11y) : null,
+      })),
     },
+  };
+  if (record.assisted) {
+    // Keep compatibility when Prisma client types are stale.
+    (data as Record<string, unknown>).assistedMeta = record.assisted as Prisma.InputJsonValue;
+  }
+
+  await prisma.run.create({
+    data,
   });
 }
 
@@ -49,6 +56,7 @@ type DbRun = Awaited<ReturnType<typeof prisma.run.findUniqueOrThrow>> & {
 };
 
 function toRecord(run: DbRun): RunRecord {
+  const assistedMeta = (run as { assistedMeta?: Prisma.JsonValue | null }).assistedMeta;
   return {
     id: run.id,
     status: run.status as RunRecord["status"],
@@ -56,6 +64,7 @@ function toRecord(run: DbRun): RunRecord {
     durationMs: run.durationMs,
     baseUrl: run.baseUrl,
     ...(run.project ? { project: run.project } : {}),
+    ...(assistedMeta ? { assisted: assistedMeta as RunRecord["assisted"] } : {}),
     ...(run.videoPath ? { videoPath: run.videoPath } : {}),
     steps: run.steps.map((s) => ({
       index: s.index,

@@ -27,6 +27,116 @@ function resolveUrl(baseUrl: string, url: string): string {
   return new URL(path, baseUrl).href;
 }
 
+/** Evita duplicados conservando el orden (el primario va primero). */
+function uniqSelectors(candidates: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of candidates) {
+    const s = raw.trim();
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
+
+/** Palabra suelta tipo «username» sin sintaxis CSS (error típico de LLM). */
+function looksLikeBareKeyword(selector: string): boolean {
+  const t = selector.trim();
+  if (!t) return false;
+  if (/[#\[\].:\s=]/.test(t)) return false;
+  return /^[a-z0-9_-]+$/i.test(t);
+}
+
+function expandFillSelectors(primary: string): string[] {
+  const s = primary.trim();
+  const lower = s.toLowerCase();
+  const out: string[] = [s];
+
+  if (lower.includes("username") || /name\s*=\s*['"]?\s*username/i.test(s)) {
+    out.push(
+      'input[name="email"]',
+      'input[name="user"]',
+      'input[name="login"]',
+      'input[type="email"]',
+      "#email",
+      'input[id="email"]',
+    );
+  }
+  if (lower.includes("email") || /type\s*=\s*['"]email/i.test(s) || /name\s*=\s*['"]?\s*email/i.test(s)) {
+    out.push(
+      'input[name="username"]',
+      'input[name="user"]',
+      'input[name="login"]',
+      'input[type="text"]',
+    );
+  }
+  if (lower.includes("password") || /type\s*=\s*['"]password/i.test(s) || /name\s*=\s*['"]?\s*password/i.test(s)) {
+    out.push('input[type="password"]', 'input[name="password"]');
+  }
+
+  return uniqSelectors(out);
+}
+
+function expandWaitSelectors(primary: string): string[] {
+  const s = primary.trim();
+  const out: string[] = [s];
+  if (looksLikeBareKeyword(s)) {
+    out.push(
+      `input[name="${s}"]`,
+      `#${s}`,
+      `[id="${s}"]`,
+      `[data-testid="${s}"]`,
+    );
+  }
+  return uniqSelectors(out);
+}
+
+function expandClickSelectors(primary: string): string[] {
+  const s = primary.trim();
+  const lower = s.toLowerCase();
+  const out: string[] = [s];
+  if (
+    lower.includes("submit") ||
+    lower.includes("ingresar") ||
+    lower.includes("entrar") ||
+    lower.includes("login") ||
+    lower.includes("sign in")
+  ) {
+    out.push('button[type="submit"]', 'input[type="submit"]', 'button:has-text("Entrar")', 'button:has-text("Ingresar")');
+  }
+  return uniqSelectors(out);
+}
+
+async function tryWithSelectorFallbacks(
+  page: Page,
+  label: "fill" | "click" | "waitForSelector",
+  primarySelector: string,
+  defaultTimeoutMs: number,
+  expand: (sel: string) => string[],
+  runOne: (page: Page, sel: string, timeout: number) => Promise<unknown>,
+): Promise<void> {
+  const candidates = expand(primarySelector);
+  const firstTimeout = defaultTimeoutMs;
+  const retryTimeout = Math.min(12_000, Math.max(3_000, Math.floor(defaultTimeoutMs / 3)));
+  let lastError: unknown;
+  for (let i = 0; i < candidates.length; i++) {
+    const sel = candidates[i]!;
+    const timeout = i === 0 ? firstTimeout : retryTimeout;
+    try {
+      await runOne(page, sel, timeout);
+      if (i > 0) {
+        // eslint-disable-next-line no-console
+        console.log(`[runner] ${label}: selector alternativo OK`, { original: primarySelector, used: sel });
+      }
+      return;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError;
+}
+
 async function applyStep(
   page: Page,
   baseUrl: string,
@@ -43,11 +153,25 @@ async function applyStep(
       return;
     }
     case "click": {
-      await page.click(step.selector, { timeout: defaultTimeoutMs });
+      await tryWithSelectorFallbacks(
+        page,
+        "click",
+        step.selector,
+        defaultTimeoutMs,
+        expandClickSelectors,
+        (p, sel, t) => p.click(sel, { timeout: t }),
+      );
       return;
     }
     case "fill": {
-      await page.fill(step.selector, step.value, { timeout: defaultTimeoutMs });
+      await tryWithSelectorFallbacks(
+        page,
+        "fill",
+        step.selector,
+        defaultTimeoutMs,
+        expandFillSelectors,
+        (p, sel, t) => p.fill(sel, step.value, { timeout: t }),
+      );
       return;
     }
     case "press": {
@@ -56,7 +180,16 @@ async function applyStep(
     }
     case "waitForSelector": {
       const t = step.timeoutMs ?? defaultTimeoutMs;
-      await page.waitForSelector(step.selector, { timeout: t, state: "visible" });
+      await tryWithSelectorFallbacks(
+        page,
+        "waitForSelector",
+        step.selector,
+        t,
+        expandWaitSelectors,
+        async (p, sel, timeout) => {
+          await p.waitForSelector(sel, { timeout, state: "visible" });
+        },
+      );
       return;
     }
     case "snapshot": {
