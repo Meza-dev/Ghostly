@@ -53,6 +53,29 @@ function expandFillSelectors(primary: string): string[] {
   const lower = s.toLowerCase();
   const out: string[] = [s];
 
+  /** Buscadores y cajas de consulta: muchas UIs usan textarea o cambian name/aria-label. */
+  const isLikelySearchQueryField =
+    /name\s*=\s*['"]q['"]|\[name\s*=\s*['"]q['"]\]|searchbox|omnibox|buscador/i.test(s) ||
+    (/(input|textarea)/i.test(s) && /\bq\b/.test(lower));
+
+  if (isLikelySearchQueryField) {
+    out.push(
+      "textarea[name='q']",
+      'textarea[name="q"]',
+      'textarea[aria-label*="Search"]',
+      'textarea[aria-label*="Buscar"]',
+      "input[name='q']",
+      'input[name="q"]',
+      'input[aria-label*="Search"]',
+      'input[aria-label*="Buscar"]',
+      'input[title*="Buscar"]',
+      "[role='search'] textarea",
+      "[role='search'] input",
+      'form[role="search"] textarea',
+      'form[role="search"] input',
+    );
+  }
+
   if (lower.includes("username") || /name\s*=\s*['"]?\s*username/i.test(s)) {
     out.push(
       'input[name="email"]',
@@ -108,6 +131,10 @@ function expandClickSelectors(primary: string): string[] {
   return uniqSelectors(out);
 }
 
+function stripAnsi(message: string): string {
+  return message.replace(/\u001b\[[0-9;]*m/g, "");
+}
+
 async function tryWithSelectorFallbacks(
   page: Page,
   label: "fill" | "click" | "waitForSelector",
@@ -119,7 +146,7 @@ async function tryWithSelectorFallbacks(
   const candidates = expand(primarySelector);
   const firstTimeout = defaultTimeoutMs;
   const retryTimeout = Math.min(12_000, Math.max(3_000, Math.floor(defaultTimeoutMs / 3)));
-  let lastError: unknown;
+  const attemptErrors: string[] = [];
   for (let i = 0; i < candidates.length; i++) {
     const sel = candidates[i]!;
     const timeout = i === 0 ? firstTimeout : retryTimeout;
@@ -131,10 +158,14 @@ async function tryWithSelectorFallbacks(
       }
       return;
     } catch (e) {
-      lastError = e;
+      const raw = e instanceof Error ? e.message : String(e);
+      attemptErrors.push(`• ${sel} → ${stripAnsi(raw).slice(0, 280)}`);
     }
   }
-  throw lastError;
+  const summary =
+    `Tras probar ${candidates.length} selector(es) para «${label}» (plan: ${primarySelector.slice(0, 120)}${primarySelector.length > 120 ? "…" : ""}), ninguno respondió a tiempo o no existe en la página. ` +
+    `Revisa cookies/bloqueos de la UI o ajusta el selector.\nIntentos:\n${attemptErrors.join("\n")}`;
+  throw new Error(summary);
 }
 
 async function applyStep(
