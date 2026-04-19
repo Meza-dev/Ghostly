@@ -7,3 +7,7 @@ dist
 .turbo
 .pnpm-store
 artifacts
+
+# SQLite (desarrollo local)
+*.db
+*.db-journal
