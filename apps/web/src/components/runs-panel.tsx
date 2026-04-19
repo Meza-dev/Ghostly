@@ -79,19 +79,24 @@ export function RunsPanel() {
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col gap-3.5">
-        <div className="flex shrink-0 items-end justify-between gap-3">
-          <div className="flex flex-col gap-1">
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end sm:justify-between sm:gap-3">
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
             <span className="text-caption font-button text-muted-fg">
               {runs.length} ejecución{runs.length !== 1 ? "es" : ""}
             </span>
-            <button
-              type="button"
-              onClick={() => void fetchRuns()}
-              className="flex h-[34px] w-[34px] items-center justify-center rounded-[6px] border border-border bg-background text-muted-fg hover:text-foreground"
-              title="Refrescar"
-            >
-              <RefreshCw className="h-3.5 w-3.5" strokeWidth={2} />
-            </button>
+            <p className="max-w-xl text-caption text-muted-fg">
+              Historial de corridas.
+            </p>
+            <div className="flex items-center gap-2 pt-0.5">
+              <button
+                type="button"
+                onClick={() => void fetchRuns()}
+                className="flex h-[34px] w-[34px] items-center justify-center rounded-[6px] border border-border bg-background text-muted-fg hover:text-foreground"
+                title="Refrescar lista"
+              >
+                <RefreshCw className="h-3.5 w-3.5" strokeWidth={2} />
+              </button>
+            </div>
           </div>
           <button
             type="button"
@@ -119,8 +124,11 @@ export function RunsPanel() {
 
           <div className="min-h-0 flex-1 overflow-auto">
             {visibleRuns.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-small text-muted-fg">
-                Sin ejecuciones aún. Lanza una corrida para empezar.
+              <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-small text-muted-fg">
+                <p>Aún no hay corridas en esta vista.</p>
+                <p className="max-w-md text-caption">
+                  Pulsa <span className="font-nav-active text-foreground">Nueva corrida</span> para empezar a ejecutar tus  pruebas.
+                </p>
               </div>
             ) : (
               visibleRuns.map((r, i) => {
@@ -175,9 +183,10 @@ export function RunsPanel() {
       {showModal && (
         <NewRunModal
           onClose={() => setShowModal(false)}
-          onRunStarted={() => {
+          onRunStarted={(run) => {
             setShowModal(false);
             void fetchRuns();
+            navigate(`/runs/${run.id}`);
           }}
         />
       )}

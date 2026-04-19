@@ -19,9 +19,24 @@ function initialsFromEmail(email: string): string {
 }
 
 const navMain = [
-  { label: "Overview", icon: LayoutDashboard, path: "/" },
-  { label: "Ejecuciones", icon: CirclePlay, path: "/runs" },
-  { label: "Flujos & casos", icon: Workflow, path: "/flows" },
+  {
+    label: "Inicio",
+    icon: LayoutDashboard,
+    path: "/",
+    hint: "Proyectos y vista general",
+  },
+  {
+    label: "Ejecuciones",
+    icon: CirclePlay,
+    path: "/runs",
+    hint: "Historial de corridas y botón Nueva corrida",
+  },
+  {
+    label: "Flujos & casos",
+    icon: Workflow,
+    path: "/flows",
+    hint: "Próximamente: flujos reutilizables",
+  },
 ] as const;
 
 const navSys = [
@@ -69,14 +84,14 @@ export function Sidebar() {
             Navegación
           </p>
         )}
-        {navMain.map(({ label, icon: Icon, path }) => {
+        {navMain.map(({ label, icon: Icon, path, hint }) => {
           const active = location.pathname === path || (path !== "/" && location.pathname.startsWith(path));
           return (
             <button
               key={label}
               type="button"
               onClick={() => navigate(path)}
-              title={sidebarCollapsed ? label : undefined}
+              title={sidebarCollapsed ? `${label} — ${hint}` : hint}
               className={
                 active
                   ? `flex items-center gap-2 rounded-2xl border border-sidebar-active-border bg-sidebar-active px-3 py-2.5 text-body text-sidebar-emphasis ${sidebarCollapsed ? "justify-center" : ""}`

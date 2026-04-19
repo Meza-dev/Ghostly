@@ -31,6 +31,10 @@ export function LoginPage() {
           <div className="text-center">
             <h1 className="text-title font-title text-foreground">GhostTester</h1>
             <p className="mt-1 text-small text-muted-fg">Inicia sesión para continuar</p>
+            <p className="mt-3 max-w-[340px] text-caption leading-relaxed text-muted-fg">
+              Pruebas en navegador con Playwright: organiza por proyecto, ejecuta recorridos y revisa
+              resultados y capturas.
+            </p>
           </div>
         </div>
 

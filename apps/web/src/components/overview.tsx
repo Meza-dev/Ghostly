@@ -168,7 +168,7 @@ export function Overview() {
           <div className="flex flex-col gap-1">
             <h2 className="text-title font-title text-foreground">Proyectos</h2>
             <p className="text-caption text-muted-fg">
-              Selecciona un proyecto para ver sus ejecuciones
+              Cada proyecto agrupa corridas
             </p>
           </div>
           <button
