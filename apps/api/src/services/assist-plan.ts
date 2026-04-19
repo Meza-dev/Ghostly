@@ -46,7 +46,7 @@ function llmConfig() {
 }
 
 const SYSTEM_PROMPT = [
-  "Eres un planificador de pruebas E2E para Playwright.",
+  "Eres un planificador de pruebas E2E para Playwright. Razona según el CONTEXTO DE URL y el objetivo del usuario.",
   "Responde SIEMPRE y SOLO con un objeto JSON válido (sin markdown, sin texto extra) con esta forma EXACTA:",
   '{ "baseUrl": string, "steps": Step[], "defaultTimeoutMs"?: number }',
   "donde Step es una de estas variantes (campos exactos, sin extras):",
@@ -56,20 +56,57 @@ const SYSTEM_PROMPT = [
   '- { "action": "press", "key": string }',
   '- { "action": "waitForSelector", "selector": string, "timeoutMs"?: number }',
   '- { "action": "snapshot" }',
-  "Reglas:",
+  "Reglas generales:",
   '- "steps" SIEMPRE es un array (mínimo 1). NUNCA devuelvas un único step suelto.',
   '- Las acciones permitidas son SOLO las de la lista anterior. Nada de "type", "navigate", "wait".',
   "- Los selectores deben ser CSS válido (ej: input[name='email'], button[type='submit']).",
   "- Para login, prefiere selectores robustos por name/type/role.",
   "- Usa rutas relativas en goto.url cuando compartan baseUrl (ej: /login).",
+  "Buscadores (Google, Bing, etc.) y objetivos de «buscar»:",
+  "- Tras goto a la home, el cuadro de búsqueda puede ser input O textarea (p.ej. Google a menudo usa textarea[name='q']).",
+  "- Si el usuario quiere buscar una consulta, el fill debe usar un selector coherente con ese sitio; para google.com prueba textarea[name='q'] o input[name='q'].",
+  "- Si el sitio muestra banner de cookies o consentimiento, puedes añadir pasos cortos waitForSelector + click en botones típicos (Aceptar/Acepto/Accept/Essential only) SOLO si el selector es probable en CSS (button:has-text(...)) válido en Playwright.",
+  "- No inventes pasos que no puedan expresarse con las acciones permitidas.",
   "Ejemplo válido:",
   '{"baseUrl":"https://app.example.com","steps":[{"action":"goto","url":"/login"},{"action":"fill","selector":"input[name=\'email\']","value":"user@test.com"},{"action":"fill","selector":"input[name=\'password\']","value":"secret"},{"action":"click","selector":"button[type=\'submit\']"},{"action":"waitForSelector","selector":"text=Bienvenido"}]}',
 ].join("\n");
 
+function describeBaseUrlContext(baseUrl: string): string {
+  try {
+    const u = new URL(baseUrl);
+    const origin = u.origin;
+    const host = u.hostname;
+    const path = u.pathname || "/";
+    const hints: string[] = [];
+    if (/google\./i.test(host)) {
+      hints.push(
+        "Dominio Google: la búsqueda principal suele estar en textarea[name='q'] o input[name='q']; puede aparecer consentimiento de cookies antes de interactuar.",
+      );
+    } else if (/bing\.com/i.test(host)) {
+      hints.push("Bing: el campo de búsqueda suele ser input[name='q'] o #sb_form_q.");
+    } else if (/duckduckgo\./i.test(host)) {
+      hints.push("DuckDuckGo: suele ser input[name='q'] o #searchbox_input.");
+    }
+    return [
+      `URL declarada (origin): ${origin}`,
+      `Host: ${host}`,
+      `Ruta inicial útil para goto relativo: ${path}`,
+      hints.length > 0 ? `Notas: ${hints.join(" ")}` : "Notas: adapta selectores a esta URL real.",
+    ].join("\n");
+  } catch {
+    return `URL base (texto): ${baseUrl}`;
+  }
+}
+
 function buildUserPrompt(baseUrl: string, goal: string, retryHint?: string): string {
-  const base = `Base URL: ${baseUrl}\nObjetivo: ${goal}`;
-  if (!retryHint) return base;
-  return `${base}\n\nLa respuesta anterior NO cumplió el contrato. Errores: ${retryHint}\nDevuelve ahora el JSON con la forma EXACTA {"baseUrl":..., "steps":[...]}.`;
+  const context = [
+    describeBaseUrlContext(baseUrl),
+    "",
+    "Objetivo del usuario (interpreta la intención, no solo palabras sueltas):",
+    goal.trim(),
+  ].join("\n");
+  if (!retryHint) return context;
+  return `${context}\n\nLa respuesta anterior NO cumplió el contrato. Errores: ${retryHint}\nDevuelve ahora el JSON con la forma EXACTA {"baseUrl":..., "steps":[...]}.`;
 }
 
 function extractJsonBlock(raw: string): string {
@@ -372,7 +409,7 @@ export async function generateAssistPlan(input: AssistPlanRequest): Promise<Assi
       goal: input.goal,
       model: config.model,
       generatedAt: new Date().toISOString(),
-      promptVersion: "assist-v1",
+      promptVersion: "assist-v2",
     },
   };
 }

@@ -1,4 +1,4 @@
-import type { RunRecord } from "@ghosttester/runner";
+import type { AssistedMeta, RunRecord } from "@ghosttester/runner";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 
@@ -24,8 +24,7 @@ export async function saveRun(record: RunRecord, userId: string): Promise<void> 
     },
   };
   if (record.assisted) {
-    // Keep compatibility when Prisma client types are stale.
-    (data as Record<string, unknown>).assistedMeta = record.assisted as Prisma.InputJsonValue;
+    data.assistedMeta = JSON.stringify(record.assisted);
   }
 
   await prisma.run.create({
@@ -55,8 +54,17 @@ type DbRun = Awaited<ReturnType<typeof prisma.run.findUniqueOrThrow>> & {
   steps: Awaited<ReturnType<typeof prisma.step.findMany>>;
 };
 
+function parseAssistedMeta(raw: string | null | undefined): AssistedMeta | undefined {
+  if (raw == null || raw === "") return undefined;
+  try {
+    return JSON.parse(raw) as AssistedMeta;
+  } catch {
+    return undefined;
+  }
+}
+
 function toRecord(run: DbRun): RunRecord {
-  const assistedMeta = (run as { assistedMeta?: Prisma.JsonValue | null }).assistedMeta;
+  const assisted = parseAssistedMeta(run.assistedMeta);
   return {
     id: run.id,
     status: run.status as RunRecord["status"],
@@ -64,7 +72,7 @@ function toRecord(run: DbRun): RunRecord {
     durationMs: run.durationMs,
     baseUrl: run.baseUrl,
     ...(run.project ? { project: run.project } : {}),
-    ...(assistedMeta ? { assisted: assistedMeta as RunRecord["assisted"] } : {}),
+    ...(assisted ? { assisted } : {}),
     ...(run.videoPath ? { videoPath: run.videoPath } : {}),
     steps: run.steps.map((s) => ({
       index: s.index,
