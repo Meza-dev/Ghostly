@@ -1,6 +1,6 @@
-import { ChevronDown, ChevronUp, Plus, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { AssistedMeta, Step } from "../../../../packages/runner/src/schema.js";
+import type { AssistedMeta, RunRecord, Step } from "../../../../packages/runner/src/schema.js";
 import { useAppContext } from "../context/app-context";
 import { apiFetch } from "../lib/api";
 
@@ -104,9 +104,25 @@ function simpleRowsToExtraSteps(rows: SimpleRow[]): { ok: true; steps: Step[] } 
 /** JSON = solo pasos después del primer `goto` (la URL de inicio ya abre la página). */
 const DEFAULT_STEPS_JSON = JSON.stringify([{ action: "waitForSelector", selector: "h1" }], null, 2);
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  return `${Math.floor(ms / 60_000)} m ${Math.floor((ms % 60_000) / 1000)} s`;
+}
+
+const RUN_MODE_HELP: Record<"simple" | "advanced" | "assisted", string> = {
+  simple:
+    "Formulario de pasos (clic, rellenar, esperar selector…). No hace falta JSON: ideal para empezar o pruebas puntuales.",
+  advanced:
+    "Los mismos pasos en JSON, compatible con el runner. Útil si ya tienes definiciones, copias de otro entorno o quieres control total.",
+  assisted:
+    "Describes el objetivo en texto; la IA propone una secuencia de pasos que puedes editar. Luego confirmas con «Ejecutar plan» (requiere API de LLM configurada en el servidor).",
+};
+
 type Props = {
   onClose: () => void;
-  onRunStarted: () => void;
+  /** Se llama tras una ejecución correcta (HTTP 200 con cuerpo de corrida). */
+  onRunStarted: (run: RunRecord) => void;
 };
 
 type AssistPlanResponse = {
@@ -133,9 +149,6 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
   const [assistGoal, setAssistGoal] = useState("");
   const [assistStepsJson, setAssistStepsJson] = useState("[]");
   const [assistMeta, setAssistMeta] = useState<AssistedMeta | null>(null);
-  const [headless, setHeadless] = useState(true);
-  const [captureScreenshotAfterEachStep, setCaptureScreenshotAfterEachStep] = useState(true);
-  const [recordVideoOnFailure, setRecordVideoOnFailure] = useState(true);
 
   useEffect(() => {
     if (projectId) return;
@@ -282,6 +295,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
     }
 
     setLoading(true);
+    let completed: RunRecord | null = null;
     try {
       const res = await apiFetch("/v1/run", {
         method: "POST",
@@ -290,9 +304,9 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
           steps,
           project: projectId,
           ...(assisted ? { assisted } : {}),
-          headless,
-          captureScreenshotAfterEachStep,
-          recordVideoOnFailure,
+          headless: true,
+          captureScreenshotAfterEachStep: true,
+          recordVideoOnFailure: true,
         }),
       });
       if (!res.ok) {
@@ -304,65 +318,98 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         );
         return;
       }
-      onRunStarted();
+      const record = (await res.json()) as RunRecord;
+      if (!record?.id) {
+        setError("La respuesta no incluye el ID de la corrida.");
+        return;
+      }
+      completed = record;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error de red");
     } finally {
       setLoading(false);
     }
+
+    if (!completed) return;
+
+    const okSteps = completed.steps.filter((s) => s.ok).length;
+    const totalSteps = completed.steps.length;
+    const statusLabel =
+      completed.status === "pass" ? "Pasó" : completed.status === "fail" ? "Falló" : completed.status;
+
+    window.alert(
+      `Corrida terminada.\n\n` +
+        `Estado: ${statusLabel}\n` +
+        `Pasos OK: ${okSteps}/${totalSteps}\n` +
+        `Duración: ${formatDuration(completed.durationMs)}\n\n` +
+        `Pulsa Aceptar para abrir el detalle.`,
+    );
+    onRunStarted(completed);
   }
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="flex max-h-[90vh] w-full max-w-[640px] flex-col gap-4 overflow-hidden rounded-ui border border-border bg-card p-6 shadow-xl">
         <div className="flex shrink-0 items-center justify-between">
           <span className="font-nav-active text-body text-foreground">Nueva corrida</span>
           <button
             type="button"
-            onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-[6px] text-muted-fg hover:bg-accent"
+            onClick={() => { if (!loading) onClose(); }}
+            disabled={loading}
+            className="flex h-7 w-7 items-center justify-center rounded-[6px] text-muted-fg hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
+            aria-label="Cerrar"
           >
             <X className="h-4 w-4" strokeWidth={2} />
           </button>
         </div>
 
-        <div className="flex shrink-0 gap-1 rounded-[8px] bg-muted p-1">
-          <button
-            type="button"
-            onClick={() => setTab("simple")}
-            className={`flex-1 rounded-[6px] px-3 py-2 text-small font-button transition-colors ${
-              tab === "simple"
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-fg hover:text-foreground"
-            }`}
-          >
-            Simple
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("advanced")}
-            className={`flex-1 rounded-[6px] px-3 py-2 text-small font-button transition-colors ${
-              tab === "advanced"
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-fg hover:text-foreground"
-            }`}
-          >
-            Avanzado (JSON)
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("assisted")}
-            className={`flex-1 rounded-[6px] px-3 py-2 text-small font-button transition-colors ${
-              tab === "assisted"
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-fg hover:text-foreground"
-            }`}
-          >
-            Asistido (IA)
-          </button>
+        <div className="flex shrink-0 flex-col gap-2">
+          <div className="flex gap-1 rounded-[8px] bg-muted p-1">
+            <button
+              type="button"
+              onClick={() => setTab("simple")}
+              className={`flex-1 rounded-[6px] px-2 py-2 text-caption font-button transition-colors sm:px-3 sm:text-small ${
+                tab === "simple"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-fg hover:text-foreground"
+              }`}
+            >
+              Simple
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("advanced")}
+              className={`flex-1 rounded-[6px] px-2 py-2 text-caption font-button transition-colors sm:px-3 sm:text-small ${
+                tab === "advanced"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-fg hover:text-foreground"
+              }`}
+            >
+              Avanzado
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("assisted")}
+              className={`flex-1 rounded-[6px] px-2 py-2 text-caption font-button transition-colors sm:px-3 sm:text-small ${
+                tab === "assisted"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-fg hover:text-foreground"
+              }`}
+            >
+              Asistido
+            </button>
+          </div>
+          <p className="text-caption leading-snug text-muted-fg" id="run-mode-hint">
+            {RUN_MODE_HELP[tab]}
+          </p>
         </div>
 
-        <form onSubmit={(e) => void handleSubmit(e)} className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+        <form
+          onSubmit={(e) => void handleSubmit(e)}
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
+          aria-describedby="run-mode-hint"
+        >
           <div className="flex flex-col gap-1">
             <label className="text-caption text-muted-fg" htmlFor="proj-select">
               Proyecto
@@ -593,37 +640,6 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
             </div>
           )}
 
-          <fieldset className="flex shrink-0 flex-col gap-2 rounded-[8px] border border-border bg-muted/40 px-3 py-2">
-            <legend className="px-1 text-caption font-button text-muted-fg">Opciones de ejecución</legend>
-            <label className="flex items-center gap-2 text-caption text-foreground">
-              <input
-                type="checkbox"
-                checked={headless}
-                onChange={(e) => setHeadless(e.target.checked)}
-                className="rounded border-border"
-              />
-              Navegador sin cabeza (headless)
-            </label>
-            <label className="flex items-center gap-2 text-caption text-foreground">
-              <input
-                type="checkbox"
-                checked={captureScreenshotAfterEachStep}
-                onChange={(e) => setCaptureScreenshotAfterEachStep(e.target.checked)}
-                className="rounded border-border"
-              />
-              Captura de pantalla tras cada paso
-            </label>
-            <label className="flex items-center gap-2 text-caption text-foreground">
-              <input
-                type="checkbox"
-                checked={recordVideoOnFailure}
-                onChange={(e) => setRecordVideoOnFailure(e.target.checked)}
-                className="rounded border-border"
-              />
-              Video si falla
-            </label>
-          </fieldset>
-
           {error && (
             <p className="shrink-0 rounded-[4px] bg-error px-3 py-2 text-caption text-error-fg">{error}</p>
           )}
@@ -631,8 +647,9 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
           <div className="flex shrink-0 justify-end gap-2 border-t border-border pt-3">
             <button
               type="button"
-              onClick={onClose}
-              className="rounded-pill border border-border px-4 py-2 text-small font-button text-foreground hover:bg-accent"
+              onClick={() => { if (!loading) onClose(); }}
+              disabled={loading}
+              className="rounded-pill border border-border px-4 py-2 text-small font-button text-foreground hover:bg-accent disabled:opacity-50"
             >
               Cancelar
             </button>
@@ -647,5 +664,25 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         </form>
       </div>
     </div>
+
+    {loading && (
+      <div
+        className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 backdrop-blur-[3px]"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <div className="flex max-w-[min(360px,calc(100vw-2rem))] flex-col items-center gap-4 rounded-ui border border-border bg-card px-8 py-7 shadow-xl">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" strokeWidth={2} aria-hidden />
+          <div className="text-center">
+            <p className="text-body font-nav-active text-foreground">Ejecutando la corrida</p>
+            <p className="mt-2 text-caption text-muted-fg">
+              El navegador está siguiendo los pasos. Puede tardar un minuto o más; no cierres esta ventana.
+            </p>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
