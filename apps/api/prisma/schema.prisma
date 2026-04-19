@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
 model User {
@@ -51,7 +51,7 @@ model Run {
   baseUrl    String
   project    String?
   videoPath  String?
-  assistedMeta Json?
+  assistedMeta String?
   steps      Step[]
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
