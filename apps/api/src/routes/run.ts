@@ -1,12 +1,30 @@
-import { runFlow, safeParseRunInput } from "@ghosttester/runner";
-import type { AssistedMeta, RunRecord, Step } from "@ghosttester/runner";
+import { runAssistedFlow, runFlow, safeParseRunInput } from "@ghosttester/runner";
+import type {
+  AssistEvent,
+  AssistedMeta,
+  AssistedRunInput,
+  Step,
+  StepOutcome,
+} from "@ghosttester/runner";
 import { z } from "zod";
 import { Hono } from "hono";
 import { loadConfig } from "../config.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { redactAssistedMeta } from "../lib/redact-assist.js";
+import { createHealer, createStrategist } from "../services/assist-orchestrator.js";
+import { runControlRegistry } from "../services/run-control.js";
+import { runEventBus } from "../services/run-event-bus.js";
 import { projectExistsForUser } from "../store/projects.js";
-import { getAllRuns, getRun, saveRun } from "../store/runs.js";
+import {
+  appendRunEvent,
+  createRunningRun,
+  finalizeRun,
+  getAssistMemory,
+  getAllRuns,
+  getRun,
+  peekAssistMemorySteps,
+  upsertAssistMemory,
+} from "../store/runs.js";
 
 export const runRouter = new Hono();
 const appConfig = loadConfig();
@@ -16,6 +34,26 @@ const assistedMetaSchema: z.ZodType<AssistedMeta> = z.object({
   model: z.string().min(1),
   generatedAt: z.string().datetime(),
   promptVersion: z.string().min(1),
+});
+
+const assistV2Schema = z.object({
+  v2: z.literal(true),
+  goal: z.string().min(1),
+  maxHealingAttemptsPerStep: z.number().int().min(0).max(3).optional(),
+  observerMaxNodes: z.number().int().min(50).max(1000).optional(),
+  victory: z
+    .object({
+      textIncludes: z.array(z.string().min(1)).max(10).optional(),
+      selectorVisible: z.array(z.string().min(1)).max(10).optional(),
+      urlIncludes: z.array(z.string().min(1)).max(10).optional(),
+      mustAll: z.boolean().optional(),
+    })
+    .optional(),
+  maxHorizons: z.number().int().min(1).max(50).optional(),
+  stepsPerHorizon: z.number().int().min(1).max(10).optional(),
+  maxLoopMs: z.number().int().min(10_000).max(3_600_000).optional(),
+  modalLoaderMaxWaitMs: z.number().int().min(3_000).max(600_000).optional(),
+  memoryMode: z.enum(["off", "runtime", "adaptive"]).optional(),
 });
 
 function summarizeStepForLog(step: Step): Record<string, unknown> {
@@ -45,6 +83,45 @@ function summarizeStepForLog(step: Step): Record<string, unknown> {
   return { action: step.action };
 }
 
+function parseMemoryStepsFromEvents(events: AssistEvent[]): Step[] {
+  const out: Step[] = [];
+  const seen = new Set<string>();
+  for (const event of events) {
+    if (event.type !== "step_success") continue;
+    const payload = event.payload as Record<string, unknown>;
+    const raw = payload.step;
+    if (!raw || typeof raw !== "object") continue;
+    const step = raw as Record<string, unknown>;
+    if (typeof step.action !== "string") continue;
+    let normalized: Step | null = null;
+    if (step.action === "goto" && typeof step.url === "string") {
+      normalized = { action: "goto", url: step.url };
+    } else if (step.action === "click" && typeof step.selector === "string") {
+      normalized = { action: "click", selector: step.selector };
+    } else if (
+      step.action === "fill" &&
+      typeof step.selector === "string" &&
+      typeof step.value === "string"
+    ) {
+      normalized = { action: "fill", selector: step.selector, value: step.value };
+    } else if (step.action === "press" && typeof step.key === "string") {
+      normalized = { action: "press", key: step.key };
+    } else if (step.action === "waitForSelector" && typeof step.selector === "string") {
+      normalized = typeof step.timeoutMs === "number"
+        ? { action: "waitForSelector", selector: step.selector, timeoutMs: step.timeoutMs }
+        : { action: "waitForSelector", selector: step.selector };
+    } else if (step.action === "snapshot") {
+      normalized = { action: "snapshot" };
+    }
+    if (!normalized) continue;
+    const key = JSON.stringify(normalized);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(normalized);
+  }
+  return out;
+}
+
 runRouter.use("/runs*", authMiddleware);
 runRouter.use("/run", authMiddleware);
 
@@ -60,6 +137,65 @@ runRouter.get("/runs/:id", async (c) => {
   const record = await getRun(c.req.param("id"), user.id);
   if (!record) return c.json({ ok: false, error: "not found" }, 404);
   return c.json(record);
+});
+
+runRouter.post("/runs/:id/cancel", async (c) => {
+  const user = c.get("user");
+  const id = c.req.param("id");
+  const record = await getRun(id, user.id);
+  if (!record) return c.json({ ok: false, error: "not found" }, 404);
+  if (record.status !== "running") {
+    return c.json({ ok: false, error: "run ya finalizó" }, 409);
+  }
+  const res = runControlRegistry.cancel(id, user.id);
+  if (!res.ok) {
+    if (res.reason === "forbidden") return c.json({ ok: false, error: "forbidden" }, 403);
+    // Fallback para runs huérfanos tras reinicio del server:
+    // el registro quedó en "running" pero no hay AbortController en memoria.
+    const nowIso = new Date().toISOString();
+    const durationMs = Math.max(0, Date.now() - new Date(record.startedAt).getTime());
+    const existingSteps: StepOutcome[] = record.steps.map((s) => ({
+      index: s.index,
+      action: s.action,
+      ok: s.ok,
+      ...(s.error ? { error: s.error } : {}),
+      ...(s.screenshotPath ? { screenshotPath: s.screenshotPath } : {}),
+      ...(s.a11y ? { a11y: s.a11y } : {}),
+    }));
+    await finalizeRun({
+      id,
+      status: "fail",
+      durationMs,
+      steps: existingSteps,
+      ...(record.videoPath ? { videoPath: record.videoPath } : {}),
+    }).catch(() => undefined);
+    const lastSeq = record.events?.[record.events.length - 1]?.seq ?? 0;
+    const cancelEvent: AssistEvent = {
+      seq: lastSeq + 1,
+      type: "run_end",
+      at: nowIso,
+      payload: { cancelled: true, source: "user", staleAfterRestart: true },
+    };
+    await appendRunEvent(id, cancelEvent).catch(() => undefined);
+    runEventBus.publish(id, {
+      kind: "assist",
+      type: "run_end",
+      seq: cancelEvent.seq,
+      at: cancelEvent.at,
+      payload: cancelEvent.payload,
+    });
+    runEventBus.publish(id, { kind: "status", status: "fail", at: nowIso });
+    runEventBus.close(id);
+    return c.json({ ok: true, id, status: "cancelled" as const, stale: true });
+  }
+  runEventBus.publish(id, {
+    kind: "assist",
+    type: "run_end",
+    seq: Number.MAX_SAFE_INTEGER,
+    at: new Date().toISOString(),
+    payload: { cancelled: true, source: "user" },
+  });
+  return c.json({ ok: true, id, status: "cancelling" as const });
 });
 
 runRouter.post("/run", async (c) => {
@@ -97,6 +233,34 @@ runRouter.post("/run", async (c) => {
     }
     assisted = redactAssistedMeta(parsedAssisted.data);
   }
+
+  let assistV2: z.infer<typeof assistV2Schema> | undefined;
+  if (body.assist !== undefined) {
+    if (!appConfig.assistV2.enabled) {
+      return c.json({ ok: false, error: "assist v2 deshabilitado" }, 409);
+    }
+    const parsedAssist = assistV2Schema.safeParse(body.assist);
+    if (!parsedAssist.success) {
+      return c.json({ ok: false, error: "assist inválido", details: parsedAssist.error.flatten() }, 400);
+    }
+    assistV2 = parsedAssist.data;
+    if (assisted) {
+      assisted = {
+        ...assisted,
+        assistConfig: {
+          ...(assistV2.victory ? { victory: assistV2.victory } : {}),
+          ...(assistV2.maxHorizons !== undefined ? { maxHorizons: assistV2.maxHorizons } : {}),
+          ...(assistV2.stepsPerHorizon !== undefined ? { stepsPerHorizon: assistV2.stepsPerHorizon } : {}),
+          ...(assistV2.maxLoopMs !== undefined ? { maxLoopMs: assistV2.maxLoopMs } : {}),
+          ...(assistV2.modalLoaderMaxWaitMs !== undefined
+            ? { modalLoaderMaxWaitMs: assistV2.modalLoaderMaxWaitMs }
+            : {}),
+          ...(assistV2.memoryMode ? { memoryMode: assistV2.memoryMode } : {}),
+        },
+      };
+    }
+  }
+
   const id = crypto.randomUUID();
   const startedAt = new Date().toISOString();
 
@@ -121,40 +285,195 @@ runRouter.post("/run", async (c) => {
     );
   }
 
+  // Pre-crea el registro en estado "running" para que GET /v1/runs/:id y el SSE
+  // puedan empezar a responder inmediatamente mientras la corrida ejecuta.
   try {
-    const result = await runFlow(parsed.data);
-    const record: RunRecord = {
+    await createRunningRun({
       id,
-      status: result.ok ? "pass" : "fail",
+      userId: user.id,
       startedAt,
-      durationMs: result.durationMs,
       baseUrl: parsed.data.baseUrl,
-      project,
-      ...(assisted ? { assisted } : {}),
-      steps: result.steps,
-      ...(result.videoPath !== undefined ? { videoPath: result.videoPath } : {}),
-    };
-    await saveRun(record, user.id);
-    if (assisted) {
-      // eslint-disable-next-line no-console
-      console.log("[assist-run] Ejecución asistida finalizada", {
-        runId: id,
-        status: record.status,
-        durationMs: record.durationMs,
-        totalSteps: record.steps.length,
-        failedSteps: record.steps.filter((step) => !step.ok).length,
-      });
-    }
-    return c.json(record, 200);
+      project: project || null,
+      assisted,
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    if (assisted) {
-      // eslint-disable-next-line no-console
-      console.error("[assist-run] Error en ejecución asistida", {
-        runId: id,
-        message,
-      });
-    }
-    return c.json({ ok: false, error: "runner", message }, 500);
+    return c.json({ ok: false, error: "no se pudo crear run", message }, 500);
   }
+
+  // Notifica estado inicial por el bus para clientes ya suscritos.
+  runEventBus.publish(id, { kind: "status", status: "running", at: startedAt });
+  const controller = runControlRegistry.register(id, user.id);
+
+  // Fire-and-forget: ejecuta en background, emite eventos al bus y persiste final.
+  const executeRun = async () => {
+    try {
+      let result;
+      let memoryCandidateSteps: Step[] = [];
+      if (assistV2) {
+        const strategist = createStrategist({
+          llmTimeoutMs: appConfig.assist.llmTimeoutMs,
+          chunkSize: appConfig.assistV2.chunkSize,
+        });
+        const healer = createHealer({
+          llmTimeoutMs: appConfig.assist.llmTimeoutMs,
+          chunkSize: appConfig.assistV2.chunkSize,
+        });
+        let seedMemorySteps: Step[] = [];
+        if ((assistV2.memoryMode ?? appConfig.assistV2.memoryMode) === "adaptive") {
+          seedMemorySteps = await getAssistMemory({
+            userId: user.id,
+            project,
+            baseUrl: parsed.data.baseUrl,
+            goal: assistV2.goal,
+          });
+          if (seedMemorySteps.length > 0) {
+            // eslint-disable-next-line no-console
+            console.log("[assist-run] Memoria durable aplicada", {
+              runId: id,
+              steps: seedMemorySteps.length,
+            });
+          }
+        }
+        const replayFromMemory = seedMemorySteps.length > 0;
+        const assistedInput: AssistedRunInput = {
+          ...parsed.data,
+          steps: parsed.data.steps,
+          assist: {
+            v2: true,
+            goal: assistV2.goal,
+            maxHealingAttemptsPerStep:
+              assistV2.maxHealingAttemptsPerStep ?? appConfig.assistV2.healingAttempts,
+            observerMaxNodes:
+              assistV2.observerMaxNodes ?? appConfig.assistV2.observerMaxNodes,
+            ...(assistV2.victory ? { victory: assistV2.victory } : {}),
+            maxHorizons: assistV2.maxHorizons ?? appConfig.assistV2.maxHorizons,
+            stepsPerHorizon: assistV2.stepsPerHorizon ?? appConfig.assistV2.stepsPerHorizon,
+            maxLoopMs: assistV2.maxLoopMs ?? appConfig.assistV2.maxLoopMs,
+            modalLoaderMaxWaitMs:
+              assistV2.modalLoaderMaxWaitMs ?? appConfig.assistV2.modalLoaderMaxWaitMs,
+            memoryMode: assistV2.memoryMode ?? appConfig.assistV2.memoryMode,
+            ...(seedMemorySteps.length > 0 ? { seedMemorySteps } : {}),
+            replayFromMemory,
+          },
+        };
+        let seq = 0;
+        const assistedResult = await runAssistedFlow(assistedInput, {
+          strategist,
+          healer,
+          log: (message: string, details?: Record<string, unknown>) => {
+            // eslint-disable-next-line no-console
+            console.log(`[assist-run v2] ${message}`, details ?? {});
+            // Los logs del pipeline vienen como "assist/<type>", los publicamos al bus.
+            const type = message.startsWith("assist/") ? message.slice("assist/".length) : message;
+            const { stepIndex, ...payload } = (details ?? {}) as Record<string, unknown>;
+            const normalizedStepIndex =
+              typeof stepIndex === "number" ? stepIndex : undefined;
+            const event: AssistEvent = {
+              seq: ++seq,
+              type: type as AssistEvent["type"],
+              at: new Date().toISOString(),
+              ...(normalizedStepIndex !== undefined ? { stepIndex: normalizedStepIndex } : {}),
+              payload,
+            };
+            runEventBus.publish(id, {
+              kind: "assist",
+              type: event.type,
+              seq: event.seq,
+              at: event.at,
+              ...(event.stepIndex !== undefined ? { stepIndex: event.stepIndex } : {}),
+              payload: event.payload,
+            });
+            // Persistencia incremental para catch-up y reconexión.
+            void appendRunEvent(id, event);
+          },
+        }, { signal: controller.signal });
+        result = assistedResult;
+        memoryCandidateSteps = assistedResult.learnedFlow && assistedResult.learnedFlow.length > 0
+          ? assistedResult.learnedFlow
+          : parseMemoryStepsFromEvents(assistedResult.events);
+      } else {
+        result = await runFlow(parsed.data, { signal: controller.signal });
+      }
+
+      const status: "pass" | "fail" = result.ok ? "pass" : "fail";
+      await finalizeRun({
+        id,
+        status,
+        durationMs: result.durationMs,
+        steps: result.steps,
+        ...(result.videoPath !== undefined ? { videoPath: result.videoPath } : {}),
+      });
+
+      if (assistV2 && memoryCandidateSteps.length > 0) {
+        const memMode = assistV2.memoryMode ?? appConfig.assistV2.memoryMode;
+        if (memMode !== "off") {
+          let shouldPersist = status === "pass";
+          if (!shouldPersist && memMode === "adaptive") {
+            const prev = await peekAssistMemorySteps({
+              userId: user.id,
+              project,
+              baseUrl: parsed.data.baseUrl,
+              goal: assistV2.goal,
+            });
+            // No pisar una memoria más larga con un prefijo más corto tras un fallo.
+            shouldPersist = memoryCandidateSteps.length >= prev.length;
+          }
+          if (shouldPersist) {
+            await upsertAssistMemory({
+              userId: user.id,
+              project,
+              baseUrl: parsed.data.baseUrl,
+              goal: assistV2.goal,
+              steps: memoryCandidateSteps,
+            }).catch(() => undefined);
+          }
+        }
+      }
+
+      runEventBus.publish(id, {
+        kind: "status",
+        status,
+        at: new Date().toISOString(),
+      });
+
+      if (assisted) {
+        // eslint-disable-next-line no-console
+        console.log("[assist-run] Ejecución asistida finalizada", {
+          runId: id,
+          status,
+          durationMs: result.durationMs,
+          totalSteps: result.steps.length,
+          failedSteps: result.steps.filter((step) => !step.ok).length,
+        });
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      // eslint-disable-next-line no-console
+      console.error("[assist-run] Error en ejecución asistida", { runId: id, message });
+      try {
+        await finalizeRun({
+          id,
+          status: "fail",
+          durationMs: Date.now() - new Date(startedAt).getTime(),
+          steps: [],
+        });
+      } catch {
+        // ignore
+      }
+      runEventBus.publish(id, {
+        kind: "status",
+        status: "fail",
+        at: new Date().toISOString(),
+      });
+    } finally {
+      runControlRegistry.complete(id);
+      runEventBus.close(id);
+    }
+  };
+
+  // No await: lanza y responde ya.
+  void executeRun();
+
+  return c.json({ ok: true, id, status: "running" as const }, 202);
 });

@@ -8,6 +8,7 @@ import { authRouter } from "./routes/auth.js";
 import { planRouter } from "./routes/plan.js";
 import { projectsRouter } from "./routes/projects.js";
 import { runRouter } from "./routes/run.js";
+import { runEventsRouter } from "./routes/run-events.js";
 
 const ARTIFACTS_ROOT = resolve(process.cwd(), "artifacts");
 
@@ -42,6 +43,7 @@ export function createApp(): Hono {
   );
 
   app.route("/v1", runRouter);
+  app.route("/v1", runEventsRouter);
   app.route("/v1", planRouter);
   app.route("/v1", projectsRouter);
   app.route("/v1", apiKeysRouter);

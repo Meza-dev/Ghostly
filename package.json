@@ -10,7 +10,7 @@
     "start": "pnpm --filter @ghosttester/api start",
     "pw:install": "pnpm --filter @ghosttester/runner exec playwright install chromium",
     "mcp:build": "pnpm --filter @ghosttester/mcp-server build",
-    "test:tms-login": "pnpm exec tsx scripts/test-tms-login.ts"
+    "test:login-smoke": "pnpm exec tsx scripts/login-smoke-example.ts"
   },
   "engines": {
     "node": ">=20"

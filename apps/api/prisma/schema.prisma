@@ -16,8 +16,26 @@ model User {
   apiKeys      ApiKey[]
   projects     Project[]
   runs         Run[]
+  memories     AssistMemory[]
 
   @@map("users")
+}
+
+model AssistMemory {
+  id        String   @id @default(cuid())
+  userId    String
+  project   String
+  baseUrl   String
+  goal      String
+  stepsJson String
+  hits      Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, project, baseUrl, goal])
+  @@index([userId, project, updatedAt])
+  @@map("assist_memories")
 }
 
 model ApiKey {
@@ -53,9 +71,24 @@ model Run {
   videoPath  String?
   assistedMeta String?
   steps      Step[]
+  events     RunEvent[]
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("runs")
+}
+
+model RunEvent {
+  id        String   @id @default(cuid())
+  runId     String
+  sequence  Int
+  type      String
+  stepIndex Int?
+  payload   String
+  createdAt DateTime @default(now())
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, sequence])
+  @@map("run_events")
 }
 
 model Step {

@@ -93,6 +93,19 @@ export type AssistedMeta = {
   model: string;
   generatedAt: string;
   promptVersion: string;
+  assistConfig?: {
+    victory?: {
+      textIncludes?: string[];
+      selectorVisible?: string[];
+      urlIncludes?: string[];
+      mustAll?: boolean;
+    };
+    maxHorizons?: number;
+    stepsPerHorizon?: number;
+    maxLoopMs?: number;
+    modalLoaderMaxWaitMs?: number;
+    memoryMode?: "off" | "runtime" | "adaptive";
+  };
 };
 
 export type RunRecord = {

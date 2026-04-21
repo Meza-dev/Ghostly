@@ -19,6 +19,23 @@ export type RunResult = {
   videoPath?: string;
 };
 
+type RunFlowOptions = {
+  signal?: AbortSignal;
+};
+
+function isAbortLikeError(error: unknown): boolean {
+  if (!error) return false;
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  const msg = error instanceof Error ? error.message : String(error);
+  return /abort|cancel/i.test(msg);
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error("run cancelado por el usuario");
+  }
+}
+
 function resolveUrl(baseUrl: string, url: string): string {
   if (/^https?:\/\//i.test(url)) {
     return url;
@@ -46,6 +63,18 @@ function looksLikeBareKeyword(selector: string): boolean {
   if (!t) return false;
   if (/[#\[\].:\s=]/.test(t)) return false;
   return /^[a-z0-9_-]+$/i.test(t);
+}
+
+function stripLeadingDecorativeGlyphs(text: string): string {
+  return text.replace(/^[^\p{L}\p{N}"']+/u, "").replace(/\s+/g, " ").trim();
+}
+
+function escapeCssAttr(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function expandFillSelectors(primary: string): string[] {
@@ -112,13 +141,69 @@ function expandWaitSelectors(primary: string): string[] {
       `[data-testid="${s}"]`,
     );
   }
-  return uniqSelectors(out);
+  return uniqSelectors([...out, ...expandClickSelectors(s)]);
+}
+
+/** Ver packages/runner/src/assist/pipeline.ts (misma semántica). */
+function gtRoleFirstCandidates(s0: string): string[] {
+  const out: string[] = [];
+  const btn = s0.match(/^button:has-text\((['"])([\s\S]*?)\1\)/i);
+  if (btn?.[2]) {
+    const c = stripLeadingDecorativeGlyphs(btn[2]);
+    if (c) out.push(`__gt:role=button;name=${encodeURIComponent(c)}`);
+  }
+  const link = s0.match(/^a:has-text\((['"])([\s\S]*?)\1\)/i);
+  if (link?.[2]) {
+    const c = stripLeadingDecorativeGlyphs(link[2]);
+    if (c) out.push(`__gt:role=link;name=${encodeURIComponent(c)}`);
+  }
+  if (out.length === 0) {
+    const textOnly = s0.match(/^text=(.+)/i)?.[1];
+    if (textOnly) {
+      const c = stripLeadingDecorativeGlyphs(textOnly.replace(/^['"]|['"]$/g, ""));
+      if (c) out.push(`__gt:role=button;name=${encodeURIComponent(c)}`);
+    }
+  }
+  return out;
 }
 
 function expandClickSelectors(primary: string): string[] {
-  const s = primary.trim();
-  const lower = s.toLowerCase();
-  const out: string[] = [s];
+  const s0 = primary.trim().replace(/^link(?=\s*:)/i, "a");
+  const lower = s0.toLowerCase();
+  const out: string[] = [...gtRoleFirstCandidates(s0), s0];
+  const hasText = s0.match(/:has-text\((['"])([\s\S]*?)\1\)/i);
+  if (hasText?.[2]) {
+    const cleaned = stripLeadingDecorativeGlyphs(hasText[2]);
+    if (cleaned) {
+      if (cleaned !== hasText[2]) {
+        out.push(
+          s0.replace(/:has-text\((['"])([\s\S]*?)\1\)/i, `:has-text("${cleaned}")`),
+          `text=${cleaned}`,
+        );
+      }
+      const cssText = escapeCssAttr(cleaned);
+      out.push(
+        `button[aria-label="${cssText}"]`,
+        `button[aria-label*="${cssText}"]`,
+        `[role="button"][aria-label="${cssText}"]`,
+        `[role="button"][aria-label*="${cssText}"]`,
+      );
+    }
+  }
+  const textEngine = s0.match(/^text=(.+)/i)?.[1];
+  if (textEngine) {
+    const cleaned = stripLeadingDecorativeGlyphs(textEngine.replace(/^['"]|['"]$/g, ""));
+    if (cleaned) {
+      const cssText = escapeCssAttr(cleaned);
+      out.push(
+        `button:has-text("${cleaned}")`,
+        `button[aria-label="${cssText}"]`,
+        `button[aria-label*="${cssText}"]`,
+        `[role="button"][aria-label="${cssText}"]`,
+        `[role="button"][aria-label*="${cssText}"]`,
+      );
+    }
+  }
   if (
     lower.includes("submit") ||
     lower.includes("ingresar") ||
@@ -131,8 +216,166 @@ function expandClickSelectors(primary: string): string[] {
   return uniqSelectors(out);
 }
 
+async function waitForTargetVisible(page: Page, selector: string, timeout: number): Promise<void> {
+  const s = selector.trim();
+  const gt = s.match(/^__gt:role=(button|link);name=(.+)$/i);
+  if (gt?.[1] && gt[2]) {
+    let name: string;
+    try {
+      name = decodeURIComponent(gt[2]);
+    } catch {
+      name = gt[2];
+    }
+    const kind = gt[1].toLowerCase();
+    if (kind === "button") {
+      await page
+        .getByRole("button", { name: new RegExp(escapeRegex(name), "i") })
+        .first()
+        .waitFor({ state: "visible", timeout });
+      return;
+    }
+    await page.getByRole("link", { name: new RegExp(escapeRegex(name), "i") }).first().waitFor({ state: "visible", timeout });
+    return;
+  }
+  const buttonText = s.match(/^button:has-text\((['"])([\s\S]*?)\1\)/i)?.[2];
+  if (buttonText) {
+    const clean = stripLeadingDecorativeGlyphs(buttonText);
+    if (clean) {
+      try {
+        await page
+          .getByRole("button", { name: new RegExp(escapeRegex(clean), "i") })
+          .first()
+          .waitFor({ state: "visible", timeout });
+        return;
+      } catch {
+        /* continuar */
+      }
+      try {
+        const cssText = escapeCssAttr(clean);
+        await page
+          .locator(
+            `button[aria-label="${cssText}"], [role="button"][aria-label="${cssText}"], button[aria-label*="${cssText}"], [role="button"][aria-label*="${cssText}"]`,
+          )
+          .first()
+          .waitFor({ state: "visible", timeout });
+        return;
+      } catch {
+        /* continuar */
+      }
+    }
+  }
+  const linkText = s.match(/^a:has-text\((['"])([\s\S]*?)\1\)/i)?.[2];
+  if (linkText) {
+    const clean = stripLeadingDecorativeGlyphs(linkText);
+    if (clean) {
+      try {
+        await page
+          .getByRole("link", { name: new RegExp(escapeRegex(clean), "i") })
+          .first()
+          .waitFor({ state: "visible", timeout });
+        return;
+      } catch {
+        /* continuar */
+      }
+    }
+  }
+  const textEngine = s.match(/^text=(.+)/i)?.[1];
+  if (textEngine) {
+    const clean = stripLeadingDecorativeGlyphs(textEngine.replace(/^['"]|['"]$/g, ""));
+    if (clean) {
+      try {
+        await page.getByText(clean, { exact: false }).first().waitFor({ state: "visible", timeout });
+        return;
+      } catch {
+        /* continuar */
+      }
+    }
+  }
+  await page.waitForSelector(s, { state: "visible", timeout });
+}
+
+async function clickWithSmartSelector(page: Page, selector: string, timeout: number): Promise<void> {
+  const s = selector.trim();
+  const gt = s.match(/^__gt:role=(button|link);name=(.+)$/i);
+  if (gt?.[1] && gt[2]) {
+    let name: string;
+    try {
+      name = decodeURIComponent(gt[2]);
+    } catch {
+      name = gt[2];
+    }
+    const kind = gt[1].toLowerCase();
+    if (kind === "button") {
+      await page.getByRole("button", { name: new RegExp(escapeRegex(name), "i") }).first().click({ timeout });
+      return;
+    }
+    await page.getByRole("link", { name: new RegExp(escapeRegex(name), "i") }).first().click({ timeout });
+    return;
+  }
+  const buttonText = s.match(/^button:has-text\((['"])([\s\S]*?)\1\)/i)?.[2];
+  if (buttonText) {
+    const clean = stripLeadingDecorativeGlyphs(buttonText);
+    if (clean) {
+      try {
+        await page.getByRole("button", { name: new RegExp(escapeRegex(clean), "i") }).first().click({ timeout });
+        return;
+      } catch {
+        /* continuar */
+      }
+      try {
+        const cssText = escapeCssAttr(clean);
+        await page
+          .locator(
+            `button[aria-label="${cssText}"], [role="button"][aria-label="${cssText}"], button[aria-label*="${cssText}"], [role="button"][aria-label*="${cssText}"]`,
+          )
+          .first()
+          .click({ timeout });
+        return;
+      } catch {
+        /* continuar */
+      }
+    }
+  }
+  const linkText = s.match(/^a:has-text\((['"])([\s\S]*?)\1\)/i)?.[2];
+  if (linkText) {
+    const clean = stripLeadingDecorativeGlyphs(linkText);
+    if (clean) {
+      try {
+        await page.getByRole("link", { name: new RegExp(escapeRegex(clean), "i") }).first().click({ timeout });
+        return;
+      } catch {
+        /* continuar */
+      }
+    }
+  }
+  const textEngine = s.match(/^text=(.+)/i)?.[1];
+  if (textEngine) {
+    const clean = stripLeadingDecorativeGlyphs(textEngine.replace(/^['"]|['"]$/g, ""));
+    if (clean) {
+      try {
+        await page.getByText(clean, { exact: false }).first().click({ timeout });
+        return;
+      } catch {
+        /* continuar */
+      }
+    }
+  }
+  await page.click(s, { timeout });
+}
+
 function stripAnsi(message: string): string {
   return message.replace(/\u001b\[[0-9;]*m/g, "");
+}
+
+function selectorAttemptLabel(sel: string): string {
+  const m = sel.match(/^__gt:role=(button|link);name=(.+)$/i);
+  if (!m?.[1] || !m[2]) return sel;
+  try {
+    const name = decodeURIComponent(m[2]);
+    return `getByRole('${m[1].toLowerCase()}', { name: /${name}/i })`;
+  } catch {
+    return sel;
+  }
 }
 
 async function tryWithSelectorFallbacks(
@@ -154,12 +397,15 @@ async function tryWithSelectorFallbacks(
       await runOne(page, sel, timeout);
       if (i > 0) {
         // eslint-disable-next-line no-console
-        console.log(`[runner] ${label}: selector alternativo OK`, { original: primarySelector, used: sel });
+        console.log(`[runner] ${label}: selector alternativo OK`, {
+          original: primarySelector,
+          used: selectorAttemptLabel(sel),
+        });
       }
       return;
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
-      attemptErrors.push(`• ${sel} → ${stripAnsi(raw).slice(0, 280)}`);
+      attemptErrors.push(`• ${selectorAttemptLabel(sel)} → ${stripAnsi(raw).slice(0, 280)}`);
     }
   }
   const summary =
@@ -190,7 +436,7 @@ async function applyStep(
         step.selector,
         defaultTimeoutMs,
         expandClickSelectors,
-        (p, sel, t) => p.click(sel, { timeout: t }),
+        (p, sel, t) => clickWithSmartSelector(p, sel, t),
       );
       return;
     }
@@ -217,9 +463,7 @@ async function applyStep(
         step.selector,
         t,
         expandWaitSelectors,
-        async (p, sel, timeout) => {
-          await p.waitForSelector(sel, { timeout, state: "visible" });
-        },
+        (p, sel, timeout) => waitForTargetVisible(p, sel, timeout),
       );
       return;
     }
@@ -250,7 +494,7 @@ async function captureStepScreenshot(
   return filePath;
 }
 
-export async function runFlow(input: RunInput): Promise<RunResult> {
+export async function runFlow(input: RunInput, opts: RunFlowOptions = {}): Promise<RunResult> {
   const started = Date.now();
   const outcomes: StepOutcome[] = [];
   const shouldCaptureScreenshots = input.captureScreenshotAfterEachStep;
@@ -259,6 +503,7 @@ export async function runFlow(input: RunInput): Promise<RunResult> {
     ? runArtifactDir(input.artifactsDir)
     : undefined;
   const browser = await chromium.launch({ headless: input.headless });
+  const signal = opts.signal;
 
   let context: BrowserContext | undefined;
   let page: Page | undefined;
@@ -266,8 +511,10 @@ export async function runFlow(input: RunInput): Promise<RunResult> {
   let keepVideo = false;
   let runOk = true;
   let videoPath: string | undefined;
+  let aborted = false;
 
   try {
+    throwIfAborted(signal);
     if (artifactsDir) {
       await mkdir(artifactsDir, { recursive: true });
     }
@@ -284,8 +531,15 @@ export async function runFlow(input: RunInput): Promise<RunResult> {
     page = await context.newPage();
     pageVideo = page.video();
     page.setDefaultTimeout(input.defaultTimeoutMs);
+    const onAbort = () => {
+      aborted = true;
+      void context?.close().catch(() => undefined);
+      void browser.close().catch(() => undefined);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     for (let index = 0; index < input.steps.length; index++) {
+      throwIfAborted(signal);
       const step = input.steps[index]!;
       // Logging básico de cada paso para depuración interactiva
       // eslint-disable-next-line no-console
@@ -311,6 +565,16 @@ export async function runFlow(input: RunInput): Promise<RunResult> {
           ...(screenshotPath !== undefined ? { screenshotPath } : {}),
         });
       } catch (e) {
+        if (aborted || isAbortLikeError(e)) {
+          outcomes.push({
+            index,
+            action: step.action,
+            ok: false,
+            error: "run cancelado por el usuario",
+          });
+          runOk = false;
+          break;
+        }
         const message = e instanceof Error ? e.message : String(e);
         // eslint-disable-next-line no-console
         console.error(
@@ -355,7 +619,7 @@ export async function runFlow(input: RunInput): Promise<RunResult> {
       }
     }
 
-    await browser.close();
+    await browser.close().catch(() => undefined);
   }
 
   return {
