@@ -3,7 +3,8 @@
   "private": true,
   "packageManager": "pnpm@9.15.4",
   "scripts": {
-    "dev": "pnpm --filter @ghosttester/api dev",
+    "dev": "pnpm -r --parallel --filter @ghosttester/runner --filter @ghosttester/api run dev",
+    "dev:api": "pnpm --filter @ghosttester/api dev",
     "dev:web": "pnpm --filter @ghosttester/web dev",
     "build": "pnpm -r run build",
     "typecheck": "pnpm --filter @ghosttester/runner run typecheck && pnpm --filter @ghosttester/api run typecheck && pnpm --filter @ghosttester/mcp-server run typecheck && pnpm --filter @ghosttester/web run typecheck",

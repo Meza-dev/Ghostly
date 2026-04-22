@@ -11,6 +11,15 @@ import type {
 } from "@ghosttester/runner";
 
 type VisibleDialogHint = { heading?: string; ariaLabel?: string };
+type PlanProgressLite = {
+  step: Step;
+  status: "pending" | "ok" | "failed" | "dropped";
+  source?: string;
+  horizon?: number;
+  stepIndex?: number;
+  note?: string;
+};
+type StrategistContextWithPlan = StrategistContext & { planProgress?: PlanProgressLite[] };
 
 export class AssistOrchestratorError extends Error {
   status: number;
@@ -69,6 +78,24 @@ function buildSelectorFatigueHint(history: Array<{ step: Step; ok: boolean; erro
   ].join("\n");
 }
 
+function buildPlanProgressHint(ctx: StrategistContextWithPlan): string {
+  const progress = ctx.planProgress ?? [];
+  if (progress.length === 0) return "";
+  const lines = progress.slice(-60).map((p: PlanProgressLite, i: number) => {
+    const st = p.status.toUpperCase();
+    const src = p.source ? `/${p.source}` : "";
+    const step = JSON.stringify(p.step);
+    const suffix = p.note ? ` // ${p.note}` : "";
+    return `  ${i + 1}. [${st}${src}] ${step}${suffix}`;
+  });
+  return [
+    "",
+    "ESTADO DEL PLAN (NO repetir pasos con estado OK):",
+    ...lines,
+    "Regla estricta: si un paso está en OK, está prohibido volver a planificarlo.",
+  ].join("\n");
+}
+
 function buildModalFocusHint(snapshot: ObserverSnapshot): string {
   const d = (snapshot as ObserverSnapshot & { visibleDialogs?: VisibleDialogHint[] }).visibleDialogs;
   if (!d || d.length === 0) return "";
@@ -105,7 +132,11 @@ function goalMentionsCreatingCalificacion(goal: string): boolean {
 /** Panel tipo POTA: «Crear grupo» + campos de calificaciones del grupo (no es un overlay ajeno). */
 function treeShowsCalificacionGroupModal(markdown: string): boolean {
   const t = markdown.toLowerCase();
-  const hasTitle = t.includes("crear grupo") || t.includes("crear grupos");
+  const hasTitle =
+    t.includes("crear grupo") ||
+    t.includes("crear grupos") ||
+    t.includes("editar grupo") ||
+    t.includes("editar grupos");
   if (!hasTitle) return false;
   return (
     t.includes("calificaciones del grupo") ||
@@ -169,6 +200,18 @@ function filterMisleadingCloseForCalificacionCreateFlow(
       (/has-text\(\s*["']cerrar["']\s*\)/i.test(low) && /button|getbyrole/i.test(low));
     return !targetsGenericClose;
   });
+}
+
+function filterAlreadyCompletedPlanSteps(steps: Step[], ctx: StrategistContextWithPlan): Step[] {
+  const progress = ctx.planProgress ?? [];
+  if (progress.length === 0) return steps;
+  const done = new Set(
+    progress
+      .filter((p) => p.status === "ok")
+      .map((p) => canonicalStepKey(p.step)),
+  );
+  if (done.size === 0) return steps;
+  return steps.filter((s) => !done.has(canonicalStepKey(s)));
 }
 
 function buildCreateTripModalSemanticHint(snapshot: ObserverSnapshot): string {
@@ -248,6 +291,7 @@ const STRATEGIST_SYSTEM = [
     "- Para inputs cuyo mapa muestre `textbox \"…\"` (placeholder accesible), usa `[placeholder=\"…\"]` o el mismo texto con `fill`; evita `text=…` suelto (suele ser etiqueta, no el input).",
   "- El runner espera solo a que desaparezcan textos típicos de carga en modales (p. ej. «Cargando documentos», «Cargando remitos») antes de planificar y entre pasos; no dupliques ese wait salvo que necesites un timeout distinto.",
   "- Condición `selectorVisible` en victoria: si el usuario escribió lenguaje natural (p. ej. «toast de confirmación»), tradúcelo a `text=...`, selector CSS real (`.toast-success`), o fragmento estable del mapa; nunca dejes frases sueltas sin traducir.",
+  "- REGLA CRÍTICA: antes de proponer nuevos pasos, revisa historial + estado del plan. Si la última acción relevante fue «Guardar», «Enviar», «Confirmar», «Crear» y NO hay error explícito posterior, tu prioridad es verificar victoria; está PROHIBIDO repetir «Guardar/Crear/Enviar» sin evidencia de fallo previo.",
   "- Evita `button[type=submit]` a menos que el mapa lo respalde, porque muchos `<button>` no declaran `type=submit`.",
   'Responde SOLO un objeto JSON con forma EXACTA: { "steps": Step[], "hasMore": boolean, "rationale"?: string }.',
 ].join("\n");
@@ -292,6 +336,9 @@ function stripLeadingDecorativeGlyphs(text: string): string {
 function normalizePlannerSelector(selector: string): string {
   let s = selector.trim();
   if (!s) return s;
+
+  // `textbox[...]` viene del mapa a11y; para Playwright CSS real usamos solo el selector de atributo.
+  s = s.replace(/^textbox(\[[^\]]+\])$/i, "$1");
 
   // El LLM a veces concatena texto al tipo submit; no es CSS válido y el runner degenera en `button[type=submit]` solo.
   const brokenSubmitText = s.match(
@@ -339,6 +386,15 @@ function normalizePlannerSelector(selector: string): string {
   }
 
   return s;
+}
+
+function canonicalStepKey(step: Step): string {
+  if (step.action === "goto") return `goto|${step.url.trim()}`;
+  if (step.action === "press") return `press|${step.key.trim().toLowerCase()}`;
+  if (step.action === "click") return `click|${normalizePlannerSelector(step.selector).toLowerCase()}`;
+  if (step.action === "waitForSelector") return `wait|${normalizePlannerSelector(step.selector).toLowerCase()}`;
+  if (step.action === "fill") return `fill|${normalizePlannerSelector(step.selector).toLowerCase()}|${step.value}`;
+  return "snapshot";
 }
 
 function coerceStep(raw: unknown): Step | null {
@@ -607,7 +663,7 @@ async function callLlmJson(
   }
 }
 
-function buildStrategistUserPrompt(ctx: StrategistContext, chunkSize: number): string {
+function buildStrategistUserPrompt(ctx: StrategistContextWithPlan, chunkSize: number): string {
   const historyLine = ctx.history
     .slice(-5)
     .map(
@@ -627,6 +683,7 @@ function buildStrategistUserPrompt(ctx: StrategistContext, chunkSize: number): s
 
   const fatigue = buildSelectorFatigueHint(ctx.history);
   const fatigueBlock = fatigue ? `${fatigue}\n` : "";
+  const planProgressHint = buildPlanProgressHint(ctx);
   const modalHint = buildModalFocusHint(ctx.snapshot);
   const createTripHint = buildCreateTripModalSemanticHint(ctx.snapshot);
   const calificacionModalHint = buildCalificacionGroupModalHint(ctx.goal, ctx.snapshot.treeMarkdown);
@@ -640,6 +697,7 @@ function buildStrategistUserPrompt(ctx: StrategistContext, chunkSize: number): s
     "",
     "Mapa semántico actual (accessibility tree simplificado):",
     ctx.snapshot.treeMarkdown,
+    planProgressHint,
     modalHint,
     createTripHint,
     calificacionModalHint,
@@ -686,7 +744,8 @@ export type OrchestratorOptions = {
 
 export function createStrategist(opts: OrchestratorOptions): StrategistFn {
   return async (ctx: StrategistContext) => {
-    const user = buildStrategistUserPrompt(ctx, opts.chunkSize);
+    const withPlan = ctx as StrategistContextWithPlan;
+    const user = buildStrategistUserPrompt(withPlan, opts.chunkSize);
     debugLog("strategist", {
       stage: "context",
       goal: ctx.goal,
@@ -702,22 +761,25 @@ export function createStrategist(opts: OrchestratorOptions): StrategistFn {
       "strategist",
     ).catch(() => ({}) as Record<string, unknown>);
     const rawSteps = Array.isArray(raw.steps) ? raw.steps : [];
-    const steps = filterSidebarNavWhenCalificacionModalOpen(
-      filterMisleadingCloseForCalificacionCreateFlow(
-        filterGoogleMapsWidgetMisclickSteps(
-          filterStaleCreateTripModalSteps(
-            filterFalseOverlaySteps(
-              coerceStepsArray(rawSteps).slice(0, opts.chunkSize),
+    const steps = filterAlreadyCompletedPlanSteps(
+      filterSidebarNavWhenCalificacionModalOpen(
+        filterMisleadingCloseForCalificacionCreateFlow(
+          filterGoogleMapsWidgetMisclickSteps(
+            filterStaleCreateTripModalSteps(
+              filterFalseOverlaySteps(
+                coerceStepsArray(rawSteps).slice(0, opts.chunkSize),
+                ctx.snapshot.treeMarkdown,
+              ),
               ctx.snapshot.treeMarkdown,
             ),
-            ctx.snapshot.treeMarkdown,
           ),
+          ctx.goal,
+          ctx.snapshot.treeMarkdown,
         ),
         ctx.goal,
         ctx.snapshot.treeMarkdown,
       ),
-      ctx.goal,
-      ctx.snapshot.treeMarkdown,
+      withPlan,
     );
     const hasMore =
       typeof raw.hasMore === "boolean" ? raw.hasMore : steps.length === opts.chunkSize;

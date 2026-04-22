@@ -13,6 +13,8 @@ import type {
   AssistedRunInput,
   HealerFn,
   ObserverSnapshot,
+  PlanProgressItem,
+  PlanProgressReportItem,
   StrategistFn,
 } from "./types.js";
 
@@ -20,6 +22,8 @@ export type AssistedRunResult = RunResult & {
   events: AssistEvent[];
   lastSnapshot?: ObserverSnapshot;
   learnedFlow?: Step[];
+  finalPlan?: Step[];
+  planProgress?: PlanProgressReportItem[];
 };
 
 export type AssistedDeps = {
@@ -81,6 +85,15 @@ function stripLeadingDecorativeGlyphs(text: string): string {
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeLooseText(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
@@ -302,6 +315,18 @@ async function victoryTargetVisible(page: Page, raw: string): Promise<boolean> {
     try {
       return await page.getByText(s, { exact: false }).first().isVisible({ timeout: 2_500 });
     } catch {
+      const body = normalizeLooseText((await page.textContent("body").catch(() => "")) ?? "");
+      const cond = normalizeLooseText(s);
+      if (!body || !cond) return false;
+      if (body.includes(cond)) return true;
+      const asksCreateToastAndTable =
+        /toast|alerta|notific/.test(cond) && /creaci|crear|creado|guardad|exito/.test(cond) && /tabla|listado/.test(cond);
+      if (asksCreateToastAndTable) {
+        const hasSuccessSignal =
+          /grupo creado exitosamente|creado exitosamente|guardado exitosamente|exito/.test(body);
+        const hasRowSignal = /nueva calific/.test(body);
+        return hasSuccessSignal && hasRowSignal;
+      }
       return false;
     }
   }
@@ -310,6 +335,153 @@ async function victoryTargetVisible(page: Page, raw: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function naturalLanguageVictorySatisfied(
+  snapshot: ObserverSnapshot,
+  raw: string,
+  history: Array<{ step: Step; ok: boolean; error?: string }>,
+): boolean {
+  const phrase = normalizeLooseText(raw);
+  if (!phrase) return false;
+  const hay = normalizeLooseText(`${snapshot.title}\n${snapshot.url}\n${snapshot.treeMarkdown}`);
+  if (!hay) return false;
+  if (hay.includes(phrase)) return true;
+
+  const looksNatural =
+    /[\s,;]/.test(phrase) || phrase.length > 40 || (!/[#.\[\]=:]/.test(phrase) && !/^text=/.test(phrase));
+  if (!looksNatural) return false;
+
+  const asksToast = /\b(toast|alerta|notific|mensaje)\b/.test(phrase);
+  const asksCreate = /\b(creacion|crear|creada|creado|guardad|confirm|exito)\b/.test(phrase);
+  const asksTable = /\b(tabla|listado|table|row|fila)\b/.test(phrase);
+  const asksCalif = /\bcalific/.test(phrase);
+  const asksNueva = /\bnueva\b/.test(phrase);
+
+  const hasListadoCalif = /listado de calificaciones/.test(hay);
+  const hasNuevaCalifRow = /row\s+"[^"\n]*nueva calific/.test(hay) || /cell\s+"nueva calific/.test(hay);
+
+  // Frases tipo "toast de creación y aparece en tabla nueva calificación":
+  // si la tabla ya refleja la nueva fila, consideramos victoria aunque el toast sea efímero.
+  const hasFinalize = hasAnyFinalizeAction(history);
+  // Evita falso positivo temprano: para "aparece en tabla / toast creación"
+  // exigimos que ya exista acción final de guardado/confirmación.
+  if ((asksToast || asksCreate) && asksTable && asksCalif && hasNuevaCalifRow) return hasFinalize;
+  if (asksNueva && asksCalif && hasListadoCalif && hasNuevaCalifRow) return hasFinalize;
+  if (asksTable && asksCalif && hasNuevaCalifRow) return hasFinalize;
+
+  return false;
+}
+
+function selectorLikelyNeedsFinalizeAction(raw: string): boolean {
+  const phrase = normalizeLooseText(raw);
+  if (!phrase) return false;
+  const asksToast = /\b(toast|alerta|notific|mensaje)\b/.test(phrase);
+  const asksCreate = /\b(creacion|crear|creada|creado|guardad|confirm|exito)\b/.test(phrase);
+  const asksTable = /\b(tabla|listado|table|row|fila)\b/.test(phrase);
+  const asksCalif = /\bcalific/.test(phrase);
+  return asksCalif && (asksTable || asksToast || asksCreate);
+}
+
+function goalMentionsCalificacionesCreate(goal: string): boolean {
+  const g = normalizeLooseText(goal);
+  return /calific/.test(g) && /(crear|crea|nueva|nuevo)/.test(g);
+}
+
+function makeUniqueCalificacionName(value: string, uniqueTag: string): string {
+  const base = value.trim().replace(/\s+/g, " ");
+  if (!base) return value;
+  const alreadyUnique = /gt-[a-z0-9]{4,}/i.test(base);
+  if (alreadyUnique) return value;
+  return `${base} GT-${uniqueTag}`;
+}
+
+function maybeUniquifyFillStep(step: Step, goal: string, uniqueTag: string): Step {
+  if (step.action !== "fill") return step;
+  if (!goalMentionsCalificacionesCreate(goal)) return step;
+  if (isAuthLikeFillStep(step)) return step;
+  const sel = step.selector.toLowerCase();
+  const val = normalizeLooseText(step.value);
+  const looksNameField =
+    sel.includes("de malo a excelente") ||
+    sel.includes("nombre del grupo") ||
+    sel.includes("calificaci");
+  const genericNameValue =
+    val === "nueva calificacion" ||
+    val === "nueva calificación" ||
+    val === "calificacion" ||
+    val === "calificación";
+  if (!looksNameField && !genericNameValue) return step;
+  const uniqueValue = makeUniqueCalificacionName(step.value, uniqueTag);
+  if (uniqueValue === step.value) return step;
+  return { ...step, value: uniqueValue };
+}
+
+function isAuthLikeFillStep(step: Step): boolean {
+  if (step.action !== "fill") return false;
+  const s = step.selector.toLowerCase();
+  return /user|usuario|email|login|pass|password|contrase|token|api[_-]?key|secret/i.test(s);
+}
+
+function collectRecentBusinessFillValues(history: Array<{ step: Step; ok: boolean; error?: string }>): string[] {
+  const out: string[] = [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h = history[i]!;
+    if (!h.ok || h.step.action !== "fill" || isAuthLikeFillStep(h.step)) continue;
+    const v = h.step.value.trim();
+    if (v.length <= 1) continue;
+    if (/^\d+$/.test(v)) continue;
+    if (/^(ok|si|sí|no|n\/a)$/i.test(v)) continue;
+    if (!out.includes(v)) out.push(v);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+function snapshotContainsAnyValue(snapshot: ObserverSnapshot, values: string[]): boolean {
+  if (values.length === 0) return false;
+  const hay = normalizeLooseText(`${snapshot.title}\n${snapshot.url}\n${snapshot.treeMarkdown}`);
+  if (!hay) return false;
+  return values.some((v) => {
+    const n = normalizeLooseText(v);
+    return n.length >= 3 && hay.includes(n);
+  });
+}
+
+function isBusinessFillStep(step: Step): boolean {
+  return step.action === "fill" && !isAuthLikeFillStep(step);
+}
+
+function isBusinessFinalizeStep(step: Step): boolean {
+  if (step.action === "press") return /enter/i.test(step.key);
+  if (step.action !== "click") return false;
+  const s = step.selector.toLowerCase();
+  if (/ingresar|entrar|sign in|login/.test(s)) return false;
+  if (isLoginLikeStep(step)) return false;
+  return /guardar|save|confirm|confirmar|continuar|finalizar|crear calificaci[oó]n/i.test(s);
+}
+
+function hasAnyFinalizeAction(history: Array<{ step: Step; ok: boolean; error?: string }>): boolean {
+  let lastBusinessFill = -1;
+  for (let i = 0; i < history.length; i++) {
+    const h = history[i]!;
+    if (!h.ok) continue;
+    if (isBusinessFillStep(h.step)) lastBusinessFill = i;
+    if (isBusinessFinalizeStep(h.step) && lastBusinessFill >= 0 && i > lastBusinessFill) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function objectiveLikelyCompleted(
+  history: Array<{ step: Step; ok: boolean; error?: string }>,
+  snapshot: ObserverSnapshot,
+): boolean {
+  const fillValues = collectRecentBusinessFillValues(history);
+  if (fillValues.length === 0) return false;
+  if (!hasAnyFinalizeAction(history)) return false;
+  return snapshotContainsAnyValue(snapshot, fillValues);
 }
 
 function expandFillSelectors(primary: string): string[] {
@@ -351,6 +523,27 @@ function expandFillSelectors(primary: string): string[] {
   const name = extractSelectorName(s);
   if (name) {
     out.push(`[name="${name}"]`, `input[name="${name}"]`, `textarea[name="${name}"]`);
+  }
+
+  // En el modal de calificaciones, el LLM a veces propone "Ej: Excelente" o aria-label
+  // "Calificación" para el campo de etiqueta. Forzamos candidatos robustos del campo real.
+  const looksLikeCalificacionLabelField =
+    lower.includes("ej: excelente") ||
+    lower.includes("aria-label=\"calificación\"") ||
+    lower.includes("aria-label='calificación'") ||
+    lower.includes("aria-label=\"calificacion\"") ||
+    lower.includes("aria-label='calificacion'") ||
+    /calificaci[oó]n/.test(lower);
+  if (looksLikeCalificacionLabelField) {
+    out.push(
+      '[placeholder="Etiqueta (Ej: Malo, Regular, Bueno)"]',
+      '[placeholder*="Etiqueta"]',
+      'input[placeholder*="Etiqueta"]',
+      'textarea[placeholder*="Etiqueta"]',
+      "__gt:fill:placeholder=Etiqueta%20(Ej%3A%20Malo%2C%20Regular%2C%20Bueno)",
+      "__gt:fill:placeholderPrefix=Etiqueta",
+      "__gt:fill:textboxName=Etiqueta",
+    );
   }
 
   if (lower.includes("username") || /name\s*=\s*['"]?\s*username/i.test(s) || /name\s*=\s*['"]?\s*user/i.test(s)) {
@@ -1108,7 +1301,98 @@ function redactStepForEvent(step: Step): Record<string, unknown> {
 }
 
 function stepKey(step: Step): string {
-  return JSON.stringify(step);
+  if (step.action === "goto") return `goto|${step.url.trim().toLowerCase()}`;
+  if (step.action === "press") return `press|${step.key.trim().toLowerCase()}`;
+  if (step.action === "snapshot") return "snapshot";
+  if (step.action === "click" || step.action === "waitForSelector") {
+    const selector = step.selector
+      .trim()
+      .replace(/\s+/g, " ")
+      .replace(/^textbox(\[[^\]]+\])$/i, "$1")
+      .toLowerCase();
+    return `${step.action}|${selector}`;
+  }
+  const fillSelector = step.selector
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/^textbox(\[[^\]]+\])$/i, "$1")
+    .toLowerCase();
+  return `fill|${fillSelector}|${step.value}`;
+}
+
+function flowDedupKey(step: Step): string {
+  if (step.action === "goto") return `goto|${step.url.trim().toLowerCase()}`;
+  if (step.action === "press") return `press|${step.key.trim().toLowerCase()}`;
+  if (step.action === "snapshot") return "snapshot";
+  if (step.action === "fill") {
+    return `fill|${step.selector.trim().replace(/\s+/g, " ").toLowerCase()}`;
+  }
+  return `${step.action}|${step.selector.trim().replace(/\s+/g, " ").toLowerCase()}`;
+}
+
+function snapshotStateKey(snapshot: ObserverSnapshot | undefined): string | undefined {
+  if (!snapshot) return undefined;
+  const body = `${snapshot.url}\n${snapshot.title}\n${normalizeLooseText(snapshot.treeMarkdown).slice(0, 1200)}`;
+  let hash = 2166136261;
+  for (let i = 0; i < body.length; i++) {
+    hash ^= body.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${snapshot.url.toLowerCase()}|${snapshot.title.toLowerCase()}|${(hash >>> 0).toString(16)}`;
+}
+
+function hasSuccessfulHistoryStep(
+  history: Array<{ step: Step; ok: boolean; error?: string }>,
+  step: Step,
+): boolean {
+  const k = stepKey(step);
+  return history.some((h) => h.ok && stepKey(h.step) === k);
+}
+
+function findFirstPendingPlanIndex(planProgress: PlanProgressItem[], step: Step): number {
+  const k = stepKey(step);
+  return planProgress.findIndex((p) => p.status === "pending" && stepKey(p.step) === k);
+}
+
+function toPlanProgressReport(planProgress: PlanProgressItem[]): PlanProgressReportItem[] {
+  return planProgress.map((p) => ({
+    status: p.status,
+    step: redactStepForEvent(p.step),
+    ...(p.source ? { source: p.source } : {}),
+    ...(p.horizon !== undefined ? { horizon: p.horizon } : {}),
+    ...(p.stepIndex !== undefined ? { stepIndex: p.stepIndex } : {}),
+    ...(p.note ? { note: p.note } : {}),
+    ...(p.stateChanged !== undefined ? { stateChanged: p.stateChanged } : {}),
+  }));
+}
+
+function buildFinalGeneralPlan(planProgress: PlanProgressItem[], learnedFlow: Step[]): Step[] {
+  const successfulByOrder = planProgress
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ p }) => p.status === "ok")
+    .sort((a, b) => {
+      const ai = a.p.stepIndex ?? Number.MAX_SAFE_INTEGER;
+      const bi = b.p.stepIndex ?? Number.MAX_SAFE_INTEGER;
+      if (ai !== bi) return ai - bi;
+      return a.idx - b.idx;
+    })
+    .map(({ p }) => p.step);
+
+  const candidate = successfulByOrder.length > 0 ? successfulByOrder : learnedFlow;
+  const finalSteps: Step[] = [];
+  for (const step of candidate) {
+    if (step.action === "snapshot") continue;
+    const meta = planProgress.find((p) => p.status === "ok" && stepKey(p.step) === stepKey(step));
+    if (step.action === "waitForSelector" && meta?.stateChanged === false) continue;
+    const key = flowDedupKey(step);
+    const last = finalSteps[finalSteps.length - 1];
+    if (last && flowDedupKey(last) === key) {
+      finalSteps[finalSteps.length - 1] = step;
+      continue;
+    }
+    finalSteps.push(step);
+  }
+  return finalSteps;
 }
 
 /** Fracaso consecutivo del mismo paso al final del historial (fuerza salir del bucle replan). */
@@ -1227,6 +1511,23 @@ function treeIndicatesCreateTripModalOpen(snapshot: ObserverSnapshot | undefined
   );
 }
 
+function treeIndicatesCalificacionGroupModalOpen(snapshot: ObserverSnapshot | undefined): boolean {
+  if (!snapshot) return false;
+  const t = `${snapshot.treeMarkdown}\n${snapshot.title ?? ""}`.toLowerCase();
+  const hasHeading =
+    t.includes("crear grupo") ||
+    t.includes("crear grupos") ||
+    t.includes("editar grupo") ||
+    t.includes("editar grupos");
+  if (!hasHeading) return false;
+  return (
+    t.includes("calificaciones del grupo") ||
+    t.includes("textbox \"ej: de malo a excelente\"") ||
+    t.includes("textbox \"etiqueta (ej: malo, regular, bueno)\"") ||
+    (t.includes("guardar") && t.includes("cancelar"))
+  );
+}
+
 function selectorTargetsAgregarDatos(selector: string): boolean {
   const s = selector.toLowerCase();
   return s.includes("agregar datos") || /aria-label\s*=\s*["']?agregar datos["']?/i.test(selector);
@@ -1274,6 +1575,22 @@ function shouldDropRedundantViajesNavWhenOnTripsFlow(step: Step, snapshot: Obser
   );
 }
 
+/** Con modal de calificaciones abierto, re-navegar sidebar o reabrir modal es redundante y rompe el flujo. */
+function shouldDropRedundantCalificacionesFlowNav(step: Step, snapshot: ObserverSnapshot | undefined): boolean {
+  if (!treeIndicatesCalificacionGroupModalOpen(snapshot)) return false;
+  if (step.action !== "click" && step.action !== "waitForSelector") return false;
+  const low = step.selector.toLowerCase();
+  const targetsSidebar =
+    /has-text\(\s*["']diseño["']\s*\)/i.test(low) ||
+    /has-text\(\s*["']calificaciones["']\s*\)/i.test(low) ||
+    /text\s*=\s*["']?diseño["']?$/i.test(low) ||
+    /text\s*=\s*["']?calificaciones["']?$/i.test(low);
+  const targetsReopenCreate =
+    /has-text\(\s*["']crear calificaci[oó]n["']\s*\)/i.test(low) ||
+    /text\s*=\s*["']?crear calificaci[oó]n["']?$/i.test(low);
+  return targetsSidebar || targetsReopenCreate;
+}
+
 function stepUsesForbiddenAccessibilityRef(step: Step): boolean {
   if (step.action === "click" || step.action === "waitForSelector" || step.action === "fill") {
     return REF_SELECTOR_RE.test(step.selector);
@@ -1291,8 +1608,35 @@ function shouldDropPlannedStep(
     shouldDropStepInCurrentContext(step, snapshot, history) ||
     shouldDropRedundantModalOpenClick(step, snapshot) ||
     shouldDropStaleOpenActionWhenModalFormVisible(step, snapshot) ||
-    shouldDropRedundantViajesNavWhenOnTripsFlow(step, snapshot)
+    shouldDropRedundantViajesNavWhenOnTripsFlow(step, snapshot) ||
+    shouldDropRedundantCalificacionesFlowNav(step, snapshot)
   );
+}
+
+function isLikelyTerminalAction(step: Step): boolean {
+  if (step.action === "click") {
+    const s = step.selector.toLowerCase();
+    return /guardar|enviar|confirmar|submit|crear/.test(s);
+  }
+  if (step.action === "press") {
+    return step.key.toLowerCase() === "enter";
+  }
+  return false;
+}
+
+function hasTerminalLock(history: Array<{ step: Step; ok: boolean; error?: string }>): boolean {
+  let lastTerminalOk = -1;
+  for (let i = 0; i < history.length; i++) {
+    const h = history[i]!;
+    if (h.ok && isLikelyTerminalAction(h.step)) {
+      lastTerminalOk = i;
+    }
+  }
+  if (lastTerminalOk < 0) return false;
+  for (let i = lastTerminalOk + 1; i < history.length; i++) {
+    if (!history[i]!.ok) return false;
+  }
+  return true;
 }
 
 function hasEquivalentReplacementStep(failedStep: Step, healSteps: Step[]): boolean {
@@ -1338,6 +1682,7 @@ async function evaluateVictory(
   page: Page,
   snapshot: ObserverSnapshot,
   victory: NonNullable<AssistedRunInput["assist"]>["victory"] | undefined,
+  history: Array<{ step: Step; ok: boolean; error?: string }>,
 ): Promise<{ configured: boolean; met: boolean; details: Record<string, unknown> }> {
   if (!victory) {
     return { configured: false, met: false, details: { reason: "not-configured" } };
@@ -1359,8 +1704,16 @@ async function evaluateVictory(
   }
   if (victory.selectorVisible && victory.selectorVisible.length > 0) {
     const selectorResults: boolean[] = [];
+    const finalized = hasAnyFinalizeAction(history);
     for (const selector of victory.selectorVisible) {
-      selectorResults.push(await victoryTargetVisible(page, selector));
+      const visible = await victoryTargetVisible(page, selector);
+      const sem = naturalLanguageVictorySatisfied(snapshot, selector, history);
+      const candidate = visible || sem;
+      if (candidate && selectorLikelyNeedsFinalizeAction(selector) && !finalized) {
+        selectorResults.push(false);
+        continue;
+      }
+      selectorResults.push(candidate);
     }
     details.selectorVisible = selectorResults;
     checks.push(victory.mustAll ? selectorResults.every(Boolean) : selectorResults.some(Boolean));
@@ -1379,6 +1732,7 @@ export async function runAssistedFlow(
   const events: AssistEvent[] = [];
   const outcomes: StepOutcome[] = [];
   const history: Array<{ step: Step; ok: boolean; error?: string }> = [];
+  const runUniqueTag = Date.now().toString(36).slice(-6);
 
   const assist = input.assist;
   if (!assist || assist.v2 !== true) {
@@ -1420,6 +1774,7 @@ export async function runAssistedFlow(
   let lastSnapshot: ObserverSnapshot | undefined;
   let aborted = false;
   const learnedFlow: Step[] = [];
+  const planProgress: PlanProgressItem[] = [];
 
   try {
     throwIfAborted(opts.signal);
@@ -1469,6 +1824,11 @@ export async function runAssistedFlow(
     const pendingSteps: Step[] = effectiveReplay
       ? [...replaySeed]
       : [...input.steps];
+    planProgress.push(...pendingSteps.map((step): PlanProgressItem => ({
+      step,
+      status: "pending",
+      source: effectiveReplay ? "seed" : "input",
+    })));
     let strategistHasMore = assist.replayFromMemory ? true : pendingSteps.length === 0;
     let nextStepIndex = 0;
     let horizon = 0;
@@ -1486,10 +1846,59 @@ export async function runAssistedFlow(
     if (pendingSteps.length > 0) {
       emit("plan_chunk", {
         steps: pendingSteps.map(redactStepForEvent),
+        planProgress: planProgress.map((p) => ({
+          status: p.status,
+          source: p.source,
+          step: redactStepForEvent(p.step),
+          ...(p.horizon !== undefined ? { horizon: p.horizon } : {}),
+          ...(p.stepIndex !== undefined ? { stepIndex: p.stepIndex } : {}),
+        })),
         ...(replayFromMemory ? { source: effectiveReplay ? "memory" : "memory-rejected" } : {}),
         hasMore: false,
       });
     }
+
+    const checkImmediateVictory = async (
+      stepIndex: number,
+      horizonNo: number,
+      snapshotOverride?: ObserverSnapshot,
+      executedStep?: Step,
+    ): Promise<{ decision: "continue" | "success" | "fail"; reason?: string }> => {
+      if (snapshotOverride) {
+        lastSnapshot = snapshotOverride;
+      } else {
+        await waitForKnownModalLoadersToFinish(page!, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
+        lastSnapshot = await captureObserverSnapshot(page!, observerMaxNodes);
+      }
+      const victory = assist.victory
+        ? await evaluateVictory(page!, lastSnapshot, assist.victory, history)
+        : { configured: false, met: false, details: { reason: "not-configured" } };
+      const objectiveComplete = objectiveLikelyCompleted(history, lastSnapshot);
+      const terminalStep = executedStep ? isLikelyTerminalAction(executedStep) : false;
+      emit(
+        "victory_check",
+        {
+          horizon: horizonNo,
+          immediate: true,
+          ...victory.details,
+          configured: victory.configured,
+          met: victory.met,
+          objectiveLikelyCompleted: objectiveComplete,
+          terminalStep,
+        },
+        stepIndex,
+      );
+      if (victory.met) return { decision: "success", reason: "victory-met" };
+      if (objectiveComplete) {
+        if (!assist.victory && terminalStep) {
+          return { decision: "success", reason: "objective-likely-complete" };
+        }
+        if (assist.victory) {
+          return { decision: "fail", reason: "victory-not-met-after-goal-complete" };
+        }
+      }
+      return { decision: "continue" };
+    };
 
     while (runOk && (Date.now() - started) < maxLoopMs && horizon < maxHorizons) {
       throwIfAborted(opts.signal);
@@ -1506,21 +1915,49 @@ export async function runAssistedFlow(
           snapshot: lastSnapshot,
           victory: assist.victory,
           history,
+          planProgress,
           maxSteps: stepsPerHorizon,
         });
         strategistHasMore = chunk.hasMore;
         const dropped: Step[] = [];
         for (const ps of chunk.steps) {
+          if (hasSuccessfulHistoryStep(history, ps.step)) {
+            dropped.push(ps.step);
+            planProgress.push({
+              step: ps.step,
+              status: "dropped",
+              source: "strategist",
+              horizon,
+              note: "already-successful",
+            });
+            continue;
+          }
           if (shouldDropPlannedStep(ps.step, lastSnapshot, history)) {
             dropped.push(ps.step);
+            planProgress.push({
+              step: ps.step,
+              status: "dropped",
+              source: "strategist",
+              horizon,
+              note: "context-drop",
+            });
             continue;
           }
           pendingSteps.push(ps.step);
+          planProgress.push({ step: ps.step, status: "pending", source: "strategist", horizon });
         }
         emit("plan_chunk", {
           horizon,
           steps: chunk.steps.map((s) => redactStepForEvent(s.step)),
           droppedSteps: dropped.map(redactStepForEvent),
+          planProgress: planProgress.slice(-120).map((p) => ({
+            status: p.status,
+            source: p.source,
+            step: redactStepForEvent(p.step),
+            ...(p.horizon !== undefined ? { horizon: p.horizon } : {}),
+            ...(p.stepIndex !== undefined ? { stepIndex: p.stepIndex } : {}),
+            ...(p.note ? { note: p.note } : {}),
+          })),
           hasMore: chunk.hasMore,
         });
 
@@ -1532,7 +1969,15 @@ export async function runAssistedFlow(
               source: assist.seedMemorySteps && assist.seedMemorySteps.length > 0 ? "durable" : "runtime",
             });
             for (const memStep of runtimeMemory.slice(0, stepsPerHorizon)) {
+              if (hasSuccessfulHistoryStep(history, memStep)) continue;
               pendingSteps.push(memStep);
+              planProgress.push({
+                step: memStep,
+                status: "pending",
+                source: "seed",
+                horizon,
+                note: "memory-replay",
+              });
             }
           } else {
             emit("memory_miss", { horizon });
@@ -1548,8 +1993,57 @@ export async function runAssistedFlow(
       for (const step of horizonSteps) {
         throwIfAborted(opts.signal);
         const index = nextStepIndex++;
+        if (step.action === "fill") {
+          const uniq = maybeUniquifyFillStep(step, assist.goal, runUniqueTag);
+          if (uniq.action === "fill" && uniq.value !== step.value) {
+            step.value = uniq.value;
+          }
+        }
         emit("step_start", { step: redactStepForEvent(step) }, index);
+        if (hasSuccessfulHistoryStep(history, step)) {
+          const pendingIdx = findFirstPendingPlanIndex(planProgress, step);
+          if (pendingIdx >= 0) {
+            planProgress[pendingIdx] = {
+              ...planProgress[pendingIdx]!,
+              status: "dropped",
+              stepIndex: index,
+              note: "skipped-already-successful",
+            };
+          }
+          emit(
+            "step_success",
+            {
+              step: redactStepForEvent(step),
+              skipped: true,
+              reason: "already-successful",
+            },
+            index,
+          );
+          continue;
+        }
+        if (isLikelyTerminalAction(step) && hasTerminalLock(history)) {
+          const pendingIdx = findFirstPendingPlanIndex(planProgress, step);
+          if (pendingIdx >= 0) {
+            planProgress[pendingIdx] = {
+              ...planProgress[pendingIdx]!,
+              status: "dropped",
+              stepIndex: index,
+              note: "terminal-lock-after-success",
+            };
+          }
+          emit(
+            "step_success",
+            {
+              step: redactStepForEvent(step),
+              skipped: true,
+              reason: "terminal-lock-after-success",
+            },
+            index,
+          );
+          continue;
+        }
         try {
+          const stateBefore = snapshotStateKey(lastSnapshot);
           if (
             (step.action === "click" || step.action === "waitForSelector") &&
             countConsecutiveFailuresAtEndForStep(history, step) >= 2
@@ -1571,6 +2065,16 @@ export async function runAssistedFlow(
             ...(screenshotPath ? { screenshotPath } : {}),
           });
           history.push({ step, ok: true });
+          const pendingIdx = findFirstPendingPlanIndex(planProgress, step);
+          if (pendingIdx >= 0) {
+            planProgress[pendingIdx] = {
+              ...planProgress[pendingIdx]!,
+              status: "ok",
+              stepIndex: index,
+            };
+          } else {
+            planProgress.push({ step, status: "ok", source: "strategist", horizon, stepIndex: index });
+          }
           pushLearnedStep(learnedFlow, step);
           if (memoryMode !== "off") {
             const key = stepKey(step);
@@ -1588,6 +2092,37 @@ export async function runAssistedFlow(
             index,
           );
           await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
+          lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+          const stateAfter = snapshotStateKey(lastSnapshot);
+          const stateChanged = stateBefore !== undefined && stateAfter !== undefined
+            ? stateBefore !== stateAfter
+            : undefined;
+          const okIdx = planProgress.findIndex(
+            (p) => p.status === "ok" && p.stepIndex === index && stepKey(p.step) === stepKey(step),
+          );
+          if (okIdx >= 0) {
+            planProgress[okIdx] = {
+              ...planProgress[okIdx]!,
+              ...(stateBefore !== undefined ? { stateBefore } : {}),
+              ...(stateAfter !== undefined ? { stateAfter } : {}),
+              ...(stateChanged !== undefined ? { stateChanged } : {}),
+            };
+          }
+          const immediateVictory = await checkImmediateVictory(index, horizon, lastSnapshot, step);
+          if (immediateVictory.decision === "success") {
+            victoryMet = true;
+            stopReason = immediateVictory.reason ?? "victory-met";
+            pendingSteps.length = 0;
+            strategistHasMore = false;
+            break;
+          }
+          if (immediateVictory.decision === "fail") {
+            runOk = false;
+            stopReason = immediateVictory.reason ?? "victory-not-met-after-goal-complete";
+            pendingSteps.length = 0;
+            strategistHasMore = false;
+            break;
+          }
         } catch (error) {
           if (aborted || isAbortLikeError(error)) {
             outcomes.push({
@@ -1608,6 +2143,7 @@ export async function runAssistedFlow(
             try {
               await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
               lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+              const stateBeforeHeal = snapshotStateKey(lastSnapshot);
               emit(
                 "heal_start",
                 {
@@ -1647,8 +2183,28 @@ export async function runAssistedFlow(
                   },
                   index,
                 );
+                if (hasSuccessfulHistoryStep(history, healStep)) {
+                  planProgress.push({
+                    step: healStep,
+                    status: "dropped",
+                    source: "healer",
+                    horizon,
+                    stepIndex: index,
+                    note: "healer-already-successful",
+                  });
+                  continue;
+                }
+                planProgress.push({ step: healStep, status: "pending", source: "healer", horizon });
                 await applyStep(page, input.baseUrl, healStep, input.defaultTimeoutMs);
                 history.push({ step: healStep, ok: true });
+                const healPendingIdx = findFirstPendingPlanIndex(planProgress, healStep);
+                if (healPendingIdx >= 0) {
+                  planProgress[healPendingIdx] = {
+                    ...planProgress[healPendingIdx]!,
+                    status: "ok",
+                    stepIndex: index,
+                  };
+                }
                 pushLearnedStep(learnedFlow, healStep);
                 if (memoryMode !== "off") {
                   const healKey = stepKey(healStep);
@@ -1660,15 +2216,48 @@ export async function runAssistedFlow(
               }
               await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
               const postHealSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+              const stateAfterHeal = snapshotStateKey(postHealSnapshot);
+              const stateChangedByHeal =
+                stateBeforeHeal !== undefined && stateAfterHeal !== undefined
+                  ? stateBeforeHeal !== stateAfterHeal
+                  : undefined;
               const healerReplacedOriginal = hasEquivalentReplacementStep(step, sanitized);
               const skipOriginalStep = healerReplacedOriginal ||
                 shouldDropStepInCurrentContext(step, postHealSnapshot, history) ||
                 shouldDropRedundantModalOpenClick(step, postHealSnapshot) ||
                 shouldDropStaleOpenActionWhenModalFormVisible(step, postHealSnapshot) ||
-                shouldDropRedundantViajesNavWhenOnTripsFlow(step, postHealSnapshot);
+                shouldDropRedundantViajesNavWhenOnTripsFlow(step, postHealSnapshot) ||
+                shouldDropRedundantCalificacionesFlowNav(step, postHealSnapshot);
               if (!skipOriginalStep) {
                 await applyStep(page, input.baseUrl, step, input.defaultTimeoutMs);
                 history.push({ step, ok: true });
+                // Si el healer desbloqueó el paso y luego se reintenta el original,
+                // preservar el orden real en finalPlan: healer (index) -> original (index + 0.5).
+                const retriedStepIndex = index + 0.5;
+                const pendingIdx = findFirstPendingPlanIndex(planProgress, step);
+                if (pendingIdx >= 0) {
+                  planProgress[pendingIdx] = {
+                    ...planProgress[pendingIdx]!,
+                    status: "ok",
+                    stepIndex: retriedStepIndex,
+                    note: "ok-after-heal",
+                    ...(stateBeforeHeal !== undefined ? { stateBefore: stateBeforeHeal } : {}),
+                    ...(stateAfterHeal !== undefined ? { stateAfter: stateAfterHeal } : {}),
+                    ...(stateChangedByHeal !== undefined ? { stateChanged: stateChangedByHeal } : {}),
+                  };
+                } else {
+                  planProgress.push({
+                    step,
+                    status: "ok",
+                    source: "healer",
+                    horizon,
+                    stepIndex: retriedStepIndex,
+                    note: "ok-after-heal",
+                    ...(stateBeforeHeal !== undefined ? { stateBefore: stateBeforeHeal } : {}),
+                    ...(stateAfterHeal !== undefined ? { stateAfter: stateAfterHeal } : {}),
+                    ...(stateChangedByHeal !== undefined ? { stateChanged: stateChangedByHeal } : {}),
+                  });
+                }
                 pushLearnedStep(learnedFlow, step);
                 if (memoryMode !== "off") {
                   const key = stepKey(step);
@@ -1678,6 +2267,18 @@ export async function runAssistedFlow(
                   }
                 }
               } else {
+                const pendingIdx = findFirstPendingPlanIndex(planProgress, step);
+                if (pendingIdx >= 0) {
+                  planProgress[pendingIdx] = {
+                    ...planProgress[pendingIdx]!,
+                    status: "dropped",
+                    stepIndex: index,
+                    note: "replaced-by-healer",
+                    ...(stateBeforeHeal !== undefined ? { stateBefore: stateBeforeHeal } : {}),
+                    ...(stateAfterHeal !== undefined ? { stateAfter: stateAfterHeal } : {}),
+                    ...(stateChangedByHeal !== undefined ? { stateChanged: stateChangedByHeal } : {}),
+                  };
+                }
                 lastSnapshot = postHealSnapshot;
               }
               recovered = true;
@@ -1711,6 +2312,25 @@ export async function runAssistedFlow(
                 },
                 index,
               );
+              lastSnapshot = postHealSnapshot;
+              const immediateVictoryAfterHeal = await checkImmediateVictory(
+                index,
+                horizon,
+                lastSnapshot,
+                step,
+              );
+              if (immediateVictoryAfterHeal.decision === "success") {
+                victoryMet = true;
+                stopReason = immediateVictoryAfterHeal.reason ?? "victory-met";
+                pendingSteps.length = 0;
+                strategistHasMore = false;
+              } else if (immediateVictoryAfterHeal.decision === "fail") {
+                runOk = false;
+                stopReason = immediateVictoryAfterHeal.reason ?? "victory-not-met-after-goal-complete";
+                pendingSteps.length = 0;
+                strategistHasMore = false;
+              }
+              if (victoryMet || !runOk) break;
             } catch (healErr) {
               const healMessage = stripAnsi(
                 healErr instanceof Error ? healErr.message : String(healErr),
@@ -1721,6 +2341,15 @@ export async function runAssistedFlow(
 
           if (!recovered) {
             history.push({ step, ok: false, error: message });
+            const pendingIdx = findFirstPendingPlanIndex(planProgress, step);
+            if (pendingIdx >= 0) {
+              planProgress[pendingIdx] = {
+                ...planProgress[pendingIdx]!,
+                status: "failed",
+                stepIndex: index,
+                note: message.slice(0, 160),
+              };
+            }
             let replannedFromError = false;
             try {
               await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
@@ -1731,17 +2360,45 @@ export async function runAssistedFlow(
                 snapshot: lastSnapshot,
                 victory: assist.victory,
                 history,
+                planProgress,
                 maxSteps: stepsPerHorizon,
               });
               strategistHasMore = replanChunk.hasMore;
               const replanned: Step[] = [];
               const droppedReplanned: Step[] = [];
               for (const candidate of replanChunk.steps) {
+                if (hasSuccessfulHistoryStep(history, candidate.step)) {
+                  droppedReplanned.push(candidate.step);
+                  planProgress.push({
+                    step: candidate.step,
+                    status: "dropped",
+                    source: "replan",
+                    horizon,
+                    stepIndex: index,
+                    note: "already-successful",
+                  });
+                  continue;
+                }
                 if (shouldDropPlannedStep(candidate.step, lastSnapshot, history)) {
                   droppedReplanned.push(candidate.step);
+                  planProgress.push({
+                    step: candidate.step,
+                    status: "dropped",
+                    source: "replan",
+                    horizon,
+                    stepIndex: index,
+                    note: "context-drop",
+                  });
                   continue;
                 }
                 replanned.push(candidate.step);
+                planProgress.push({
+                  step: candidate.step,
+                  status: "pending",
+                  source: "replan",
+                  horizon,
+                  stepIndex: index,
+                });
               }
               if (replanned.length > 0) {
                 pendingSteps.unshift(...replanned);
@@ -1754,6 +2411,14 @@ export async function runAssistedFlow(
                     failedStep: redactStepForEvent(step),
                     steps: replanned.map(redactStepForEvent),
                     droppedSteps: droppedReplanned.map(redactStepForEvent),
+                    planProgress: planProgress.slice(-120).map((p) => ({
+                      status: p.status,
+                      source: p.source,
+                      step: redactStepForEvent(p.step),
+                      ...(p.horizon !== undefined ? { horizon: p.horizon } : {}),
+                      ...(p.stepIndex !== undefined ? { stepIndex: p.stepIndex } : {}),
+                      ...(p.note ? { note: p.note } : {}),
+                    })),
                     hasMore: replanChunk.hasMore,
                   },
                 );
@@ -1810,7 +2475,7 @@ export async function runAssistedFlow(
         }
       }
 
-      if (!runOk) break;
+      if (!runOk || victoryMet) break;
       await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
       lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
       emit("horizon_end", {
@@ -1819,11 +2484,23 @@ export async function runAssistedFlow(
         hasMore: strategistHasMore,
       });
 
-      const victory = await evaluateVictory(page, lastSnapshot, assist.victory);
-      emit("victory_check", { horizon, ...victory.details, configured: victory.configured, met: victory.met });
+      const victory = await evaluateVictory(page, lastSnapshot, assist.victory, history);
+      const completed = assist.victory ? objectiveLikelyCompleted(history, lastSnapshot) : false;
+      emit("victory_check", {
+        horizon,
+        ...victory.details,
+        configured: victory.configured,
+        met: victory.met,
+        objectiveLikelyCompleted: completed,
+      });
       if (victory.met) {
         victoryMet = true;
         stopReason = "victory-met";
+        break;
+      }
+      if (assist.victory && completed) {
+        runOk = false;
+        stopReason = "victory-not-met-after-goal-complete";
         break;
       }
       if (!assist.victory && pendingSteps.length === 0 && !strategistHasMore) {
@@ -1858,11 +2535,30 @@ export async function runAssistedFlow(
     await browser.close().catch(() => undefined);
   }
 
+  for (const p of planProgress) {
+    if (p.status !== "pending") continue;
+    p.status = "dropped";
+    p.note = p.note ?? "not-executed-after-stop";
+  }
+
+  const finalPlan = buildFinalGeneralPlan(planProgress, learnedFlow);
+  const planProgressReport = toPlanProgressReport(planProgress);
+  const planProgressSummary = {
+    total: planProgressReport.length,
+    ok: planProgressReport.filter((p) => p.status === "ok").length,
+    failed: planProgressReport.filter((p) => p.status === "failed").length,
+    dropped: planProgressReport.filter((p) => p.status === "dropped").length,
+    pending: planProgressReport.filter((p) => p.status === "pending").length,
+  };
+
   emit("run_end", {
     ok: runOk,
     durationMs: Date.now() - started,
     totalSteps: outcomes.length,
     failedSteps: outcomes.filter((o) => !o.ok).length,
+    planProgressSummary,
+    planProgress: planProgressReport,
+    finalPlan: finalPlan.map(redactStepForEvent),
   });
 
   return {
@@ -1872,6 +2568,8 @@ export async function runAssistedFlow(
     ...(videoPath ? { videoPath } : {}),
     events,
     ...(lastSnapshot ? { lastSnapshot } : {}),
-    ...(learnedFlow.length > 0 ? { learnedFlow } : {}),
+    ...(finalPlan.length > 0 ? { learnedFlow: finalPlan } : {}),
+    ...(finalPlan.length > 0 ? { finalPlan } : {}),
+    ...(planProgressReport.length > 0 ? { planProgress: planProgressReport } : {}),
   };
 }

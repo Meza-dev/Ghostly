@@ -101,12 +101,29 @@ export type PlannedChunk = {
   hasMore: boolean;
 };
 
+export type PlanProgressItem = {
+  step: Step;
+  status: "pending" | "ok" | "failed" | "dropped";
+  source?: "input" | "seed" | "strategist" | "replan" | "healer";
+  horizon?: number;
+  stepIndex?: number;
+  note?: string;
+  stateBefore?: string;
+  stateAfter?: string;
+  stateChanged?: boolean;
+};
+
+export type PlanProgressReportItem = Omit<PlanProgressItem, "step"> & {
+  step: Record<string, unknown>;
+};
+
 export type StrategistContext = {
   goal: string;
   baseUrl: string;
   snapshot: ObserverSnapshot;
   victory?: VictoryCondition;
   history: Array<{ step: Step; ok: boolean; error?: string }>;
+  planProgress?: PlanProgressItem[];
   maxSteps: number;
 };
 

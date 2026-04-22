@@ -20,6 +20,25 @@ type RunStartResponse = {
   status: "running";
 };
 
+function asStep(raw: unknown): Step | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const action = obj.action;
+  if (action === "goto" && typeof obj.url === "string") return { action: "goto", url: obj.url };
+  if (action === "click" && typeof obj.selector === "string") return { action: "click", selector: obj.selector };
+  if (action === "fill" && typeof obj.selector === "string" && typeof obj.value === "string") {
+    return { action: "fill", selector: obj.selector, value: obj.value };
+  }
+  if (action === "press" && typeof obj.key === "string") return { action: "press", key: obj.key };
+  if (action === "waitForSelector" && typeof obj.selector === "string") {
+    return typeof obj.timeoutMs === "number"
+      ? { action: "waitForSelector", selector: obj.selector, timeoutMs: obj.timeoutMs }
+      : { action: "waitForSelector", selector: obj.selector };
+  }
+  if (action === "snapshot") return { action: "snapshot" };
+  return null;
+}
+
 function getInitialGotoFromBaseUrl(baseUrl: string): string {
   try {
     const parsed = new URL(baseUrl);
@@ -111,24 +130,29 @@ export function RunDetail() {
   async function handleRerun(): Promise<void> {
     if (!run || rerunning || !run.project) return;
     const goal = run.assisted?.goal?.trim();
-    if (!goal) {
-      setRerunError("Solo se puede reejecutar corridas asistidas con objetivo.");
+    const replaySteps = rerunnableSteps;
+    const canUseAssistGoal = Boolean(goal);
+    const canUseReplaySteps = replaySteps.length > 0;
+    if (!canUseAssistGoal && !canUseReplaySteps) {
+      setRerunError("No hay objetivo asistido ni pasos replayables para reejecutar.");
       return;
     }
     setRerunError(null);
     setRerunning(true);
     try {
-      const firstStep: Step = { action: "goto", url: getInitialGotoFromBaseUrl(run.baseUrl) };
       const assistConfig = run.assisted?.assistConfig;
       const body: Record<string, unknown> = {
         baseUrl: run.baseUrl,
-        steps: [firstStep],
         project: run.project,
-        assisted: run.assisted,
         headless: true,
         captureScreenshotAfterEachStep: true,
         recordVideoOnFailure: true,
-        assist: {
+      };
+      if (canUseAssistGoal) {
+        const firstStep: Step = { action: "goto", url: getInitialGotoFromBaseUrl(run.baseUrl) };
+        body.steps = [firstStep];
+        body.assisted = run.assisted;
+        body.assist = {
           v2: true,
           goal,
           memoryMode: assistConfig?.memoryMode ?? "adaptive",
@@ -136,8 +160,10 @@ export function RunDetail() {
           ...(assistConfig?.maxHorizons !== undefined ? { maxHorizons: assistConfig.maxHorizons } : {}),
           ...(assistConfig?.stepsPerHorizon !== undefined ? { stepsPerHorizon: assistConfig.stepsPerHorizon } : {}),
           ...(assistConfig?.maxLoopMs !== undefined ? { maxLoopMs: assistConfig.maxLoopMs } : {}),
-        },
-      };
+        };
+      } else {
+        body.steps = replaySteps;
+      }
       const res = await apiFetch("/v1/run", {
         method: "POST",
         body: JSON.stringify(body),
@@ -227,6 +253,20 @@ export function RunDetail() {
       .map(([, s]) => s);
   }, [mergedEvents]);
 
+  const rerunnableSteps = useMemo<Step[]>(() => {
+    const byIndex = new Map<number, Step>();
+    for (const ev of mergedEvents) {
+      if (typeof ev.stepIndex !== "number") continue;
+      if (ev.type !== "step_start" && ev.type !== "step_success" && ev.type !== "step_failure") continue;
+      const payload = ev.payload as Record<string, unknown>;
+      const fromRaw = asStep(payload.rawStep);
+      const fromRedacted = asStep(payload.step);
+      const parsed = fromRaw ?? fromRedacted;
+      if (parsed) byIndex.set(ev.stepIndex, parsed);
+    }
+    return [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, step]) => step);
+  }, [mergedEvents]);
+
   // Durante la ejecución derivamos los pasos visibles desde los eventos en vivo;
   // al terminar, usamos los pasos persistidos del run.
   type DisplayStep = {
@@ -291,7 +331,7 @@ export function RunDetail() {
       </div>
     );
   }
-  const canRerun = !isLive && Boolean(run.project) && Boolean(run.assisted?.goal);
+  const canRerun = !isLive && Boolean(run.project) && (Boolean(run.assisted?.goal) || rerunnableSteps.length > 0);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto pb-4">
@@ -384,7 +424,7 @@ export function RunDetail() {
               onClick={() => void handleRerun()}
               disabled={!canRerun || rerunning}
               className="inline-flex items-center gap-1.5 rounded-[4px] border border-primary/40 bg-primary/10 px-2.5 py-1 text-caption text-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
-              title={canRerun ? "Reejecutar con el mismo objetivo" : "Requiere corrida asistida con proyecto"}
+              title={canRerun ? "Reejecutar corrida" : "Requiere proyecto y objetivo asistido o pasos replayables"}
             >
               {rerunning ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />

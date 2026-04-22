@@ -29,6 +29,8 @@ export type {
   HealerFn,
   HealerResult,
   ObserverSnapshot,
+  PlanProgressItem,
+  PlanProgressReportItem,
   PlannedChunk,
   PlannedStep,
   SemanticHint,

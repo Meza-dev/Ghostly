@@ -21,6 +21,9 @@ export type RunResult = {
 
 type RunFlowOptions = {
   signal?: AbortSignal;
+  onStepStart?: (ctx: { index: number; step: Step }) => void | Promise<void>;
+  onStepSuccess?: (ctx: { index: number; step: Step; screenshotPath?: string; a11y?: unknown }) => void | Promise<void>;
+  onStepFailure?: (ctx: { index: number; step: Step; error: string; screenshotPath?: string; final: boolean }) => void | Promise<void>;
 };
 
 function isAbortLikeError(error: unknown): boolean {
@@ -541,6 +544,7 @@ export async function runFlow(input: RunInput, opts: RunFlowOptions = {}): Promi
     for (let index = 0; index < input.steps.length; index++) {
       throwIfAborted(signal);
       const step = input.steps[index]!;
+      await opts.onStepStart?.({ index, step });
       // Logging básico de cada paso para depuración interactiva
       // eslint-disable-next-line no-console
       console.log(
@@ -564,8 +568,20 @@ export async function runFlow(input: RunInput, opts: RunFlowOptions = {}): Promi
           ...(a11y !== undefined ? { a11y } : {}),
           ...(screenshotPath !== undefined ? { screenshotPath } : {}),
         });
+        await opts.onStepSuccess?.({
+          index,
+          step,
+          ...(a11y !== undefined ? { a11y } : {}),
+          ...(screenshotPath !== undefined ? { screenshotPath } : {}),
+        });
       } catch (e) {
         if (aborted || isAbortLikeError(e)) {
+          await opts.onStepFailure?.({
+            index,
+            step,
+            error: "run cancelado por el usuario",
+            final: true,
+          });
           outcomes.push({
             index,
             action: step.action,
@@ -595,6 +611,13 @@ export async function runFlow(input: RunInput, opts: RunFlowOptions = {}): Promi
           ok: false,
           error: message,
           ...(screenshotPath !== undefined ? { screenshotPath } : {}),
+        });
+        await opts.onStepFailure?.({
+          index,
+          step,
+          error: message,
+          ...(screenshotPath !== undefined ? { screenshotPath } : {}),
+          final: true,
         });
         keepVideo = true;
         runOk = false;

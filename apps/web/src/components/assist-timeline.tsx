@@ -94,7 +94,12 @@ function formatPayload(type: AssistEventType, payload: Record<string, unknown>):
     return `horizonte=${h} · pendientes=${pending}`;
   }
   if (type === "victory_check") {
-    return `configured=${String(payload.configured)} · met=${String(payload.met)}`;
+    const cfg = `configured=${String(payload.configured)}`;
+    const met = `met=${String(payload.met)}`;
+    const obj = `objectiveLikelyCompleted=${String(payload.objectiveLikelyCompleted)}`;
+    const immediate = payload.immediate === true ? "immediate=true" : "";
+    const terminal = payload.terminalStep === true ? "terminalStep=true" : "";
+    return [cfg, met, obj, immediate, terminal].filter(Boolean).join(" · ");
   }
   if (type === "memory_hit") {
     return `horizonte=${payload.horizon ?? "?"} · candidatos=${payload.candidates ?? "?"}`;

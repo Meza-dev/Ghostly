@@ -22,7 +22,6 @@ import {
   getAssistMemory,
   getAllRuns,
   getRun,
-  peekAssistMemorySteps,
   upsertAssistMemory,
 } from "../store/runs.js";
 
@@ -308,6 +307,30 @@ runRouter.post("/run", async (c) => {
   // Fire-and-forget: ejecuta en background, emite eventos al bus y persiste final.
   const executeRun = async () => {
     try {
+      let seq = 0;
+      const publishAssistEvent = (params: {
+        type: AssistEvent["type"];
+        payload: Record<string, unknown>;
+        stepIndex?: number;
+      }) => {
+        const event: AssistEvent = {
+          seq: ++seq,
+          type: params.type,
+          at: new Date().toISOString(),
+          ...(params.stepIndex !== undefined ? { stepIndex: params.stepIndex } : {}),
+          payload: params.payload,
+        };
+        runEventBus.publish(id, {
+          kind: "assist",
+          type: event.type,
+          seq: event.seq,
+          at: event.at,
+          ...(event.stepIndex !== undefined ? { stepIndex: event.stepIndex } : {}),
+          payload: event.payload,
+        });
+        void appendRunEvent(id, event);
+      };
+
       let result;
       let memoryCandidateSteps: Step[] = [];
       if (assistV2) {
@@ -357,7 +380,6 @@ runRouter.post("/run", async (c) => {
             replayFromMemory,
           },
         };
-        let seq = 0;
         const assistedResult = await runAssistedFlow(assistedInput, {
           strategist,
           healer,
@@ -369,23 +391,11 @@ runRouter.post("/run", async (c) => {
             const { stepIndex, ...payload } = (details ?? {}) as Record<string, unknown>;
             const normalizedStepIndex =
               typeof stepIndex === "number" ? stepIndex : undefined;
-            const event: AssistEvent = {
-              seq: ++seq,
+            publishAssistEvent({
               type: type as AssistEvent["type"],
-              at: new Date().toISOString(),
-              ...(normalizedStepIndex !== undefined ? { stepIndex: normalizedStepIndex } : {}),
               payload,
-            };
-            runEventBus.publish(id, {
-              kind: "assist",
-              type: event.type,
-              seq: event.seq,
-              at: event.at,
-              ...(event.stepIndex !== undefined ? { stepIndex: event.stepIndex } : {}),
-              payload: event.payload,
+              ...(normalizedStepIndex !== undefined ? { stepIndex: normalizedStepIndex } : {}),
             });
-            // Persistencia incremental para catch-up y reconexión.
-            void appendRunEvent(id, event);
           },
         }, { signal: controller.signal });
         result = assistedResult;
@@ -393,7 +403,41 @@ runRouter.post("/run", async (c) => {
           ? assistedResult.learnedFlow
           : parseMemoryStepsFromEvents(assistedResult.events);
       } else {
-        result = await runFlow(parsed.data, { signal: controller.signal });
+        result = await runFlow(parsed.data, {
+          signal: controller.signal,
+          onStepStart: ({ index, step }) => {
+            publishAssistEvent({
+              type: "step_start",
+              stepIndex: index,
+              payload: { step: summarizeStepForLog(step), rawStep: step as unknown as Record<string, unknown> },
+            });
+          },
+          onStepSuccess: ({ index, step, screenshotPath, a11y }) => {
+            publishAssistEvent({
+              type: "step_success",
+              stepIndex: index,
+              payload: {
+                step: summarizeStepForLog(step),
+                rawStep: step as unknown as Record<string, unknown>,
+                ...(screenshotPath ? { screenshotPath } : {}),
+                ...(a11y !== undefined ? { a11y } : {}),
+              },
+            });
+          },
+          onStepFailure: ({ index, step, error, screenshotPath, final }) => {
+            publishAssistEvent({
+              type: "step_failure",
+              stepIndex: index,
+              payload: {
+                step: summarizeStepForLog(step),
+                rawStep: step as unknown as Record<string, unknown>,
+                error,
+                ...(screenshotPath ? { screenshotPath } : {}),
+                ...(final ? { final: true } : {}),
+              },
+            });
+          },
+        });
       }
 
       const status: "pass" | "fail" = result.ok ? "pass" : "fail";
@@ -408,17 +452,7 @@ runRouter.post("/run", async (c) => {
       if (assistV2 && memoryCandidateSteps.length > 0) {
         const memMode = assistV2.memoryMode ?? appConfig.assistV2.memoryMode;
         if (memMode !== "off") {
-          let shouldPersist = status === "pass";
-          if (!shouldPersist && memMode === "adaptive") {
-            const prev = await peekAssistMemorySteps({
-              userId: user.id,
-              project,
-              baseUrl: parsed.data.baseUrl,
-              goal: assistV2.goal,
-            });
-            // No pisar una memoria más larga con un prefijo más corto tras un fallo.
-            shouldPersist = memoryCandidateSteps.length >= prev.length;
-          }
+          const shouldPersist = status === "pass";
           if (shouldPersist) {
             await upsertAssistMemory({
               userId: user.id,
