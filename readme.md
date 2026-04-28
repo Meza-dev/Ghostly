@@ -58,6 +58,48 @@ Para maximizar la eficiencia y reducir el consumo de tokens, el proyecto utiliza
 
 ---
 
+## Contexto de Código vía MCP
+
+GhostTester puede generar un `ghost-manifest.json` para que el MCP server entregue contexto estructural del código antes de planificar o sanar una corrida.
+
+```bash
+pnpm run scan -- --root . --out ghost-manifest.json --base-url http://localhost:5173
+```
+
+El scanner usa AST de TypeScript/TSX para detectar rutas, componentes, `data-testid`, `aria-label`, roles y formularios. Ignora `node_modules`, builds (`dist`, `.next`) y tests (`*.spec.*`, `*.test.*`) para evitar ruido. El manifest incluye `gitCommit`; si el MCP detecta que el manifest fue generado con otro commit, avisa que hay que ejecutar `ghost-scan` de nuevo.
+
+Configuración opcional en `ghosttester.config.json`:
+
+```json
+{
+  "baseUrl": "http://localhost:5173",
+  "flowDocsDir": "docs/flows",
+  "manifestPath": "ghost-manifest.json"
+}
+```
+
+Los documentos de flujo viven por defecto en `docs/flows/*.ghost.md`:
+
+```md
+# Flow: login
+
+## Goal
+Iniciar sesión y llegar al dashboard.
+
+## Steps (hint)
+1. Ir a /login
+2. Llenar [data-testid="email-input"]
+3. Llenar [data-testid="password-input"]
+4. Click en [data-testid="login-button"]
+
+## Success criteria
+- URL contiene /dashboard
+```
+
+El MCP server expone `get_project_map`, `analyze_component`, `read_flow_docs` y `submit_plan` para consumir ese contexto y enviar planes enriquecidos a `POST /v1/run`.
+
+---
+
 ## 📅 Roadmap MVP
 - [ ] Integración de Webhooks con GitHub/GitLab.
 - [ ] Motor de ejecución Agente + Playwright.

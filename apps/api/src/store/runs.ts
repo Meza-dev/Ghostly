@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { AssistEvent, AssistedMeta, RunRecord, Step, StepOutcome } from "@ghosttester/runner";
+import type { AssistEvent, AssistedMeta, CodeHints, RunRecord, Step, StepOutcome } from "@ghosttester/runner";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 
@@ -109,7 +109,9 @@ export async function createRunningRun(params: {
   startedAt: string;
   baseUrl: string;
   project: string | null;
+  contextId?: string;
   assisted?: AssistedMeta;
+  codeHints?: CodeHints;
 }): Promise<void> {
   await prisma.run.create({
     data: {
@@ -120,8 +122,10 @@ export async function createRunningRun(params: {
       durationMs: 0,
       baseUrl: params.baseUrl,
       project: params.project,
+      contextId: params.contextId ?? null,
       videoPath: null,
       assistedMeta: params.assisted ? JSON.stringify(params.assisted) : null,
+      codeHintsJson: params.codeHints ? JSON.stringify(params.codeHints) : null,
     },
   });
 }
@@ -194,6 +198,7 @@ export async function saveRun(
     durationMs: record.durationMs,
     baseUrl: record.baseUrl,
     project: record.project ?? null,
+    contextId: record.contextId ?? null,
     videoPath: record.videoPath ?? null,
     steps: {
       create: record.steps.map((s) => ({
@@ -285,6 +290,7 @@ function toRecord(run: DbRun): RunRecordWithEvents {
     durationMs: run.durationMs,
     baseUrl: run.baseUrl,
     ...(run.project ? { project: run.project } : {}),
+    ...(run.contextId ? { contextId: run.contextId } : {}),
     ...(assisted ? { assisted } : {}),
     ...(run.videoPath ? { videoPath: run.videoPath } : {}),
     steps: run.steps.map((s) => ({

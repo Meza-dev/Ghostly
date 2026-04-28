@@ -68,8 +68,10 @@ model Run {
   durationMs Int      @default(0)
   baseUrl    String
   project    String?
+  contextId  String?
   videoPath  String?
   assistedMeta String?
+  codeHintsJson String?
   steps      Step[]
   events     RunEvent[]
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)

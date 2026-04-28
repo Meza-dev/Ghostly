@@ -1834,6 +1834,7 @@ export async function runAssistedFlow(
     let horizon = 0;
     let victoryMet = false;
     let stopReason = "completed";
+    let healerWasInvoked = false;
     const runtimeMemory: Step[] = [];
     const runtimeMemoryKeys = new Set<string>();
     for (const seed of assist.seedMemorySteps ?? []) {
@@ -1873,7 +1874,7 @@ export async function runAssistedFlow(
       const victory = assist.victory
         ? await evaluateVictory(page!, lastSnapshot, assist.victory, history)
         : { configured: false, met: false, details: { reason: "not-configured" } };
-      const objectiveComplete = objectiveLikelyCompleted(history, lastSnapshot);
+      const objectiveComplete = healerWasInvoked && objectiveLikelyCompleted(history, lastSnapshot);
       const terminalStep = executedStep ? isLikelyTerminalAction(executedStep) : false;
       emit(
         "victory_check",
@@ -2141,6 +2142,7 @@ export async function runAssistedFlow(
           let recovered = false;
           for (let attempt = 1; attempt <= healingAttempts && !recovered; attempt++) {
             try {
+              healerWasInvoked = true;
               await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
               lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
               const stateBeforeHeal = snapshotStateKey(lastSnapshot);
@@ -2485,7 +2487,9 @@ export async function runAssistedFlow(
       });
 
       const victory = await evaluateVictory(page, lastSnapshot, assist.victory, history);
-      const completed = assist.victory ? objectiveLikelyCompleted(history, lastSnapshot) : false;
+      const completed = assist.victory && healerWasInvoked
+        ? objectiveLikelyCompleted(history, lastSnapshot)
+        : false;
       emit("victory_check", {
         horizon,
         ...victory.details,

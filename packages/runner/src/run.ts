@@ -136,12 +136,27 @@ function expandFillSelectors(primary: string): string[] {
 function expandWaitSelectors(primary: string): string[] {
   const s = primary.trim();
   const out: string[] = [s];
+  const lower = s.toLowerCase();
   if (looksLikeBareKeyword(s)) {
     out.push(
       `input[name="${s}"]`,
       `#${s}`,
       `[id="${s}"]`,
       `[data-testid="${s}"]`,
+    );
+  }
+  // "nav" suele fallar en apps que renderizan navegación como <aside> o role="navigation".
+  if (lower === "nav" || lower === "navigation") {
+    out.push(
+      "[role='navigation']",
+      '[role="navigation"]',
+      "aside",
+      "header nav",
+      "aside nav",
+      "[data-testid*='nav']",
+      "[data-testid*='menu']",
+      "[aria-label*='menu']",
+      "[aria-label*='naveg']",
     );
   }
   return uniqSelectors([...out, ...expandClickSelectors(s)]);
@@ -174,6 +189,26 @@ function expandClickSelectors(primary: string): string[] {
   const s0 = primary.trim().replace(/^link(?=\s*:)/i, "a");
   const lower = s0.toLowerCase();
   const out: string[] = [...gtRoleFirstCandidates(s0), s0];
+  const isGenericFormSubmit =
+    /^form\s+button$/i.test(s0) ||
+    /^form\s+input$/i.test(s0) ||
+    /^form\s+input\[type\s*=\s*['"]?submit['"]?\]$/i.test(s0);
+  if (isGenericFormSubmit) {
+    out.push(
+      'form button[type="submit"]',
+      'form input[type="submit"]',
+      'button[type="submit"]',
+      'input[type="submit"]',
+      'form button:has-text("Ingresar")',
+      'form button:has-text("Entrar")',
+      'form button:has-text("Iniciar sesión")',
+      'form button:has-text("Login")',
+      'button:has-text("Ingresar")',
+      'button:has-text("Entrar")',
+      'button:has-text("Iniciar sesión")',
+      'button:has-text("Login")',
+    );
+  }
   const hasText = s0.match(/:has-text\((['"])([\s\S]*?)\1\)/i);
   if (hasText?.[2]) {
     const cleaned = stripLeadingDecorativeGlyphs(hasText[2]);

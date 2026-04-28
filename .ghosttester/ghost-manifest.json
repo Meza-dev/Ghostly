@@ -1,0 +1,14 @@
+{
+  "version": "1",
+  "generatedAt": "2026-04-27T18:21:42.209Z",
+  "gitCommit": "c810b77",
+  "projectRoot": "c:/Users/jonas.meza/Documents/dev/GhostTester AI/apps/api",
+  "routes": [],
+  "components": [],
+  "forms": [],
+  "flows": [],
+  "selectors": {
+    "byTestId": {},
+    "byAriaLabel": {}
+  }
+}

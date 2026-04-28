@@ -59,6 +59,46 @@ export type VictoryCondition = {
 
 export type MemoryMode = "off" | "runtime" | "adaptive";
 
+export type CodeInputHint = {
+  testId?: string;
+  ariaLabel?: string;
+  id?: string;
+  name?: string;
+  placeholder?: string;
+  type?: string;
+};
+
+export type CodeFormHint = {
+  name: string;
+  file?: string;
+  inputs?: CodeInputHint[];
+  submitTestId?: string;
+  submitLabel?: string;
+};
+
+export type CodeComponentHint = {
+  name: string;
+  file?: string;
+  testIds?: string[];
+  ariaLabels?: string[];
+  roles?: string[];
+};
+
+export type CodeRouteHint = {
+  path: string;
+  component?: string;
+};
+
+export type CodeHints = {
+  components?: CodeComponentHint[];
+  forms?: CodeFormHint[];
+  routes?: CodeRouteHint[];
+  selectors?: {
+    byTestId?: Record<string, string>;
+    byAriaLabel?: Record<string, string>;
+  };
+};
+
 export type AssistRunOptions = {
   v2: true;
   goal: string;
@@ -133,6 +173,7 @@ export type HealerContext = {
   goal: string;
   baseUrl: string;
   snapshot: ObserverSnapshot;
+  codeHints?: CodeHints;
   failedStep: Step;
   error: string;
   history?: Array<{ step: Step; ok: boolean; error?: string }>;

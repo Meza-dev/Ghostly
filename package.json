@@ -7,10 +7,11 @@
     "dev:api": "pnpm --filter @ghosttester/api dev",
     "dev:web": "pnpm --filter @ghosttester/web dev",
     "build": "pnpm -r run build",
-    "typecheck": "pnpm --filter @ghosttester/runner run typecheck && pnpm --filter @ghosttester/api run typecheck && pnpm --filter @ghosttester/mcp-server run typecheck && pnpm --filter @ghosttester/web run typecheck",
+    "typecheck": "pnpm --filter @ghosttester/runner run typecheck && pnpm --filter @ghosttester/api run typecheck && pnpm --filter @ghosttester/mcp-server run typecheck && pnpm --filter @ghosttester/scanner run typecheck && pnpm --filter @ghosttester/web run typecheck",
     "start": "pnpm --filter @ghosttester/api start",
     "pw:install": "pnpm --filter @ghosttester/runner exec playwright install chromium",
     "mcp:build": "pnpm --filter @ghosttester/mcp-server build",
+    "scan": "pnpm exec tsx packages/scanner/src/index.ts",
     "test:login-smoke": "pnpm exec tsx scripts/login-smoke-example.ts"
   },
   "engines": {

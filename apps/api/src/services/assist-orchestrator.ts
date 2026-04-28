@@ -3,6 +3,7 @@ import type {
   HealerContext,
   HealerFn,
   HealerResult,
+  CodeHints,
   ObserverSnapshot,
   PlannedChunk,
   Step,
@@ -706,6 +707,54 @@ function buildStrategistUserPrompt(ctx: StrategistContextWithPlan, chunkSize: nu
   ].join("\n");
 }
 
+function buildCodeHintsBlock(codeHints: CodeHints | undefined): string {
+  if (!codeHints) return "";
+  const testIds = new Set<string>();
+  const ariaLabels = new Set<string>();
+  const formLines: string[] = [];
+
+  for (const component of codeHints.components ?? []) {
+    for (const testId of component.testIds ?? []) testIds.add(testId);
+    for (const ariaLabel of component.ariaLabels ?? []) ariaLabels.add(ariaLabel);
+  }
+
+  for (const form of codeHints.forms ?? []) {
+    const inputs = (form.inputs ?? [])
+      .map((input) => {
+        const stableSelector = input.testId
+          ? `[data-testid="${input.testId}"]`
+          : input.ariaLabel
+            ? `[aria-label="${input.ariaLabel}"]`
+            : input.name
+              ? `[name="${input.name}"]`
+              : input.placeholder
+                ? `[placeholder="${input.placeholder}"]`
+                : undefined;
+        return stableSelector
+          ? `${stableSelector}${input.type ? ` (${input.type})` : ""}`
+          : undefined;
+      })
+      .filter((input): input is string => !!input);
+    if (inputs.length === 0) continue;
+    const submit = form.submitTestId
+      ? ` submit=[data-testid="${form.submitTestId}"]`
+      : form.submitLabel
+        ? ` submit="${form.submitLabel}"`
+        : "";
+    formLines.push(`- ${form.name}: ${inputs.join(", ")}${submit}`);
+  }
+
+  const lines = [
+    "SELECTORES CONOCIDOS DEL CÓDIGO FUENTE (manifest MCP):",
+    testIds.size > 0 ? `data-testid disponibles: ${Array.from(testIds).sort().join(", ")}` : "",
+    ariaLabels.size > 0 ? `aria-labels disponibles: ${Array.from(ariaLabels).sort().join(", ")}` : "",
+    formLines.length > 0 ? `Formularios detectados:\n${formLines.join("\n")}` : "",
+    "Prioriza estos selectores y sus agrupaciones de formulario sobre selectores genéricos o derivados solo del accessibility tree.",
+  ].filter(Boolean);
+
+  return lines.length > 1 ? lines.join("\n") : "";
+}
+
 function buildHealerUserPrompt(ctx: HealerContext): string {
   const history = ctx.history ?? [];
   const historyLines = history
@@ -719,6 +768,7 @@ function buildHealerUserPrompt(ctx: HealerContext): string {
   const modalHint = buildModalFocusHint(ctx.snapshot);
   const createTripHint = buildCreateTripModalSemanticHint(ctx.snapshot);
   const calificacionModalHint = buildCalificacionGroupModalHint(ctx.goal, ctx.snapshot.treeMarkdown);
+  const codeHintsBlock = buildCodeHintsBlock(ctx.codeHints);
 
   return [
     `Objetivo: ${ctx.goal}`,
@@ -727,6 +777,7 @@ function buildHealerUserPrompt(ctx: HealerContext): string {
     `Error: ${ctx.error.slice(0, 600)}`,
     "",
     historyLines ? `Historial de pasos previos (NO los repitas si están OK):\n${historyLines}` : "Historial: (vacío)",
+    ...(codeHintsBlock ? ["", codeHintsBlock] : []),
     ...(fatigue ? ["", fatigue] : []),
     ...(modalHint ? ["", modalHint] : []),
     ...(createTripHint ? ["", createTripHint] : []),
@@ -740,6 +791,7 @@ function buildHealerUserPrompt(ctx: HealerContext): string {
 export type OrchestratorOptions = {
   llmTimeoutMs: number;
   chunkSize: number;
+  codeHints?: CodeHints;
 };
 
 export function createStrategist(opts: OrchestratorOptions): StrategistFn {
@@ -808,7 +860,7 @@ export function createStrategist(opts: OrchestratorOptions): StrategistFn {
 
 export function createHealer(opts: OrchestratorOptions): HealerFn {
   return async (ctx: HealerContext) => {
-    const user = buildHealerUserPrompt(ctx);
+    const user = buildHealerUserPrompt({ ...ctx, ...(opts.codeHints ? { codeHints: opts.codeHints } : {}) });
     debugLog("healer", {
       stage: "context",
       goal: ctx.goal,

@@ -2,6 +2,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { runFlow, runInputSchema } from "@ghosttester/runner";
+import { registerAnalyzeComponentTool } from "./tools/analyze-component.js";
+import { registerGetProjectMapTool } from "./tools/get-project-map.js";
+import { registerReadFlowDocsTool } from "./tools/read-flow-docs.js";
+import { registerListGhosttesterProjectsTool } from "./tools/list-ghosttester-projects.js";
+import { registerSubmitPlanTool } from "./tools/submit-plan.js";
 
 const inputFields = {
   baseUrl: z.string().url(),
@@ -82,9 +87,18 @@ server.tool(
   },
 );
 
+registerGetProjectMapTool(server);
+registerAnalyzeComponentTool(server);
+registerReadFlowDocsTool(server);
+registerSubmitPlanTool(server);
+registerListGhosttesterProjectsTool(server);
+
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
 
-main().catch(() => process.exit(1));
+main().catch((err: unknown) => {
+  console.error("[ghosttester-mcp]", err);
+  process.exit(1);
+});

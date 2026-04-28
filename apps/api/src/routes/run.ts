@@ -3,6 +3,7 @@ import type {
   AssistEvent,
   AssistedMeta,
   AssistedRunInput,
+  CodeHints,
   Step,
   StepOutcome,
 } from "@ghosttester/runner";
@@ -54,6 +55,80 @@ const assistV2Schema = z.object({
   modalLoaderMaxWaitMs: z.number().int().min(3_000).max(600_000).optional(),
   memoryMode: z.enum(["off", "runtime", "adaptive"]).optional(),
 });
+
+const codeHintsSchema: z.ZodType<CodeHints> = z.object({
+  components: z.array(z.object({
+    name: z.string().min(1),
+    file: z.string().min(1).optional(),
+    testIds: z.array(z.string().min(1)).optional(),
+    ariaLabels: z.array(z.string().min(1)).optional(),
+    roles: z.array(z.string().min(1)).optional(),
+  })).optional(),
+  forms: z.array(z.object({
+    name: z.string().min(1),
+    file: z.string().min(1).optional(),
+    inputs: z.array(z.object({
+      testId: z.string().min(1).optional(),
+      ariaLabel: z.string().min(1).optional(),
+      id: z.string().min(1).optional(),
+      name: z.string().min(1).optional(),
+      placeholder: z.string().min(1).optional(),
+      type: z.string().min(1).optional(),
+    })).optional(),
+    submitTestId: z.string().min(1).optional(),
+    submitLabel: z.string().min(1).optional(),
+  })).optional(),
+  routes: z.array(z.object({
+    path: z.string().min(1),
+    component: z.string().min(1).optional(),
+  })).optional(),
+  selectors: z.object({
+    byTestId: z.record(z.string()).optional(),
+    byAriaLabel: z.record(z.string()).optional(),
+  }).optional(),
+});
+
+const mcpPlanSchema = z.object({
+  contextId: z.string().min(1).optional(),
+  baseUrl: z.string().url().optional(),
+  steps: z.array(z.unknown()).min(1).optional(),
+  headless: z.boolean().optional(),
+  captureA11yAfterEachStep: z.boolean().optional(),
+  captureScreenshotAfterEachStep: z.boolean().optional(),
+  recordVideoOnFailure: z.boolean().optional(),
+  artifactsDir: z.string().min(1).optional(),
+  defaultTimeoutMs: z.number().int().positive().optional(),
+  codeHints: codeHintsSchema.optional(),
+});
+
+function normalizeRunBody(body: Record<string, unknown>): Record<string, unknown> {
+  const planRaw = body.plan;
+  if (!planRaw || typeof planRaw !== "object") return body;
+  const parsedPlan = mcpPlanSchema.safeParse(planRaw);
+  if (!parsedPlan.success) return body;
+  const plan = parsedPlan.data;
+  return {
+    ...body,
+    ...(body.contextId === undefined && plan.contextId ? { contextId: plan.contextId } : {}),
+    ...(body.baseUrl === undefined && plan.baseUrl ? { baseUrl: plan.baseUrl } : {}),
+    ...(body.steps === undefined && plan.steps ? { steps: plan.steps } : {}),
+    ...(body.headless === undefined && plan.headless !== undefined ? { headless: plan.headless } : {}),
+    ...(body.captureA11yAfterEachStep === undefined && plan.captureA11yAfterEachStep !== undefined
+      ? { captureA11yAfterEachStep: plan.captureA11yAfterEachStep }
+      : {}),
+    ...(body.captureScreenshotAfterEachStep === undefined && plan.captureScreenshotAfterEachStep !== undefined
+      ? { captureScreenshotAfterEachStep: plan.captureScreenshotAfterEachStep }
+      : {}),
+    ...(body.recordVideoOnFailure === undefined && plan.recordVideoOnFailure !== undefined
+      ? { recordVideoOnFailure: plan.recordVideoOnFailure }
+      : {}),
+    ...(body.artifactsDir === undefined && plan.artifactsDir ? { artifactsDir: plan.artifactsDir } : {}),
+    ...(body.defaultTimeoutMs === undefined && plan.defaultTimeoutMs !== undefined
+      ? { defaultTimeoutMs: plan.defaultTimeoutMs }
+      : {}),
+    ...(body.codeHints === undefined && plan.codeHints ? { codeHints: plan.codeHints } : {}),
+  };
+}
 
 function summarizeStepForLog(step: Step): Record<string, unknown> {
   if (step.action === "fill") {
@@ -205,6 +280,7 @@ runRouter.post("/run", async (c) => {
   } catch {
     return c.json({ ok: false, error: "cuerpo JSON inválido" }, 400);
   }
+  body = normalizeRunBody(body);
 
   const parsed = safeParseRunInput(body, {
     maxSteps: appConfig.assist.maxSteps,
@@ -222,6 +298,16 @@ runRouter.post("/run", async (c) => {
   const projectIsValid = await projectExistsForUser(project, user.id);
   if (!projectIsValid) {
     return c.json({ ok: false, error: "project inválido" }, 400);
+  }
+  const contextId = typeof body.contextId === "string" ? body.contextId.trim() : "";
+
+  let codeHints: CodeHints | undefined;
+  if (body.codeHints !== undefined) {
+    const parsedCodeHints = codeHintsSchema.safeParse(body.codeHints);
+    if (!parsedCodeHints.success) {
+      return c.json({ ok: false, error: "codeHints inválido", details: parsedCodeHints.error.flatten() }, 400);
+    }
+    codeHints = parsedCodeHints.data;
   }
 
   let assisted: AssistedMeta | undefined;
@@ -293,7 +379,9 @@ runRouter.post("/run", async (c) => {
       startedAt,
       baseUrl: parsed.data.baseUrl,
       project: project || null,
+      ...(contextId ? { contextId } : {}),
       assisted,
+      codeHints,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
@@ -341,6 +429,7 @@ runRouter.post("/run", async (c) => {
         const healer = createHealer({
           llmTimeoutMs: appConfig.assist.llmTimeoutMs,
           chunkSize: appConfig.assistV2.chunkSize,
+          codeHints,
         });
         let seedMemorySteps: Step[] = [];
         if ((assistV2.memoryMode ?? appConfig.assistV2.memoryMode) === "adaptive") {

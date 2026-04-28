@@ -115,6 +115,7 @@ export type RunRecord = {
   durationMs: number;
   baseUrl: string;
   project?: string;
+  contextId?: string;
   assisted?: AssistedMeta;
   steps: import("./run.js").StepOutcome[];
   videoPath?: string;

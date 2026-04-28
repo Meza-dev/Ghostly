@@ -25,6 +25,7 @@ export type {
   AssistEventType,
   AssistRunOptions,
   AssistedRunInput,
+  CodeHints,
   HealerContext,
   HealerFn,
   HealerResult,
