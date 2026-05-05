@@ -17,6 +17,11 @@ export type RunResult = {
   durationMs: number;
   steps: StepOutcome[];
   videoPath?: string;
+  error?: string;
+  lastUrl?: string;
+  pageTitle?: string;
+  detectedAlerts?: Array<{ type: "error" | "warning" | "success" | "info"; message: string }>;
+  consoleLogs?: string[];
 };
 
 type RunFlowOptions = {
@@ -521,6 +526,65 @@ function runArtifactDir(baseDir: string): string {
   return path.resolve(baseDir, `run-${stamp}-${suffix}`);
 }
 
+function inferAlertTypeFromText(raw: string): "error" | "warning" | "success" | "info" {
+  const t = raw.toLowerCase();
+  if (/error|incorrect|inv[áa]lido|invalid|fall[oó]|duplicad|obligatorio/i.test(t)) return "error";
+  if (/warning|advertencia|atenci[oó]n|precauci[oó]n/i.test(t)) return "warning";
+  if (/success|exito|éxito|guardad|cread|actualizad/i.test(t)) return "success";
+  return "info";
+}
+
+function inferAlertTypeFromClass(className: string | null | undefined): "error" | "warning" | "success" | "info" {
+  const c = (className ?? "").toLowerCase();
+  if (/error|danger|swal2-error|toast-error/.test(c)) return "error";
+  if (/warn|warning|swal2-warning|toast-warning/.test(c)) return "warning";
+  if (/success|ok|swal2-success|toast-success/.test(c)) return "success";
+  return "info";
+}
+
+async function collectDetectedAlerts(page: Page): Promise<Array<{ type: "error" | "warning" | "success" | "info"; message: string }>> {
+  const entries = await page.evaluate(() => {
+    const selectors = [
+      ".swal2-popup",
+      ".swal2-container .swal2-html-container",
+      ".swal2-container .swal2-title",
+      ".toast",
+      ".Toastify__toast",
+      ".react-hot-toast",
+      "[role='alert']",
+      "[role='status']",
+      ".alert",
+      ".notification",
+      ".noty_body",
+      ".iziToast-message",
+    ];
+    const seen = new Set<string>();
+    const out: Array<{ text: string; className: string }> = [];
+    for (const sel of selectors) {
+      const nodes = Array.from(document.querySelectorAll(sel));
+      for (const node of nodes) {
+        const el = node as HTMLElement;
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") continue;
+        const text = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!text) continue;
+        const key = `${sel}::${text}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ text, className: el.className || "" });
+      }
+    }
+    return out;
+  });
+
+  return entries.map((entry) => ({
+    type: inferAlertTypeFromClass(entry.className) !== "info"
+      ? inferAlertTypeFromClass(entry.className)
+      : inferAlertTypeFromText(entry.text),
+    message: entry.text,
+  }));
+}
+
 async function captureStepScreenshot(
   page: Page,
   artifactsDir: string,
@@ -546,10 +610,14 @@ export async function runFlow(input: RunInput, opts: RunFlowOptions = {}): Promi
   let context: BrowserContext | undefined;
   let page: Page | undefined;
   let pageVideo: Video | null = null;
-  let keepVideo = false;
+  let keepVideo = shouldRecordVideo;
   let runOk = true;
   let videoPath: string | undefined;
   let aborted = false;
+  let finalError: string | undefined;
+  const consoleLogs: string[] = [];
+  const detectedAlerts: Array<{ type: "error" | "warning" | "success" | "info"; message: string }> = [];
+  const alertKeys = new Set<string>();
 
   try {
     throwIfAborted(signal);
@@ -567,6 +635,12 @@ export async function runFlow(input: RunInput, opts: RunFlowOptions = {}): Promi
         : undefined,
     );
     page = await context.newPage();
+    page.on("console", (msg) => {
+      const txt = msg.text().trim();
+      if (!txt) return;
+      if (consoleLogs.length >= 40) return;
+      consoleLogs.push(txt);
+    });
     pageVideo = page.video();
     page.setDefaultTimeout(input.defaultTimeoutMs);
     const onAbort = () => {
@@ -595,6 +669,13 @@ export async function runFlow(input: RunInput, opts: RunFlowOptions = {}): Promi
         let screenshotPath: string | undefined;
         if (shouldCaptureScreenshots && artifactsDir) {
           screenshotPath = await captureStepScreenshot(page, artifactsDir, index, "ok");
+        }
+        const liveAlerts = await collectDetectedAlerts(page).catch(() => []);
+        for (const a of liveAlerts) {
+          const k = `${a.type}:${a.message}`;
+          if (alertKeys.has(k)) continue;
+          alertKeys.add(k);
+          detectedAlerts.push(a);
         }
         outcomes.push({
           index,
@@ -627,6 +708,7 @@ export async function runFlow(input: RunInput, opts: RunFlowOptions = {}): Promi
           break;
         }
         const message = e instanceof Error ? e.message : String(e);
+        finalError = message;
         // eslint-disable-next-line no-console
         console.error(
           `[runner] Error en paso ${index + 1}/${input.steps.length}`,
@@ -654,7 +736,6 @@ export async function runFlow(input: RunInput, opts: RunFlowOptions = {}): Promi
           ...(screenshotPath !== undefined ? { screenshotPath } : {}),
           final: true,
         });
-        keepVideo = true;
         runOk = false;
         break;
       }
@@ -684,6 +765,11 @@ export async function runFlow(input: RunInput, opts: RunFlowOptions = {}): Promi
     ok: runOk,
     durationMs: Date.now() - started,
     steps: outcomes,
+    ...(finalError !== undefined ? { error: finalError } : {}),
+    ...(page?.url() ? { lastUrl: page.url() } : {}),
+    ...(page ? { pageTitle: await page.title().catch(() => "") } : {}),
+    ...(detectedAlerts.length > 0 ? { detectedAlerts } : {}),
+    ...(consoleLogs.length > 0 ? { consoleLogs } : {}),
     ...(videoPath !== undefined ? { videoPath } : {}),
   };
 }

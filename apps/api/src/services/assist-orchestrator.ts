@@ -1,4 +1,4 @@
-import { safeParseRunInput } from "@ghosttester/runner";
+import { safeParseRunInput } from "@ghostly-io/runner";
 import type {
   HealerContext,
   HealerFn,
@@ -9,7 +9,7 @@ import type {
   Step,
   StrategistContext,
   StrategistFn,
-} from "@ghosttester/runner";
+} from "@ghostly-io/runner";
 
 type VisibleDialogHint = { heading?: string; ariaLabel?: string };
 type PlanProgressLite = {
@@ -259,7 +259,7 @@ function filterStaleCreateTripModalSteps(steps: Step[], snapshotMarkdown: string
 }
 
 const STRATEGIST_SYSTEM = [
-  "Eres el Strategist de un runner E2E asistido (GhostTester v2).",
+  "Eres el Strategist de un runner E2E asistido (Ghostly v2).",
   "Recibes: (a) un objetivo, (b) la baseUrl, (c) un mapa simplificado del accessibility tree (mapa semántico) y (d) un historial breve.",
   "Debes proponer los PRÓXIMOS pasos (máximo el que te indique el usuario) usando EXCLUSIVAMENTE estas acciones:",
   '- { "action": "goto", "url": string } (misma baseUrl)',

@@ -102,6 +102,11 @@ export type CodeHints = {
 export type AssistRunOptions = {
   v2: true;
   goal: string;
+  /**
+   * Modo de ejecución estricta para planes completos confiables (ej. MCP avanzado):
+   * evita cortar por victory temprana antes de consumir el plan de entrada.
+   */
+  isFullPlan?: boolean;
   maxHealingAttemptsPerStep?: number;
   observerMaxNodes?: number;
   victory?: VictoryCondition;

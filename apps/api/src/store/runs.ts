@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { AssistEvent, AssistedMeta, CodeHints, RunRecord, Step, StepOutcome } from "@ghosttester/runner";
+import type { AssistEvent, AssistedMeta, CodeHints, RunRecord, Step, StepOutcome } from "@ghostly-io/runner";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 

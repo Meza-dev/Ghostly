@@ -1,15 +1,20 @@
 import {
-  ChevronsLeft,
-  ChevronsRight,
+  Activity,
   CirclePlay,
+  Ghost,
   LayoutDashboard,
   LogOut,
+  Moon,
   SlidersHorizontal,
+  Sun,
   Workflow,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAppContext } from "../context/app-context";
 import { useAuth } from "../context/auth-context";
+import { useTheme } from "../context/theme-context";
+import { apiFetch } from "../lib/api";
 
 function initialsFromEmail(email: string): string {
   const local = email.split("@")[0] ?? "";
@@ -29,7 +34,7 @@ const navMain = [
     label: "Ejecuciones",
     icon: CirclePlay,
     path: "/runs",
-    hint: "Historial de corridas y botón Nueva corrida",
+    hint: "Historial de ejecuciones y botón Nueva ejecución",
   },
   {
     label: "Flujos & casos",
@@ -44,46 +49,85 @@ const navSys = [
 ] as const;
 
 export function Sidebar() {
-  const { sidebarCollapsed, toggleSidebar } = useAppContext();
+  const { sidebarCollapsed, projects, setActiveProjectId } = useAppContext();
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
+  const [projectStats, setProjectStats] = useState<Record<string, { total: number; pass: number }>>({});
 
   function handleLogout() {
     logout();
     navigate("/login", { replace: true });
   }
 
-  const w = sidebarCollapsed ? "w-[64px]" : "w-[260px]";
+  const w = sidebarCollapsed ? "w-[72px]" : "w-[248px]";
+
+  function openProject(id: string) {
+    setActiveProjectId(id);
+    navigate("/runs");
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch("/v1/runs");
+        if (!res.ok) return;
+        const runs = (await res.json()) as Array<{ id: string; status: string; project?: string }>;
+        if (cancelled) return;
+        const stats: Record<string, { total: number; pass: number }> = {};
+        for (const run of runs) {
+          const key = run.project ?? "";
+          if (!key) continue;
+          if (!stats[key]) stats[key] = { total: 0, pass: 0 };
+          stats[key]!.total += 1;
+          if (run.status === "pass") stats[key]!.pass += 1;
+        }
+        setProjectStats(stats);
+      } catch {
+        if (!cancelled) {
+          setProjectStats({});
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <aside
-      className={`flex h-screen min-h-screen shrink-0 flex-col border-r border-border bg-sidebar transition-all duration-200 ${w}`}
+      className={`flex min-h-0 shrink-0 flex-col self-stretch bg-bg-subtle transition-all duration-200 ${w}`}
     >
-      <div className={`flex items-center justify-between gap-2 px-4 py-6 pb-4 ${sidebarCollapsed ? "px-2" : "px-6"}`}>
+      <div
+        className={`flex items-center gap-2 py-5 ${sidebarCollapsed ? "justify-center px-3" : "justify-between pl-6 pr-4"}`}
+      >
         {!sidebarCollapsed && (
-          <span className="text-body font-nav-active text-sidebar-emphasis">GhostTester</span>
+          <span className="inline-flex items-center gap-3 text-lg font-title tracking-[-0.01em] text-sidebar-emphasis">
+            <span className="relative flex h-9 w-9 items-center justify-center rounded-pill bg-foreground text-bg-main">
+              <span className="absolute inset-[-4px] rounded-pill bg-brand-primary-soft" />
+              <Ghost className="relative z-10 h-4.5 w-4.5" strokeWidth={2} />
+            </span>
+            Ghostly
+          </span>
         )}
         <button
           type="button"
-          onClick={toggleSidebar}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-ui border border-transparent text-sidebar-fg hover:bg-sidebar-accent"
-          aria-label={sidebarCollapsed ? "Expandir barra lateral" : "Colapsar barra lateral"}
+          onClick={toggleTheme}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control-sm text-sidebar-fg transition-colors hover:bg-sidebar-accent hover:text-sidebar-emphasis"
+          aria-label={theme === "dark" ? "Activar modo claro" : "Activar modo oscuro"}
+          title={theme === "dark" ? "Modo claro" : "Modo oscuro"}
         >
-          {sidebarCollapsed ? (
-            <ChevronsRight className="h-4 w-4" strokeWidth={2} />
+          {theme === "dark" ? (
+            <Sun className="h-3.5 w-3.5" strokeWidth={1.8} />
           ) : (
-            <ChevronsLeft className="h-4 w-4" strokeWidth={2} />
+            <Moon className="h-3.5 w-3.5" strokeWidth={1.8} />
           )}
         </button>
       </div>
 
-      <nav className={`flex min-h-0 flex-1 flex-col gap-1 ${sidebarCollapsed ? "px-1" : "px-4"}`}>
-        {!sidebarCollapsed && (
-          <p className="px-2 pb-1 pt-2 text-overline font-overline uppercase tracking-wide text-muted-fg">
-            Navegación
-          </p>
-        )}
+      <nav className={`flex min-h-0 flex-1 flex-col gap-1 ${sidebarCollapsed ? "px-2" : "pl-6 pr-4"}`}>
         {navMain.map(({ label, icon: Icon, path, hint }) => {
           const active = location.pathname === path || (path !== "/" && location.pathname.startsWith(path));
           return (
@@ -94,11 +138,11 @@ export function Sidebar() {
               title={sidebarCollapsed ? `${label} — ${hint}` : hint}
               className={
                 active
-                  ? `flex items-center gap-2 rounded-2xl border border-sidebar-active-border bg-sidebar-active px-3 py-2.5 text-body text-sidebar-emphasis ${sidebarCollapsed ? "justify-center" : ""}`
-                  : `flex items-center gap-2 rounded-2xl px-3 py-2.5 text-body font-nav text-sidebar-fg hover:bg-sidebar-accent ${sidebarCollapsed ? "justify-center" : ""}`
+                  ? `flex items-center gap-2 rounded-control-sm border-l-[3px] border-l-sidebar-active-border bg-brand-primary-soft px-2.5 py-1.5 text-[13px] font-nav-active text-sidebar-emphasis ${sidebarCollapsed ? "justify-center border-l-0" : ""}`
+                  : `flex items-center gap-2 rounded-control-sm px-2.5 py-1.5 text-[13px] font-nav text-sidebar-fg hover:bg-sidebar-accent hover:text-sidebar-emphasis ${sidebarCollapsed ? "justify-center" : ""}`
               }
             >
-              <Icon className="h-4 w-4 shrink-0" strokeWidth={2} />
+              <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />
               {!sidebarCollapsed && (
                 <span className={active ? "font-nav-active" : ""}>{label}</span>
               )}
@@ -106,11 +150,6 @@ export function Sidebar() {
           );
         })}
 
-        {!sidebarCollapsed && (
-          <p className="px-2 pb-1 pt-6 text-overline font-overline uppercase tracking-wide text-muted-fg">
-            Sistema
-          </p>
-        )}
         {sidebarCollapsed && <div className="my-2 border-t border-border" />}
         {navSys.map(({ label, icon: Icon, path }) => {
           const active = location.pathname === path;
@@ -122,22 +161,67 @@ export function Sidebar() {
               title={sidebarCollapsed ? label : undefined}
               className={
                 active
-                  ? `flex items-center gap-2 rounded-2xl border border-sidebar-active-border bg-sidebar-active px-3 py-2.5 text-body text-sidebar-emphasis ${sidebarCollapsed ? "justify-center" : ""}`
-                  : `flex items-center gap-2 rounded-2xl px-3 py-2.5 text-body font-nav text-sidebar-fg hover:bg-sidebar-accent ${sidebarCollapsed ? "justify-center" : ""}`
+                  ? `flex items-center gap-2 rounded-control-sm border-l-[3px] border-l-sidebar-active-border bg-brand-primary-soft px-2.5 py-1.5 text-[13px] font-nav-active text-sidebar-emphasis ${sidebarCollapsed ? "justify-center border-l-0" : ""}`
+                  : `flex items-center gap-2 rounded-control-sm px-2.5 py-1.5 text-[13px] font-nav text-sidebar-fg hover:bg-sidebar-accent hover:text-sidebar-emphasis ${sidebarCollapsed ? "justify-center" : ""}`
               }
             >
-              <Icon className="h-4 w-4 shrink-0" strokeWidth={2} />
+              <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />
               {!sidebarCollapsed && <span>{label}</span>}
             </button>
           );
         })}
+
+        {!sidebarCollapsed && projects.length > 0 && (
+          <>
+            <p className="px-2 pb-1 pt-6 text-overline font-overline uppercase tracking-wide text-muted-fg">
+              Proyectos
+            </p>
+            {projects.slice(0, 5).map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => openProject(p.id)}
+                className="flex items-center gap-2 rounded-control-sm px-2.5 py-1.5 text-[13px] text-sidebar-fg hover:bg-sidebar-accent hover:text-sidebar-emphasis"
+              >
+                <span className="h-1.5 w-1.5 rounded-pill bg-primary" />
+                <span className="truncate">{p.label}</span>
+                <span className="ml-auto font-mono text-caption text-muted-fg">
+                  {projectStats[p.id]?.pass ?? 0}/{projectStats[p.id]?.total ?? 0}
+                </span>
+              </button>
+            ))}
+            <div className="mt-3 rounded-surface border border-border bg-sidebar-accent p-2.5">
+              <div className="mb-2 inline-flex items-center gap-2 text-micro uppercase tracking-wide text-muted-fg">
+                <Activity className="h-3.5 w-3.5" strokeWidth={1.7} />
+                Actividad
+              </div>
+              {projects.length === 0 ? (
+                <p className="font-mono text-caption text-sidebar-fg">Sin proyectos</p>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  {projects.slice(0, 5).map((project) => (
+                    <div key={project.id} className="flex items-center gap-2 font-mono text-caption text-sidebar-fg">
+                      <span className="h-1.5 w-1.5 rounded-pill bg-primary" />
+                      <span className="truncate">{project.label}</span>
+                      <span className="ml-auto text-muted-fg">
+                        {projectStats[project.id]?.pass ?? 0}/{projectStats[project.id]?.total ?? 0}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </nav>
 
-      <div className={`mt-auto border-t border-border py-4 ${sidebarCollapsed ? "px-2" : "px-5"}`}>
+      <div className="h-12 shrink-0" aria-hidden />
+
+      <div className={`py-4 ${sidebarCollapsed ? "px-2" : "pl-6 pr-4"}`}>
         {user && !sidebarCollapsed && (
-          <div className="mb-3 flex items-center gap-3">
+          <div className="flex items-center gap-3">
             <div
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] border-2 border-primary bg-accent text-caption font-badge text-primary"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-pill bg-primary text-caption font-badge text-bg-main"
               aria-hidden
             >
               {initialsFromEmail(user.email)}
@@ -146,17 +230,26 @@ export function Sidebar() {
               <p className="truncate text-small font-nav-active text-sidebar-emphasis">{user.email}</p>
               <p className="truncate text-caption capitalize text-sidebar-fg">{user.role}</p>
             </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              title="Cerrar sesión"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control-sm border border-border bg-transparent text-foreground hover:bg-muted"
+            >
+              <LogOut className="h-3.5 w-3.5" strokeWidth={1.7} />
+            </button>
           </div>
         )}
-        <button
-          type="button"
-          onClick={handleLogout}
-          title={sidebarCollapsed ? "Cerrar sesión" : undefined}
-          className={`flex w-full items-center justify-center gap-2 rounded-pill border border-border bg-transparent py-2 text-small font-button text-foreground hover:bg-muted ${sidebarCollapsed ? "px-2" : ""}`}
-        >
-          <LogOut className="h-3.5 w-3.5" strokeWidth={2} />
-          {!sidebarCollapsed && "Cerrar sesión"}
-        </button>
+        {sidebarCollapsed && (
+          <button
+            type="button"
+            onClick={handleLogout}
+            title="Cerrar sesión"
+            className="mt-2 flex w-full items-center justify-center rounded-control-sm border border-border bg-transparent py-2 text-foreground hover:bg-muted"
+          >
+            <LogOut className="h-3.5 w-3.5" strokeWidth={1.7} />
+          </button>
+        )}
       </div>
     </aside>
   );

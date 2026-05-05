@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/app-context";
 import { apiFetch } from "../lib/api";
+import { NewProjectModal } from "./new-project-modal";
 
 type RunSummary = {
   total: number;
@@ -33,66 +34,10 @@ function useProjectStats(projectId: string) {
   return stats;
 }
 
-function NewProjectModal({ onClose }: { onClose: () => void }) {
-  const { addProject } = useAppContext();
-  const [label, setLabel] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!label.trim()) return;
-    setLoading(true);
-    await addProject(label.trim());
-    setLoading(false);
-    onClose();
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="flex w-[400px] flex-col gap-4 rounded-ui border border-border bg-card p-6 shadow-xl">
-        <span className="font-nav-active text-body text-foreground">Nuevo proyecto</span>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <label className="text-caption text-muted-fg" htmlFor="proj-label">
-              Nombre del proyecto
-            </label>
-            <input
-              id="proj-label"
-              type="text"
-              required
-              autoFocus
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="mi-proyecto-web"
-              className="rounded-[6px] border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-            />
-          </div>
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={loading}
-              className="rounded-pill border border-border px-4 py-2 text-small font-button text-foreground hover:bg-accent disabled:opacity-50"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95 disabled:opacity-50"
-            >
-              {loading ? "Creando…" : "Crear"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
 function ProjectCard({ proj, onOpen }: { proj: { id: string; label: string; color: string }; onOpen: () => void }) {
   const stats = useProjectStats(proj.id);
   const { deleteProject } = useAppContext();
+  const coverage = stats.total > 0 ? Math.round((stats.pass / stats.total) * 100) : 0;
 
   async function handleDelete(e: React.MouseEvent) {
     e.stopPropagation();
@@ -104,18 +49,23 @@ function ProjectCard({ proj, onOpen }: { proj: { id: string; label: string; colo
     <button
       type="button"
       onClick={onOpen}
-      className="group flex flex-col gap-4 rounded-ui border border-border bg-card p-5 text-left transition-colors hover:border-primary hover:bg-sidebar-active"
+      className="ghostly-project-card group flex flex-col gap-3 rounded-surface border border-border bg-card px-5 py-3 text-left hover:-translate-y-0.5 hover:border-border-strong hover:shadow-surface"
+      onMouseMove={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        e.currentTarget.style.setProperty("--x", `${e.clientX - rect.left}px`);
+        e.currentTarget.style.setProperty("--y", `${e.clientY - rect.top}px`);
+      }}
     >
       <div className="flex items-center gap-3">
         <div
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px]"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control-lg border border-border bg-bg-muted transition-transform group-hover:scale-105 group-hover:-rotate-3"
           style={{ backgroundColor: proj.color + "22", color: proj.color }}
         >
-          <FolderOpen className="h-5 w-5" strokeWidth={2} />
+          <FolderOpen className="h-4 w-4" strokeWidth={1.8} />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate font-nav-active text-body text-foreground">{proj.label}</p>
-          <p className="text-caption text-muted-fg">{stats.total} ejecuciones</p>
+          <p className="truncate text-md font-title text-foreground">{proj.label}</p>
+          <p className="font-mono text-caption text-muted-fg">{stats.total} ejecuciones</p>
         </div>
         {stats.lastStatus === "pass" && (
           <CheckCircle2 className="h-5 w-5 shrink-0 text-success" strokeWidth={2} />
@@ -133,18 +83,26 @@ function ProjectCard({ proj, onOpen }: { proj: { id: string; label: string; colo
         </button>
       </div>
 
-      <div className="flex items-center gap-4 rounded-[6px] bg-muted px-3 py-2 text-caption text-muted-fg">
-        <span className="flex items-center gap-1">
-          <CheckCircle2 className="h-3 w-3 text-success" strokeWidth={2} />
-          {stats.pass}
-        </span>
-        <span className="flex items-center gap-1">
-          <XCircle className="h-3 w-3 text-destructive" strokeWidth={2} />
-          {stats.fail}
-        </span>
-        <span className="ml-auto flex items-center gap-1">
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <p className="text-overline font-overline uppercase tracking-wide text-muted-fg">Pasó</p>
+          <p className="text-[24px] font-title leading-none tracking-[-0.01em] text-success-fg">{stats.pass}</p>
+        </div>
+        <div>
+          <p className="text-overline font-overline uppercase tracking-wide text-muted-fg">Falló</p>
+          <p className="text-[24px] font-title leading-none tracking-[-0.01em] text-error-fg">{stats.fail}</p>
+        </div>
+        <div>
+          <p className="text-overline font-overline uppercase tracking-wide text-muted-fg">Total</p>
+          <p className="text-[24px] font-title leading-none tracking-[-0.01em] text-foreground">{stats.total}</p>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between border-t border-border pt-2 text-caption text-muted-fg">
+        <span className="font-mono">{coverage}% cobertura</span>
+        <span className="flex items-center gap-1 text-muted-fg group-hover:text-foreground">
           <CirclePlay className="h-3 w-3" strokeWidth={2} />
-          Ver ejecuciones →
+          Ver ejecuciones <span className="ghostly-project-card-arrow">→</span>
         </span>
       </div>
     </button>
@@ -155,6 +113,27 @@ export function Overview() {
   const { projects, setActiveProjectId } = useAppContext();
   const navigate = useNavigate();
   const [showModal, setShowModal] = useState(false);
+  const [totals, setTotals] = useState({ runs: 0, pass: 0, fail: 0 });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch("/v1/runs");
+        if (!res.ok) return;
+        const runs = (await res.json()) as Array<{ status: string }>;
+        if (cancelled) return;
+        const pass = runs.filter((r) => r.status === "pass").length;
+        const fail = runs.filter((r) => r.status === "fail").length;
+        setTotals({ runs: runs.length, pass, fail });
+      } catch {
+        if (!cancelled) setTotals({ runs: 0, pass: 0, fail: 0 });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function openProject(id: string) {
     setActiveProjectId(id);
@@ -164,24 +143,35 @@ export function Overview() {
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto pb-4">
-        <div className="flex shrink-0 items-center justify-between">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-title font-title text-foreground">Proyectos</h2>
-            <p className="text-caption text-muted-fg">
-              Cada proyecto agrupa corridas
-            </p>
+        <div className="flex shrink-0 flex-col gap-5">
+          <div className="flex items-end justify-between gap-4">
+            <div className="flex flex-col gap-1">
+              <h2 className="font-serif text-[30px] leading-tight tracking-[-0.02em] text-foreground">
+                Proyectos
+              </h2>
+              <p className="text-small text-muted-fg">
+                {projects.length} proyectos · {totals.runs} ejecuciones · {totals.fail} fallidas.
+              </p>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowModal(true)}
-            className="inline-flex items-center gap-2 rounded-pill bg-primary px-4 py-2.5 text-small font-button text-primary-fg hover:opacity-95"
-          >
-            <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-            Nuevo proyecto
-          </button>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-surface border border-border bg-card px-5 py-4">
+              <p className="text-overline font-overline uppercase tracking-wide text-muted-fg">Proyectos</p>
+              <p className="mt-1 font-serif text-[28px] font-title leading-none tracking-[-0.01em] text-foreground">{projects.length}</p>
+            </div>
+            <div className="rounded-surface border border-border bg-card px-5 py-4">
+              <p className="text-overline font-overline uppercase tracking-wide text-muted-fg">Exitosas</p>
+              <p className="mt-1 font-serif text-[28px] font-title leading-none tracking-[-0.01em] text-success-fg">{totals.pass}</p>
+            </div>
+            <div className="rounded-surface border border-border bg-card px-5 py-4">
+              <p className="text-overline font-overline uppercase tracking-wide text-muted-fg">Fallidas</p>
+              <p className="mt-1 font-serif text-[28px] font-title leading-none tracking-[-0.01em] text-error-fg">{totals.fail}</p>
+            </div>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3">
           {projects.map((proj) => (
             <ProjectCard key={proj.id} proj={proj} onOpen={() => openProject(proj.id)} />
           ))}

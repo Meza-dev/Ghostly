@@ -23,7 +23,7 @@ authRouter.post("/auth/login", async (c) => {
     return c.json({ ok: false, error: "credenciales inválidas" }, 401);
   }
 
-  const secret = process.env.JWT_SECRET ?? "ghosttester-secret";
+  const secret = process.env.JWT_SECRET ?? "ghostly-secret";
   const token = signToken({ sub: user.id, email: user.email, role: user.role }, secret);
 
   return c.json({ ok: true, token, user: { id: user.id, email: user.email, role: user.role } });

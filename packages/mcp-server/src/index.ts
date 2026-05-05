@@ -1,11 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { runFlow, runInputSchema } from "@ghosttester/runner";
 import { registerAnalyzeComponentTool } from "./tools/analyze-component.js";
 import { registerGetProjectMapTool } from "./tools/get-project-map.js";
 import { registerReadFlowDocsTool } from "./tools/read-flow-docs.js";
-import { registerListGhosttesterProjectsTool } from "./tools/list-ghosttester-projects.js";
+import { registerListGhostlyProjectsTool } from "./tools/list-ghostly-projects.js";
 import { registerSubmitPlanTool } from "./tools/submit-plan.js";
 
 const inputFields = {
@@ -23,15 +22,39 @@ const inputFields = {
 };
 
 const server = new McpServer({
-  name: "ghosttester",
+  name: "ghostly",
   version: "0.0.0",
 });
 
 server.tool(
-  "ghosttester_run_flow",
+  "ghostly_run_flow",
   "Ejecuta un flujo de prueba en un navegador (Playwright) a partir de una URL base y pasos.",
   inputFields,
   async (args) => {
+    let runFlow: (input: unknown) => Promise<unknown>;
+    let runInputSchema: { safeParse: (input: unknown) => any };
+    try {
+      const runner = await import("@ghostly-io/runner") as {
+        runFlow: (input: unknown) => Promise<unknown>;
+        runInputSchema: { safeParse: (input: unknown) => any };
+      };
+      runFlow = runner.runFlow;
+      runInputSchema = runner.runInputSchema;
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              ok: false,
+              error: "No se pudo cargar @ghostly-io/runner para ejecutar ghostly_run_flow",
+              details: String(error),
+            }),
+          },
+        ],
+      };
+    }
+
     let steps: unknown;
     try {
       steps = JSON.parse(args.stepsJson) as unknown;
@@ -91,7 +114,7 @@ registerGetProjectMapTool(server);
 registerAnalyzeComponentTool(server);
 registerReadFlowDocsTool(server);
 registerSubmitPlanTool(server);
-registerListGhosttesterProjectsTool(server);
+registerListGhostlyProjectsTool(server);
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
@@ -99,6 +122,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  console.error("[ghosttester-mcp]", err);
+  console.error("[ghostly-mcp]", err);
   process.exit(1);
 });

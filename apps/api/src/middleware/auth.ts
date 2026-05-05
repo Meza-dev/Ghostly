@@ -15,7 +15,7 @@ declare module "hono" {
 }
 
 export async function authMiddleware(c: Context, next: Next) {
-  const secret = process.env.JWT_SECRET ?? "ghosttester-secret";
+  const secret = process.env.JWT_SECRET ?? "ghostly-secret";
 
   // Intentar Bearer JWT (Authorization header o ?token= query param para SSE/EventSource).
   const authHeader = c.req.header("Authorization");

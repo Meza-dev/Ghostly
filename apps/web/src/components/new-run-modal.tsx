@@ -25,23 +25,13 @@ function parseStartUrl(raw: string): { ok: true; baseUrl: string; gotoPath: stri
 const DEFAULT_STEPS_JSON = JSON.stringify([{ action: "waitForSelector", selector: "h1" }], null, 2);
 
 const RUN_MODE_HELP: Record<"advanced" | "assisted", string> = {
-  advanced:
-    "Los mismos pasos en JSON, compatible con el runner. Útil si ya tienes definiciones, copias de otro entorno o quieres control total.",
-  assisted:
-    "Escribe URL + objetivo. El runner hace recon del accessibility tree, la IA propone los próximos pasos y, si algo falla, un healer intenta recuperarse automáticamente.",
+  advanced: "Pasos en JSON compatibles con el runner. Para flujos ya definidos o control total.",
+  assisted: "Indica URL, objetivo y, si quieres, una condición de éxito. Al ejecutar se planifica y corre el flujo en un solo paso.",
 };
 
 type Props = {
   onClose: () => void;
   onRunStarted: (run: RunRecord) => void;
-};
-
-type ObserverSnapshot = {
-  url: string;
-  title: string;
-  capturedAt: string;
-  treeMarkdown: string;
-  nodeCount: number;
 };
 
 type AssistPlanResponse = {
@@ -51,13 +41,14 @@ type AssistPlanResponse = {
     steps: Step[];
   };
   meta: AssistedMeta;
-  observer?: ObserverSnapshot;
   mode?: "v1" | "v2";
 };
 
 export function NewRunModal({ onClose, onRunStarted }: Props) {
   const { projects, activeProjectId } = useAppContext();
   const [tab, setTab] = useState<"assisted" | "advanced">("assisted");
+  const [assistAvailable, setAssistAvailable] = useState(true);
+  const [assistChecked, setAssistChecked] = useState(false);
   const [startUrl, setStartUrl] = useState("https://example.com/");
   const [projectId, setProjectId] = useState(activeProjectId ?? projects[0]?.id ?? "");
   const [loading, setLoading] = useState(false);
@@ -66,23 +57,20 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
 
   const [stepsJson, setStepsJson] = useState(DEFAULT_STEPS_JSON);
   const [assistGoal, setAssistGoal] = useState("");
-  const [assistSteps, setAssistSteps] = useState<Step[]>([]);
-  const [assistMeta, setAssistMeta] = useState<AssistedMeta | null>(null);
-  const [assistObserver, setAssistObserver] = useState<ObserverSnapshot | null>(null);
   const [victoryText, setVictoryText] = useState("");
   const [victorySelector, setVictorySelector] = useState("");
   const [victoryUrl, setVictoryUrl] = useState("");
   const [victoryMustAll, setVictoryMustAll] = useState(false);
-  const [maxHorizons, setMaxHorizons] = useState("12");
-  const [stepsPerHorizon, setStepsPerHorizon] = useState("3");
-  const [maxLoopMs, setMaxLoopMs] = useState("300000");
-  const [memoryMode, setMemoryMode] = useState<"off" | "runtime" | "adaptive">("adaptive");
 
   const submitDisabledReason = (() => {
-    if (loading) return "Hay una corrida iniciándose.";
-    if (planning) return "Se está generando el plan asistido.";
+    if (loading) return "Hay una ejecución iniciándose.";
+    if (planning) return "Generando plan asistido…";
     if (projects.length === 0) return "No hay proyectos disponibles. Crea uno primero.";
-    if (tab === "assisted" && !assistMeta) return "En modo asistido primero debes usar «Reconocer y planear».";
+    if (!assistChecked) return "Validando configuración del modo asistido...";
+    if (tab === "assisted" && !assistAvailable) {
+      return "Modo asistido no disponible: configura una API key de IA en el servidor.";
+    }
+    if (tab === "assisted" && !assistGoal.trim()) return "Escribe un objetivo para el modo asistido.";
     return null;
   })();
   const isSubmitDisabled = submitDisabledReason !== null;
@@ -98,67 +86,35 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
     }
   }, [activeProjectId, projectId, projects]);
 
-  // Invalidar plan asistido si cambia URL o objetivo.
   useEffect(() => {
-    setAssistMeta(null);
-    setAssistSteps([]);
-    setAssistObserver(null);
-  }, [startUrl, assistGoal]);
-
-  async function handleGenerateAssistPlan() {
-    setError(null);
-    if (!projectId) {
-      setError("Debes seleccionar un proyecto para generar un plan.");
-      return;
-    }
-    const goal = assistGoal.trim();
-    if (!goal) {
-      setError("Escribe un objetivo antes de generar el plan.");
-      return;
-    }
-    const parsedUrl = parseStartUrl(startUrl);
-    if (!parsedUrl.ok) {
-      setError(parsedUrl.message);
-      return;
-    }
-    setPlanning(true);
-    try {
-      const res = await apiFetch("/v1/plan", {
-        method: "POST",
-        body: JSON.stringify({
-          project: projectId,
-          baseUrl: parsedUrl.baseUrl,
-          goal,
-          mode: "v2",
-        }),
-      });
-      const body = (await res.json()) as { ok?: boolean; error?: string } & Partial<AssistPlanResponse>;
-      if (!res.ok || !body.ok || !body.draft || !body.meta) {
-        setAssistMeta(null);
-        setAssistSteps([]);
-        setAssistObserver(null);
-        setError(typeof body.error === "string" ? body.error : "No se pudo generar el plan asistido.");
-        return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch("/v1/ping");
+        const body = (await res.json()) as { assistConfigured?: boolean };
+        if (cancelled) return;
+        const enabled = Boolean(body.assistConfigured);
+        setAssistAvailable(enabled);
+        if (!enabled) setTab("advanced");
+      } catch {
+        if (cancelled) return;
+        setAssistAvailable(false);
+        setTab("advanced");
+      } finally {
+        if (!cancelled) setAssistChecked(true);
       }
-      setAssistMeta(body.meta);
-      setAssistSteps(body.draft.steps ?? []);
-      setAssistObserver(body.observer ?? null);
-    } catch (err) {
-      setAssistMeta(null);
-      setAssistSteps([]);
-      setAssistObserver(null);
-      setError(err instanceof Error ? err.message : "Error de red");
-    } finally {
-      setPlanning(false);
-    }
-  }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
     if (!projectId) {
-      setError("Debes seleccionar un proyecto para ejecutar la corrida.");
+      setError("Debes seleccionar un proyecto para ejecutar la ejecución.");
       return;
     }
 
@@ -191,20 +147,48 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         return;
       }
       steps = [firstGoto, ...extra];
+      setLoading(true);
     } else {
-      if (!assistMeta) {
-        setError("Primero ejecuta «Reconocer y planear» antes de correr.");
+      const goal = assistGoal.trim();
+      if (!goal) {
+        setError("Escribe un objetivo para el modo asistido.");
         return;
       }
-      if (assistSteps.length === 0) {
-        setError("El plan asistido no tiene pasos para ejecutar.");
+      setPlanning(true);
+      let planBody: AssistPlanResponse;
+      try {
+        const res = await apiFetch("/v1/plan", {
+          method: "POST",
+          body: JSON.stringify({
+            project: projectId,
+            baseUrl: parsedUrl.baseUrl,
+            goal,
+            mode: "v2",
+          }),
+        });
+        const body = (await res.json()) as { ok?: boolean; error?: string } & Partial<AssistPlanResponse>;
+        if (!res.ok || !body.ok || !body.draft || !body.meta) {
+          setError(typeof body.error === "string" ? body.error : "No se pudo generar el plan asistido.");
+          setPlanning(false);
+          return;
+        }
+        planBody = body as AssistPlanResponse;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Error de red");
+        setPlanning(false);
         return;
       }
-      steps = [firstGoto, ...assistSteps];
-      assisted = assistMeta;
+      const plannedSteps = planBody.draft.steps ?? [];
+      if (plannedSteps.length === 0) {
+        setError("El plan asistido no incluye pasos ejecutables. Ajusta el objetivo e inténtalo de nuevo.");
+        setPlanning(false);
+        return;
+      }
+      steps = [firstGoto, ...plannedSteps];
+      assisted = planBody.meta;
+      setLoading(true);
+      setPlanning(false);
     }
-
-    setLoading(true);
     let completed: RunRecord | null = null;
     try {
       const body: Record<string, unknown> = {
@@ -227,10 +211,10 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
           v2: true,
           goal: assisted.goal,
           ...(victoryText.trim() || victorySelector.trim() || victoryUrl.trim() ? { victory } : {}),
-          maxHorizons: Number(maxHorizons) || undefined,
-          stepsPerHorizon: Number(stepsPerHorizon) || undefined,
-          maxLoopMs: Number(maxLoopMs) || undefined,
-          memoryMode,
+          maxHorizons: 12,
+          stepsPerHorizon: 3,
+          maxLoopMs: 300_000,
+          memoryMode: "adaptive",
         };
       }
       const res = await apiFetch("/v1/run", {
@@ -248,7 +232,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
       }
       const response = (await res.json()) as { id?: string; status?: string };
       if (!response?.id) {
-        setError("La respuesta no incluye el ID de la corrida.");
+        setError("La respuesta no incluye el ID de la ejecución.");
         return;
       }
       // Respuesta fire-and-forget: construimos un RunRecord mínimo en estado "running"
@@ -277,12 +261,12 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="flex max-h-[90vh] w-full max-w-[640px] flex-col gap-4 overflow-hidden rounded-ui border border-border bg-card p-6 shadow-xl">
         <div className="flex shrink-0 items-center justify-between">
-          <span className="font-nav-active text-body text-foreground">Nueva corrida</span>
+          <span className="font-nav-active text-body text-foreground">Nueva ejecución</span>
           <button
             type="button"
-            onClick={() => { if (!loading) onClose(); }}
-            disabled={loading}
-            className="flex h-7 w-7 items-center justify-center rounded-[6px] text-muted-fg hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
+            onClick={() => { if (!loading && !planning) onClose(); }}
+            disabled={loading || planning}
+            className="flex h-7 w-7 items-center justify-center rounded-control-md text-muted-fg hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
             aria-label="Cerrar"
           >
             <X className="h-4 w-4" strokeWidth={2} />
@@ -290,11 +274,14 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         </div>
 
         <div className="flex shrink-0 flex-col gap-2">
-          <div className="flex gap-1 rounded-[8px] bg-muted p-1">
+          <div className="flex gap-1 rounded-control-lg bg-muted p-1">
             <button
               type="button"
-              onClick={() => setTab("assisted")}
-              className={`flex-1 rounded-[6px] px-2 py-2 text-caption font-button transition-colors sm:px-3 sm:text-small ${
+              onClick={() => {
+                if (assistAvailable) setTab("assisted");
+              }}
+              disabled={!assistAvailable}
+              className={`flex-1 rounded-control-md px-2 py-2 text-caption font-button transition-colors sm:px-3 sm:text-small ${
                 tab === "assisted"
                   ? "bg-card text-foreground shadow-sm"
                   : "text-muted-fg hover:text-foreground"
@@ -305,7 +292,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
             <button
               type="button"
               onClick={() => setTab("advanced")}
-              className={`flex-1 rounded-[6px] px-2 py-2 text-caption font-button transition-colors sm:px-3 sm:text-small ${
+              className={`flex-1 rounded-control-md px-2 py-2 text-caption font-button transition-colors sm:px-3 sm:text-small ${
                 tab === "advanced"
                   ? "bg-card text-foreground shadow-sm"
                   : "text-muted-fg hover:text-foreground"
@@ -317,6 +304,12 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
           <p className="text-caption leading-snug text-muted-fg" id="run-mode-hint">
             {RUN_MODE_HELP[tab]}
           </p>
+          {!assistAvailable && (
+            <p className="text-caption text-warning-fg">
+              Modo asistido deshabilitado: falta API key de IA en el backend. Ejecuta{" "}
+              <span className="font-mono">ghostly config</span> y reinicia <span className="font-mono">ghostly up</span>.
+            </p>
+          )}
         </div>
 
         <form
@@ -333,7 +326,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
               required
-              className="rounded-[6px] border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              className="rounded-control-md border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             >
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -343,7 +336,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
             </select>
             {projects.length === 0 && (
               <p className="text-caption text-error-fg">
-                Crea un proyecto primero para poder ejecutar corridas.
+                Crea un proyecto primero para poder ejecutar ejecuciones.
               </p>
             )}
           </div>
@@ -359,11 +352,10 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
               value={startUrl}
               onChange={(e) => setStartUrl(e.target.value)}
               placeholder="https://mi-app.com/login"
-              className="rounded-[6px] border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              className="rounded-control-md border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             />
             <p className="text-caption text-muted-fg">
-              Se conserva la URL con su ruta (ej. <span className="font-mono">/backoffice</span>) como base y el
-              primer paso siempre es <span className="font-mono">goto</span> a esa misma ruta.
+              La ruta forma parte de la base; la ejecución abre esa URL como primer paso.
             </p>
           </div>
 
@@ -382,7 +374,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
                 required
                 value={stepsJson}
                 onChange={(e) => setStepsJson(e.target.value)}
-                className="min-h-[200px] flex-1 rounded-[6px] border border-border bg-background px-3 py-2 font-mono text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                className="min-h-[200px] flex-1 rounded-control-md border border-border bg-background px-3 py-2 font-mono text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
           ) : (
@@ -397,33 +389,30 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
                   value={assistGoal}
                   onChange={(e) => setAssistGoal(e.target.value)}
                   placeholder="Ejemplo: iniciar sesión con usuario y contraseña y llegar al dashboard."
-                  className="rounded-[6px] border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="rounded-control-md border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 />
-                <p className="text-caption text-muted-fg">
-                  Al cambiar URL u objetivo se invalida el plan generado.
-                </p>
               </div>
 
-              <div className="rounded-[8px] border border-border bg-background p-3">
-                <p className="mb-2 text-caption font-button text-foreground">Condición de victoria (opcional)</p>
+              <div className="rounded-control-lg border border-border bg-background p-3">
+                <p className="mb-2 text-caption font-button text-foreground">Condición de éxito (opcional)</p>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <input
                     value={victoryText}
                     onChange={(e) => setVictoryText(e.target.value)}
                     placeholder="Texto esperado (ej. Producto creado)"
-                    className="rounded-[6px] border border-border bg-card px-2 py-1.5 text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    className="rounded-control-md border border-border bg-card px-2 py-1.5 text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
                   <input
                     value={victorySelector}
                     onChange={(e) => setVictorySelector(e.target.value)}
                     placeholder='Selector visible (ej. .toast-success)'
-                    className="rounded-[6px] border border-border bg-card px-2 py-1.5 font-mono text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    className="rounded-control-md border border-border bg-card px-2 py-1.5 font-mono text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
                   <input
                     value={victoryUrl}
                     onChange={(e) => setVictoryUrl(e.target.value)}
                     placeholder="URL contiene (ej. /products)"
-                    className="rounded-[6px] border border-border bg-card px-2 py-1.5 text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    className="rounded-control-md border border-border bg-card px-2 py-1.5 text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
                   <label className="flex items-center gap-2 text-caption text-muted-fg">
                     <input
@@ -435,130 +424,18 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
                   </label>
                 </div>
               </div>
-
-              <div className="rounded-[8px] border border-border bg-background p-3">
-                <p className="mb-2 text-caption font-button text-foreground">Parámetros del loop</p>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                  <input
-                    value={maxHorizons}
-                    onChange={(e) => setMaxHorizons(e.target.value)}
-                    inputMode="numeric"
-                    placeholder="maxHorizons"
-                    className="rounded-[6px] border border-border bg-card px-2 py-1.5 font-mono text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <input
-                    value={stepsPerHorizon}
-                    onChange={(e) => setStepsPerHorizon(e.target.value)}
-                    inputMode="numeric"
-                    placeholder="stepsPerHorizon"
-                    className="rounded-[6px] border border-border bg-card px-2 py-1.5 font-mono text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <input
-                    value={maxLoopMs}
-                    onChange={(e) => setMaxLoopMs(e.target.value)}
-                    inputMode="numeric"
-                    placeholder="maxLoopMs"
-                    className="rounded-[6px] border border-border bg-card px-2 py-1.5 font-mono text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <select
-                    value={memoryMode}
-                    onChange={(e) => setMemoryMode(e.target.value as "off" | "runtime" | "adaptive")}
-                    className="rounded-[6px] border border-border bg-card px-2 py-1.5 text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  >
-                    <option value="adaptive">Memoria adaptive</option>
-                    <option value="runtime">Solo runtime</option>
-                    <option value="off">Sin memoria</option>
-                  </select>
-                </div>
-              </div>
-
-              {!assistMeta ? (
-                <div className="flex flex-col items-start gap-2 rounded-[8px] border border-dashed border-border bg-background p-3">
-                  <p className="text-caption text-muted-fg">
-                    Fase 1 · El runner abrirá la URL, extraerá el accessibility tree y la IA propondrá los próximos {" "}
-                    <span className="font-mono">3</span> pasos antes de ejecutar.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => void handleGenerateAssistPlan()}
-                    disabled={planning || loading || projects.length === 0 || !assistGoal.trim()}
-                    className="rounded-pill bg-primary px-3 py-1.5 text-caption font-button text-primary-fg hover:opacity-95 disabled:opacity-60"
-                  >
-                    {planning ? "Reconociendo…" : "Reconocer y planear"}
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-3">
-                  {assistObserver && (
-                    <details className="rounded-[8px] border border-border bg-background p-3" open>
-                      <summary className="cursor-pointer text-caption font-button text-foreground">
-                        Mapa semántico observado ({assistObserver.nodeCount} nodos)
-                      </summary>
-                      <div className="mt-2 flex flex-col gap-1">
-                        <p className="text-caption text-muted-fg">
-                          <span className="font-mono">{assistObserver.url}</span>
-                          {assistObserver.title && <span> · {assistObserver.title}</span>}
-                        </p>
-                        <pre className="max-h-48 overflow-auto rounded-[4px] bg-muted p-2 font-mono text-caption text-foreground">
-                          {assistObserver.treeMarkdown}
-                        </pre>
-                      </div>
-                    </details>
-                  )}
-
-                  <div className="rounded-[8px] border border-border bg-background p-3">
-                    <p className="mb-2 text-caption font-button text-foreground">
-                      Plan propuesto ({assistSteps.length} pasos)
-                    </p>
-                    {assistSteps.length === 0 ? (
-                      <p className="text-caption text-muted-fg">
-                        La IA no devolvió pasos válidos. Vuelve a reconocer o ajusta el objetivo.
-                      </p>
-                    ) : (
-                      <ol className="flex flex-col gap-1">
-                        {assistSteps.map((step, i) => (
-                          <li
-                            key={i}
-                            className="flex items-start gap-2 rounded-[4px] bg-muted px-2 py-1 font-mono text-caption text-foreground"
-                          >
-                            <span className="shrink-0 text-muted-fg">#{i + 1}</span>
-                            <code className="break-all">{JSON.stringify(step)}</code>
-                          </li>
-                        ))}
-                      </ol>
-                    )}
-                    <p className="mt-2 text-caption text-muted-fg">
-                      Durante la ejecución el Strategist puede extender el plan y el Healer intentará corregir cada fallo.
-                    </p>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-caption text-muted-fg">
-                      Plan generado con <span className="font-mono">{assistMeta.model}</span>.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => void handleGenerateAssistPlan()}
-                      disabled={planning || loading}
-                      className="rounded-pill border border-border px-3 py-1.5 text-caption font-button text-foreground hover:bg-accent disabled:opacity-60"
-                    >
-                      {planning ? "Reconociendo…" : "Reconocer de nuevo"}
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
           {error && (
-            <p className="shrink-0 rounded-[4px] bg-error px-3 py-2 text-caption text-error-fg">{error}</p>
+            <p className="shrink-0 rounded-control-sm bg-error px-3 py-2 text-caption text-error-fg">{error}</p>
           )}
 
           <div className="flex shrink-0 justify-end gap-2 border-t border-border pt-3">
             <button
               type="button"
-              onClick={() => { if (!loading) onClose(); }}
-              disabled={loading}
+              onClick={() => { if (!loading && !planning) onClose(); }}
+              disabled={loading || planning}
               className="rounded-pill border border-border px-4 py-2 text-small font-button text-foreground hover:bg-accent disabled:opacity-50"
             >
               Cancelar
@@ -568,7 +445,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
               disabled={isSubmitDisabled}
               className="rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95 disabled:opacity-60"
             >
-              {loading ? "Ejecutando…" : tab === "assisted" ? "Ejecutar plan" : "Ejecutar"}
+              {loading ? "Ejecutando…" : "Ejecutar"}
             </button>
           </div>
           {submitDisabledReason && (
@@ -578,9 +455,9 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
       </div>
     </div>
 
-    {loading && (
+    {(loading || planning) && (
       <div
-        className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 backdrop-blur-[3px]"
+        className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 backdrop-blur-sm"
         role="status"
         aria-live="polite"
         aria-busy="true"
@@ -588,9 +465,13 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         <div className="flex max-w-[min(360px,calc(100vw-2rem))] flex-col items-center gap-4 rounded-ui border border-border bg-card px-8 py-7 shadow-xl">
           <Loader2 className="h-10 w-10 animate-spin text-primary" strokeWidth={2} aria-hidden />
           <div className="text-center">
-            <p className="text-body font-nav-active text-foreground">Ejecutando la corrida</p>
+            <p className="text-body font-nav-active text-foreground">
+              {planning && !loading ? "Generando plan" : "Ejecutando"}
+            </p>
             <p className="mt-2 text-caption text-muted-fg">
-              El navegador está siguiendo los pasos. Puede tardar un minuto o más; no cierres esta ventana.
+              {planning && !loading
+                ? "Analizando la página y preparando los pasos. Un momento."
+                : "El navegador está siguiendo el flujo. Puede tardar varios minutos; no cierres esta ventana."}
             </p>
           </div>
         </div>

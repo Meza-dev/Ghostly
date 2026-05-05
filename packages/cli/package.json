@@ -1,0 +1,60 @@
+{
+  "name": "@ghostly-io/cli",
+  "version": "0.1.1",
+  "license": "MIT",
+  "description": "Ghostly CLI — zero-config installer and local runner",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Meza-dev/GhostTester-AI.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/Meza-dev/GhostTester-AI/tree/main/packages/cli",
+  "bugs": {
+    "url": "https://github.com/Meza-dev/GhostTester-AI/issues"
+  },
+  "keywords": [
+    "ghostly",
+    "e2e",
+    "testing",
+    "playwright",
+    "mcp",
+    "cursor",
+    "ai-testing"
+  ],
+  "type": "module",
+  "bin": {
+    "ghostly": "./dist/index.js",
+    "ghost": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:cli-only": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "publish-check": "node scripts/publish-check.mjs"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.9.1",
+    "@hono/node-server": "^1.13.7",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@prisma/client": "5",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.7",
+    "hono": "^4.6.12",
+    "playwright": "^1.49.1",
+    "prisma": "5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@ghostly-io/runner": "workspace:^",
+    "@ghostly-io/tsconfig": "workspace:*",
+    "@types/node": "^22.10.5",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

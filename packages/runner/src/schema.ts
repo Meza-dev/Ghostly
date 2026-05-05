@@ -100,6 +100,7 @@ export type AssistedMeta = {
       urlIncludes?: string[];
       mustAll?: boolean;
     };
+    isFullPlan?: boolean;
     maxHorizons?: number;
     stepsPerHorizon?: number;
     maxLoopMs?: number;

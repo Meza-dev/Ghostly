@@ -22,7 +22,7 @@ const configSchema = z.object({
 type GhosttesterConfig = z.infer<typeof configSchema>;
 
 async function readConfig(projectRoot: string): Promise<GhosttesterConfig> {
-  const configPath = path.join(projectRoot, "ghosttester.config.json");
+  const configPath = path.join(projectRoot, "ghostly.config.json");
   try {
     const raw = await fs.readFile(configPath, "utf8");
     return configSchema.parse(JSON.parse(raw) as unknown);

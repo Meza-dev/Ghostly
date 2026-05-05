@@ -1,6 +1,7 @@
 {
-  "name": "@ghosttester/client",
-  "version": "0.1.0",
+  "name": "@ghostly-io/client",
+  "version": "0.1.1",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,12 +11,15 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@ghosttester/tsconfig": "workspace:*",
+    "@ghostly-io/tsconfig": "workspace:*",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2"
   }

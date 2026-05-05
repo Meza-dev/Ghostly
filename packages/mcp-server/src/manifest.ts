@@ -7,7 +7,7 @@ import { z } from "zod";
 
 const execFileAsync = promisify(execFile);
 
-// Ruta al CLI del scanner dentro del monorepo GhostTester.
+// Ruta al CLI del scanner dentro del monorepo Ghostly.
 // import.meta.url → .../packages/mcp-server/dist/index.js
 // scanner CLI   → .../packages/scanner/dist/index.js
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -73,7 +73,7 @@ function resolveManifestPath(manifestPath?: string, projectRoot?: string): strin
     : process.env.GHOST_TARGET_PROJECT_ROOT
       ? path.resolve(process.env.GHOST_TARGET_PROJECT_ROOT)
       : process.cwd();
-  return path.join(root, ".ghosttester", "ghost-manifest.json");
+  return path.join(root, ".ghostly", "ghost-manifest.json");
 }
 
 function currentGitCommit(projectRoot: string): string | undefined {

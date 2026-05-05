@@ -1,50 +1,238 @@
 :root {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  /* Tipografía legible a zoom 100%: base ~16px, captions ≥14px */
-  --text-display: 1.75rem;
-  --leading-display: 1.25;
+  --font-family-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-family-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-family-serif: "Source Serif 4", Georgia, Cambria, "Times New Roman", serif;
+
+  /* Alias legacy */
+  --font-sans: var(--font-family-sans);
+
+  /* Tipografia */
+  --text-display: 2.75rem;
+  --leading-display: 1.05;
   --weight-display: 600;
-  --text-title: 1.375rem;
-  --leading-title: 1.35;
+  --text-title: 1.9375rem;
+  --leading-title: 1.2;
   --weight-title: 600;
-  --text-body: 1rem;
-  --leading-body: 1.55;
-  --text-small: 0.9375rem;
+  --text-body: 0.875rem;
+  --leading-body: 1.5;
+  --text-small: 0.8125rem;
   --leading-small: 1.5;
-  --text-caption: 0.875rem;
-  --leading-caption: 1.45;
-  --text-overline: 0.6875rem;
-  --leading-overline: 1.35;
+  --text-caption: 0.75rem;
+  --leading-caption: 1.4;
+  --text-overline: 0.75rem;
+  --leading-overline: 1.4;
   --weight-overline: 700;
-  --text-badge: 0.75rem;
+  --text-badge: 0.8125rem;
   --leading-badge: 1.25;
+  --text-micro: 0.6875rem;
+  --leading-micro: 1.25;
+  --text-md: 0.9375rem;
+  --leading-md: 1.5;
+  --text-lg: 1.0625rem;
+  --leading-lg: 1.45;
+  --text-xl: 1.375rem;
+  --leading-xl: 1.3;
+  --text-hero: 3.75rem;
+  --leading-hero: 1;
   --weight-badge: 700;
   --weight-nav-active: 500;
   --weight-button: 500;
   --weight-nav: 400;
-  --radius-ui: 0.5rem;
+  --weight-kpi: 700;
+  --tracking-tight: -0.01em;
+  --tracking-body: 0;
+  --tracking-label: 0.04em;
+
+  /* Spacing semantico */
+  --space-2xs: 0.125rem;
+  --space-xs: 0.25rem;
+  --space-sm: 0.375rem;
+  --space-md: 0.5rem;
+  --space-lg: 0.75rem;
+  --space-xl: 1rem;
+  --space-2xl: 1.25rem;
+  --space-3xl: 1.5rem;
+  --space-4xl: 2rem;
+  --space-5xl: 3rem;
+  --space-6xl: 4rem;
+
+  /* Control sizes (Ghostly login reference) */
+  --control-height-field: 2.25rem;
+  --control-height-button-sm: 2rem;
+  --control-height-button-md: 2.25rem;
+  --control-height-button-primary: 2.5rem;
+  --control-height-button-secondary: 2.25rem;
+  --control-padding-inline-field: 0.75rem;
+  --control-padding-inline-button-primary: 1rem;
+  --control-padding-block-button-primary: 0.75rem;
+  --control-padding-inline-button-secondary: 0.75rem;
+  --control-radius-field: 0.25rem;
+  --control-radius-button: 0.25rem;
+  --control-radius-button-primary: 0.5625rem;
+  --control-font-size-label: 0.75rem;
+  --control-font-size-field: 0.875rem;
+  --control-font-size-button: 0.875rem;
+  --control-font-size-button-login: 14px;
+  --control-radius-button-login: 0.5625rem;
+  --control-letter-spacing-button-login: -0.005em;
+  --control-height-button-login-secondary: 2.5rem;
+  --control-padding-inline-button-login-secondary: 0.875rem;
+  --control-radius-button-login-secondary: 0.5625rem;
+  --control-font-size-button-login-secondary: 0.875rem;
+  --control-font-size-button-login-primary: 14px;
+  --control-padding-inline-input-login-shell: 0.75rem;
+  --control-radius-input-login-shell: 0.5625rem;
+  --control-transition-input-login-shell: border-color 0.18s, box-shadow 0.18s;
+
+  /* Radius semantico */
+  --radius-control-sm: 0.25rem;
+  --radius-control-md: 0.25rem;
+  --radius-control-lg: 0.25rem;
+  --radius-surface: 0.5rem;
+  --radius-panel: 0.5rem;
   --radius-pill: 9999px;
-  --color-background: #0c1117;
-  --color-foreground: #ebe6e1;
-  --color-muted: #121a24;
-  --color-muted-foreground: #8a96a8;
-  --color-border: #2a3644;
-  --color-card: #1a2432;
-  --color-accent: #151f2e;
-  --color-accent-foreground: #ebe6e1;
-  --color-primary: #5b9cf8;
-  --color-primary-foreground: #f0f6ff;
-  --color-sidebar: #121a24;
-  --color-sidebar-accent: #151f2e;
-  --color-sidebar-foreground: #8a96a8;
-  --color-sidebar-emphasis: #ebe6e1;
-  --color-sidebar-active: #1e2a3d;
-  --color-sidebar-active-border: #5b9cf8;
-  --color-tile: #0a0f14;
-  --color-success: #1f3d32;
-  --color-success-foreground: #9ddec0;
-  --color-error: #3d2428;
-  --color-error-foreground: #f0b8bc;
-  --color-warning: #3a3420;
-  --color-warning-foreground: #e8d9a5;
+
+  /* Sombras semanticas */
+  --shadow-surface: 0 6px 24px -8px rgb(0 0 0 / 0.5);
+  --shadow-overlay: 0 20px 35px rgb(2 6 14 / 0.45);
+  --shadow-button-primary-hover: 0 6px 18px -6px #7d6cff;
+
+  /* Color roles */
+  --color-brand-primary: #7d6cff;
+  --color-brand-primary-soft: rgb(125 108 255 / 0.1);
+  --color-brand-primary-soft-medium: rgb(125 108 255 / 0.18);
+  --color-brand-primary-hover: #9a8cff;
+  --color-brand-primary-pressed: #5b4ed6;
+  --color-brand-primary-foreground: #ffffff;
+  --color-button-primary-login-fg: #ffffff;
+  --color-button-primary-login-disabled-bg: #3a3344;
+  --color-button-primary-login-disabled-fg: #6f6f7a;
+  --color-bg-shell: #0a0a0c;
+  --color-bg-main: #0c0c0e;
+  --color-bg-surface: #15151a;
+  --color-bg-muted: #1c1c22;
+  --color-bg-subtle: #0f0f12;
+  --color-border-default: #26262e;
+  --color-border-strong: #3a3a44;
+  --color-text-primary: #ededee;
+  --color-text-secondary: #a8a8b3;
+  --color-text-tertiary: #6f6f7a;
+  --color-text-disabled: #4a4a55;
+  --color-status-success: #3ecf8e;
+  --color-status-success-soft: rgb(93 193 133 / 0.12);
+  --color-status-error: #ff6b6b;
+  --color-status-error-soft: rgb(227 107 107 / 0.12);
+  --color-status-warning: #ffb454;
+  --color-status-warning-soft: rgb(219 169 85 / 0.12);
+  --color-status-running: #7d6cff;
+  --color-input-login-shell-bg: #141416;
+  --color-input-login-shell-border: #222226;
+
+  /* Alias de compatibilidad */
+  --radius-ui: var(--radius-control-lg);
+  --color-background: var(--color-bg-main);
+  --color-foreground: var(--color-text-primary);
+  --color-muted: var(--color-bg-muted);
+  --color-muted-foreground: var(--color-text-secondary);
+  --color-border: var(--color-border-default);
+  --color-card: var(--color-bg-surface);
+  --color-accent: var(--color-bg-muted);
+  --color-accent-foreground: var(--color-text-primary);
+  --color-primary: var(--color-brand-primary);
+  --color-primary-foreground: var(--color-brand-primary-foreground);
+  --color-sidebar: var(--color-bg-surface);
+  --color-sidebar-accent: var(--color-bg-muted);
+  --color-sidebar-foreground: var(--color-text-secondary);
+  --color-sidebar-emphasis: var(--color-text-primary);
+  --color-sidebar-active: var(--color-bg-subtle);
+  --color-sidebar-active-border: var(--color-brand-primary);
+  --color-tile: var(--color-bg-shell);
+  --color-success: var(--color-status-success-soft);
+  --color-success-foreground: var(--color-status-success);
+  --color-error: var(--color-status-error-soft);
+  --color-error-foreground: var(--color-status-error);
+  --color-warning: var(--color-status-warning-soft);
+  --color-warning-foreground: var(--color-status-warning);
+
+  --focus-border: 1.5px solid var(--color-brand-primary);
+  --focus-ring: 0 0 0 3px rgb(125 108 255 / 0.15);
+  --motion-standard: cubic-bezier(.2, .7, .3, 1);
+  --motion-fast: 0.15s ease;
+  --motion-color: 120ms;
+  --motion-border: 180ms;
+  --motion-transform: 250ms;
+  --motion-entry: 350ms;
+  --motion-login-halo: 2.4s;
+  --motion-login-aurora: 40s;
+  --motion-login-float: 3.2s;
+}
+
+/* Tema oscuro por defecto (:root); claro alineado con Ghostly/ghostly-final/tokens.jsx (makeTokens "light") */
+html {
+  color-scheme: dark;
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+
+  --shadow-surface: 0 6px 28px -10px rgb(15 23 42 / 0.08);
+  --shadow-overlay: 0 18px 40px rgb(15 23 42 / 0.12);
+  --shadow-button-primary-hover: 0 6px 18px -6px #5e4ce0;
+
+  --color-brand-primary: #5e4ce0;
+  --color-brand-primary-soft: rgb(94 76 224 / 0.14);
+  --color-brand-primary-soft-medium: rgb(94 76 224 / 0.22);
+  --color-brand-primary-hover: #6f5cf0;
+  --color-brand-primary-pressed: #4a3db8;
+  --color-brand-primary-foreground: #ffffff;
+  --color-button-primary-login-fg: #ffffff;
+  --color-button-primary-login-disabled-bg: #e4e4e7;
+  --color-button-primary-login-disabled-fg: #a1a1aa;
+  --color-bg-shell: #f3f3f3;
+  --color-bg-main: #fafafa;
+  --color-bg-surface: #ffffff;
+  --color-bg-muted: #f5f5f5;
+  --color-bg-subtle: #f3f3f3;
+  --color-border-default: #e8e8e8;
+  --color-border-strong: #d4d4d4;
+  --color-text-primary: #0a0a0a;
+  --color-text-secondary: #52525b;
+  --color-text-tertiary: #a1a1aa;
+  --color-text-disabled: #d4d4d4;
+  --color-status-success: #16a34a;
+  --color-status-success-soft: rgb(22 163 74 / 0.1);
+  --color-status-error: #dc2626;
+  --color-status-error-soft: rgb(220 38 38 / 0.1);
+  --color-status-warning: #ca8a04;
+  --color-status-warning-soft: rgb(202 138 4 / 0.1);
+  --color-status-running: #5e4ce0;
+  --color-input-login-shell-bg: #fafafa;
+  --color-input-login-shell-border: #e8e8e8;
+
+  --color-background: var(--color-bg-main);
+  --color-foreground: var(--color-text-primary);
+  --color-muted: var(--color-bg-muted);
+  --color-muted-foreground: var(--color-text-secondary);
+  --color-border: var(--color-border-default);
+  --color-card: var(--color-bg-surface);
+  --color-accent: var(--color-bg-muted);
+  --color-accent-foreground: var(--color-text-primary);
+  --color-primary: var(--color-brand-primary);
+  --color-primary-foreground: var(--color-brand-primary-foreground);
+  --color-sidebar: var(--color-bg-surface);
+  --color-sidebar-accent: var(--color-bg-muted);
+  --color-sidebar-foreground: var(--color-text-secondary);
+  --color-sidebar-emphasis: var(--color-text-primary);
+  --color-sidebar-active: #ededed;
+  --color-sidebar-active-border: var(--color-brand-primary);
+  --color-tile: var(--color-bg-shell);
+  --color-success: var(--color-status-success-soft);
+  --color-success-foreground: var(--color-status-success);
+  --color-error: var(--color-status-error-soft);
+  --color-error-foreground: var(--color-status-error);
+  --color-warning: var(--color-status-warning-soft);
+  --color-warning-foreground: var(--color-status-warning);
+
+  --focus-border: 1.5px solid var(--color-brand-primary);
+  --focus-ring: 0 0 0 3px rgb(94 76 224 / 0.18);
 }

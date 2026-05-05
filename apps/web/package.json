@@ -1,6 +1,6 @@
 {
-  "name": "@ghosttester/web",
-  "version": "0.0.0",
+  "name": "@ghostly-io/web",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "scripts": {

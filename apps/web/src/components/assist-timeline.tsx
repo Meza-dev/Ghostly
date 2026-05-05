@@ -161,23 +161,23 @@ export function AssistTimeline({ events }: Props) {
           return (
             <li
               key={evt.seq}
-              className="flex items-start gap-2 rounded-[4px] bg-muted px-2 py-1.5 text-caption"
+              className="flex items-start gap-2 rounded-control-sm bg-muted px-2 py-1.5 text-caption"
             >
               <Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${tone}`} strokeWidth={2} />
               <div className="flex min-w-0 flex-1 flex-col">
                 <div className="flex items-center gap-2 text-foreground">
                   <span className="font-button">{meta.label}</span>
                   {evt.stepIndex !== undefined && (
-                    <span className="rounded-pill bg-card px-1.5 py-0.5 text-[10px] text-muted-fg">
+                    <span className="rounded-pill bg-card px-1.5 py-0.5 text-micro text-muted-fg">
                       paso {evt.stepIndex + 1}
                     </span>
                   )}
-                  <span className="ml-auto text-[10px] text-muted-fg">
+                  <span className="ml-auto text-micro text-muted-fg">
                     {new Date(evt.at).toLocaleTimeString("es")}
                   </span>
                 </div>
                 {payloadSummary && (
-                  <span className="break-all font-mono text-[11px] text-muted-fg">{payloadSummary}</span>
+                  <span className="break-all font-mono text-micro text-muted-fg">{payloadSummary}</span>
                 )}
               </div>
             </li>

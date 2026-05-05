@@ -6,7 +6,7 @@ export default defineConfig({
   platform: "node",
   target: "node20",
   clean: true,
-  sourcemap: true,
+  sourcemap: false,
   dts: true,
   bundle: true,
   splitting: false,

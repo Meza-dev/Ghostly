@@ -1,5 +1,5 @@
 {
-  "extends": "@ghosttester/tsconfig/base.json",
+  "extends": "@ghostly-io/tsconfig/base.json",
   "include": ["src/**/*.ts", "tsup.config.ts"],
   "compilerOptions": {
     "rootDir": ".",

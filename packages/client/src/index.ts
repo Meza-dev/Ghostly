@@ -140,18 +140,18 @@ export type Project = {
   createdAt: string;
 };
 
-export type GhostTesterClientOptions = {
-  /** URL base del servidor GhostTester (ej. http://localhost:4000) */
+export type GhostlyClientOptions = {
+  /** URL base del servidor Ghostly (ej. http://localhost:4000) */
   baseUrl: string;
   /** API Key generada desde el dashboard de Settings */
   apiKey: string;
 };
 
-export class GhostTesterClient {
+export class GhostlyClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
 
-  constructor(options: GhostTesterClientOptions) {
+  constructor(options: GhostlyClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.apiKey = options.apiKey;
   }
@@ -166,7 +166,7 @@ export class GhostTesterClient {
     const res = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`GhostTester API error ${res.status}: ${text}`);
+      throw new Error(`Ghostly API error ${res.status}: ${text}`);
     }
     return res.json() as Promise<T>;
   }

@@ -15,6 +15,16 @@
     margin: 0;
     min-height: 100vh;
   }
+
+  .login-auth-input:-webkit-autofill,
+  .login-auth-input:-webkit-autofill:hover,
+  .login-auth-input:-webkit-autofill:focus,
+  .login-auth-input:-webkit-autofill:active {
+    -webkit-text-fill-color: var(--color-text-primary);
+    caret-color: var(--color-text-primary);
+    box-shadow: 0 0 0 1000px var(--color-input-login-shell-bg) inset;
+    transition: background-color 9999s ease-out 0s;
+  }
 }
 
 @layer utilities {
@@ -35,5 +45,132 @@
   }
   .font-button {
     font-weight: var(--weight-button);
+  }
+
+  .login-aurora {
+    position: absolute;
+    inset: -25%;
+    background:
+      radial-gradient(circle at 20% 20%, rgb(125 108 255 / 0.16), transparent 42%),
+      radial-gradient(circle at 80% 30%, rgb(125 108 255 / 0.1), transparent 40%),
+      radial-gradient(circle at 55% 75%, rgb(62 207 142 / 0.08), transparent 40%);
+    animation: login-aurora-spin var(--motion-login-aurora) linear infinite;
+    pointer-events: none;
+  }
+
+  .login-halo {
+    position: absolute;
+    width: 280px;
+    height: 280px;
+    border-radius: 9999px;
+    background: radial-gradient(circle, rgb(125 108 255 / 0.38) 0%, rgb(125 108 255 / 0) 70%);
+    animation: login-halo-pulse var(--motion-login-halo) ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  .login-mascot-float {
+    animation: login-mascot-float var(--motion-login-float) var(--motion-standard) infinite;
+    will-change: transform;
+  }
+
+  .ghostly-project-card {
+    position: relative;
+    overflow: hidden;
+    transition:
+      border-color var(--motion-border) var(--motion-standard),
+      transform var(--motion-transform) var(--motion-standard),
+      box-shadow var(--motion-transform) var(--motion-standard);
+  }
+
+  .ghostly-project-card::before {
+    content: "";
+    position: absolute;
+    left: calc(var(--x, 50%) - 190px);
+    top: calc(var(--y, 50%) - 190px);
+    width: 380px;
+    height: 380px;
+    border-radius: 9999px;
+    background: radial-gradient(circle, rgb(125 108 255 / 0.1) 0%, rgb(125 108 255 / 0) 68%);
+    opacity: 0;
+    transition: opacity var(--motion-color) ease;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .ghostly-project-card:hover::before {
+    opacity: 1;
+  }
+
+  .ghostly-project-card > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .ghostly-project-card-arrow {
+    opacity: 0.55;
+    transition: transform var(--motion-transform) var(--motion-standard), opacity var(--motion-color) ease;
+  }
+
+  .ghostly-project-card:hover .ghostly-project-card-arrow {
+    opacity: 1;
+    transform: translateX(3px);
+  }
+
+  .ghostly-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-strong) transparent;
+  }
+
+  .ghostly-scrollbar::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .ghostly-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .ghostly-scrollbar::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    background-color: var(--color-border-default);
+  }
+
+  .ghostly-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-border-strong);
+  }
+}
+
+@keyframes login-halo-pulse {
+  0% {
+    opacity: 0.35;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 0.65;
+    transform: scale(1.04);
+  }
+  100% {
+    opacity: 0.35;
+    transform: scale(0.94);
+  }
+}
+
+@keyframes login-aurora-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes login-mascot-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
   }
 }

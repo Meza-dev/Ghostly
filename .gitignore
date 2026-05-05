@@ -11,3 +11,14 @@ artifacts
 # SQLite (desarrollo local)
 *.db
 *.db-journal
+
+.cursor
+
+Ghostly/
+Ghostly.zip
+
+# Empaquetados locales para pruebas de publish
+*.tgz
+
+# Reglas locales generadas por CLI
+.cursorrules

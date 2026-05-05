@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { captureRecon } from "@ghosttester/runner";
-import type { PlannedStep } from "@ghosttester/runner";
+import { captureRecon } from "@ghostly-io/runner";
+import type { PlannedStep } from "@ghostly-io/runner";
 import { loadConfig } from "../config.js";
 import { AssistPlanError, generateAssistPlan } from "../services/assist-plan.js";
 import { createStrategist } from "../services/assist-orchestrator.js";

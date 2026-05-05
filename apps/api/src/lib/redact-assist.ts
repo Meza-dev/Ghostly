@@ -1,4 +1,4 @@
-import type { AssistedMeta } from "@ghosttester/runner";
+import type { AssistedMeta } from "@ghostly-io/runner";
 
 const REDACTED = "[REDACTED]";
 const SENSITIVE_WORDS = [

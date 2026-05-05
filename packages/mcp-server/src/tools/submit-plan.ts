@@ -1,5 +1,4 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { runInputSchema } from "@ghosttester/runner";
 import { z } from "zod";
 import { apiUrlFromEnv, authHeader } from "../ghost-api.js";
 import { ensureManifest, stableCodeHints } from "../manifest.js";
@@ -7,7 +6,7 @@ import { ensureManifest, stableCodeHints } from "../manifest.js";
 export function registerSubmitPlanTool(server: McpServer): void {
   server.tool(
     "submit_plan",
-    "Envía un plan enriquecido a POST /v1/run de GhostTester usando el manifest como codeHints opcional. Por defecto activa captura de pantalla tras cada paso (como la UI web). El vídeo solo se guarda si el run falla.",
+    "Envía un plan enriquecido a POST /v1/run de Ghostly usando el manifest como codeHints opcional. Por defecto activa captura de pantalla tras cada paso (como la UI web). El vídeo solo se guarda si el run falla.",
     {
       apiUrl: z.string().url().optional(),
       apiKey: z.string().min(1).optional(),
@@ -32,6 +31,28 @@ export function registerSubmitPlanTool(server: McpServer): void {
       defaultTimeoutMs: z.number().int().positive().optional(),
     },
     async (args) => {
+      let runInputSchema: { safeParse: (input: unknown) => any };
+      try {
+        const runner = await import("@ghostly-io/runner") as {
+          runInputSchema: { safeParse: (input: unknown) => any };
+        };
+        runInputSchema = runner.runInputSchema;
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                ok: false,
+                error: "No se pudo cargar @ghostly-io/runner para validar submit_plan",
+                details: String(error),
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
       let steps: unknown;
       try {
         steps = JSON.parse(args.stepsJson) as unknown;
@@ -122,7 +143,7 @@ export function registerSubmitPlanTool(server: McpServer): void {
               ? {
                   assisted: {
                     goal: args.goal,
-                    model: "ghosttester-mcp",
+                    model: "ghostly-mcp",
                     generatedAt: new Date().toISOString(),
                     promptVersion: "mcp-context-v1",
                   },
@@ -133,6 +154,7 @@ export function registerSubmitPlanTool(server: McpServer): void {
                   assist: {
                     v2: true,
                     goal: args.goal,
+                    isFullPlan: true,
                     ...(hasVictory ? { victory } : {}),
                   },
                 }

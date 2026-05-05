@@ -1,4 +1,4 @@
-import { runAssistedFlow, runFlow, safeParseRunInput } from "@ghosttester/runner";
+import { runAssistedFlow, runFlow, safeParseRunInput } from "@ghostly-io/runner";
 import type {
   AssistEvent,
   AssistedMeta,
@@ -6,7 +6,7 @@ import type {
   CodeHints,
   Step,
   StepOutcome,
-} from "@ghosttester/runner";
+} from "@ghostly-io/runner";
 import { z } from "zod";
 import { Hono } from "hono";
 import { loadConfig } from "../config.js";
@@ -39,6 +39,7 @@ const assistedMetaSchema: z.ZodType<AssistedMeta> = z.object({
 const assistV2Schema = z.object({
   v2: z.literal(true),
   goal: z.string().min(1),
+  isFullPlan: z.boolean().optional(),
   maxHealingAttemptsPerStep: z.number().int().min(0).max(3).optional(),
   observerMaxNodes: z.number().int().min(50).max(1000).optional(),
   victory: z
@@ -337,6 +338,7 @@ runRouter.post("/run", async (c) => {
           ...(assistV2.maxHorizons !== undefined ? { maxHorizons: assistV2.maxHorizons } : {}),
           ...(assistV2.stepsPerHorizon !== undefined ? { stepsPerHorizon: assistV2.stepsPerHorizon } : {}),
           ...(assistV2.maxLoopMs !== undefined ? { maxLoopMs: assistV2.maxLoopMs } : {}),
+          ...(assistV2.isFullPlan !== undefined ? { isFullPlan: assistV2.isFullPlan } : {}),
           ...(assistV2.modalLoaderMaxWaitMs !== undefined
             ? { modalLoaderMaxWaitMs: assistV2.modalLoaderMaxWaitMs }
             : {}),
@@ -368,6 +370,15 @@ runRouter.post("/run", async (c) => {
         ...summarizeStepForLog(step),
       })),
     );
+    if (assistV2) {
+      // eslint-disable-next-line no-console
+      console.log("[assist-run] Config assist v2", {
+        isFullPlan: assistV2.isFullPlan ?? false,
+        victory: assistV2.victory ?? null,
+        maxHorizons: assistV2.maxHorizons ?? appConfig.assistV2.maxHorizons,
+        stepsPerHorizon: assistV2.stepsPerHorizon ?? appConfig.assistV2.stepsPerHorizon,
+      });
+    }
   }
 
   // Pre-crea el registro en estado "running" para que GET /v1/runs/:id y el SSE
@@ -454,6 +465,7 @@ runRouter.post("/run", async (c) => {
           assist: {
             v2: true,
             goal: assistV2.goal,
+            isFullPlan: assistV2.isFullPlan,
             maxHealingAttemptsPerStep:
               assistV2.maxHealingAttemptsPerStep ?? appConfig.assistV2.healingAttempts,
             observerMaxNodes:

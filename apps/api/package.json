@@ -1,5 +1,5 @@
 {
-  "name": "@ghosttester/api",
+  "name": "@ghostly-io/api",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -15,7 +15,7 @@
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@ghosttester/runner": "workspace:*",
+    "@ghostly-io/runner": "workspace:*",
     "@hono/node-server": "^1.13.7",
     "@prisma/client": "5",
     "dotenv": "^16.4.7",
@@ -24,7 +24,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@ghosttester/tsconfig": "workspace:*",
+    "@ghostly-io/tsconfig": "workspace:*",
     "@types/node": "^22.10.5",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",

@@ -1661,6 +1661,22 @@ function hasEquivalentReplacementStep(failedStep: Step, healSteps: Step[]): bool
   });
 }
 
+function hasPendingInputSteps(planProgress: PlanProgressItem[]): boolean {
+  return planProgress.some((p) => p.source === "input" && p.status === "pending");
+}
+
+function hasGeneratedPlanActivity(planProgress: PlanProgressItem[]): boolean {
+  return planProgress.some((p) => p.source === "strategist" || p.source === "replan" || p.source === "healer");
+}
+
+function looksLikeSeedInputPlan(steps: Step[]): boolean {
+  if (steps.length !== 1) return false;
+  const [first] = steps;
+  if (!first || first.action !== "goto") return false;
+  const target = first.url.trim().toLowerCase();
+  return target === "/" || target === "";
+}
+
 function looksLikeIncompleteLoginReplay(steps: Step[]): boolean {
   if (steps.length === 0) return false;
   let hasUserFill = false;
@@ -1816,6 +1832,8 @@ export async function runAssistedFlow(
     const stepsPerHorizon = Math.max(1, assist.stepsPerHorizon ?? 3);
     const maxLoopMs = Math.max(10_000, assist.maxLoopMs ?? 300_000);
     const memoryMode = assist.memoryMode ?? "runtime";
+    const isFullPlan = assist.isFullPlan === true;
+    const isSeedInputForFullPlan = isFullPlan && looksLikeSeedInputPlan(input.steps);
     const replaySeed = assist.seedMemorySteps ?? [];
     const replayFromMemory = Boolean(assist.replayFromMemory && replaySeed.length > 0);
     const replayIsSafe = !looksLikeIncompleteLoginReplay(replaySeed);
@@ -1876,11 +1894,18 @@ export async function runAssistedFlow(
         : { configured: false, met: false, details: { reason: "not-configured" } };
       const objectiveComplete = healerWasInvoked && objectiveLikelyCompleted(history, lastSnapshot);
       const terminalStep = executedStep ? isLikelyTerminalAction(executedStep) : false;
+      const pendingInput = hasPendingInputSteps(planProgress);
+      const awaitingSeedExpansion = isSeedInputForFullPlan && !healerWasInvoked && !hasGeneratedPlanActivity(planProgress);
       emit(
         "victory_check",
         {
           horizon: horizonNo,
           immediate: true,
+          isFullPlan,
+          pendingInputSteps: pendingInput,
+          awaitingSeedExpansion,
+          healerWasInvoked,
+          victoryConfig: assist.victory ?? null,
           ...victory.details,
           configured: victory.configured,
           met: victory.met,
@@ -1889,7 +1914,12 @@ export async function runAssistedFlow(
         },
         stepIndex,
       );
-      if (victory.met) return { decision: "success", reason: "victory-met" };
+      if (victory.met) {
+        if (isFullPlan && !healerWasInvoked && (pendingInput || awaitingSeedExpansion)) {
+          return { decision: "continue", reason: "victory-deferred-full-plan" };
+        }
+        return { decision: "success", reason: "victory-met" };
+      }
       if (objectiveComplete) {
         if (!assist.victory && terminalStep) {
           return { decision: "success", reason: "objective-likely-complete" };
@@ -1907,6 +1937,13 @@ export async function runAssistedFlow(
       emit("horizon_start", { horizon, pendingSteps: pendingSteps.length });
 
       if (pendingSteps.length === 0) {
+        const awaitingSeedExpansion = isSeedInputForFullPlan &&
+          !healerWasInvoked &&
+          !hasGeneratedPlanActivity(planProgress);
+        if (isFullPlan && !awaitingSeedExpansion) {
+          stopReason = "full-plan-consumed";
+          break;
+        }
         emit("loop_state", { state: "planning", horizon });
         await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
         lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
@@ -2492,19 +2529,45 @@ export async function runAssistedFlow(
         : false;
       emit("victory_check", {
         horizon,
+        isFullPlan,
+        pendingInputSteps: hasPendingInputSteps(planProgress),
+        awaitingSeedExpansion: isSeedInputForFullPlan &&
+          !healerWasInvoked &&
+          !hasGeneratedPlanActivity(planProgress),
+        healerWasInvoked,
+        victoryConfig: assist.victory ?? null,
         ...victory.details,
         configured: victory.configured,
         met: victory.met,
         objectiveLikelyCompleted: completed,
       });
       if (victory.met) {
-        victoryMet = true;
-        stopReason = "victory-met";
-        break;
+        const awaitingSeedExpansion = isSeedInputForFullPlan &&
+          !healerWasInvoked &&
+          !hasGeneratedPlanActivity(planProgress);
+        if (isFullPlan && !healerWasInvoked && (hasPendingInputSteps(planProgress) || awaitingSeedExpansion)) {
+          // Seguir con el plan de entrada completo antes de aceptar victory.
+        } else {
+          victoryMet = true;
+          stopReason = "victory-met";
+          break;
+        }
       }
       if (assist.victory && completed) {
         runOk = false;
         stopReason = "victory-not-met-after-goal-complete";
+        break;
+      }
+      const awaitingSeedExpansion = isSeedInputForFullPlan &&
+        !healerWasInvoked &&
+        !hasGeneratedPlanActivity(planProgress);
+      if (isFullPlan && pendingSteps.length === 0 && !strategistHasMore && !awaitingSeedExpansion) {
+        if (assist.victory && !victory.met) {
+          runOk = false;
+          stopReason = "victory-not-met-after-full-plan";
+        } else {
+          stopReason = "steps-completed";
+        }
         break;
       }
       if (!assist.victory && pendingSteps.length === 0 && !strategistHasMore) {

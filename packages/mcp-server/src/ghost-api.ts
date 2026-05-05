@@ -1,4 +1,4 @@
-/** Base URL de la API GhostTester (sin barra final). */
+/** Base URL de la API Ghostly (sin barra final). */
 export function apiUrlFromEnv(apiUrl?: string): string {
   return (apiUrl ?? process.env.GHOST_API_URL ?? "http://localhost:4000").replace(/\/+$/, "");
 }

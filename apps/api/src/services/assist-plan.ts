@@ -2,7 +2,7 @@ import {
   safeParseRunInput,
   type AssistedMeta,
   type RunInput,
-} from "@ghosttester/runner";
+} from "@ghostly-io/runner";
 import { z } from "zod";
 
 export class AssistPlanError extends Error {
