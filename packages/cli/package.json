@@ -5,12 +5,12 @@
   "description": "Ghostly CLI — zero-config installer and local runner",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Meza-dev/GhostTester-AI.git",
+    "url": "git+https://github.com/Meza-dev/Ghostly.git",
     "directory": "packages/cli"
   },
-  "homepage": "https://github.com/Meza-dev/GhostTester-AI/tree/main/packages/cli",
+  "homepage": "https://github.com/Meza-dev/Ghostly/tree/main/packages/cli",
   "bugs": {
-    "url": "https://github.com/Meza-dev/GhostTester-AI/issues"
+    "url": "https://github.com/Meza-dev/Ghostly/issues"
   },
   "keywords": [
     "ghostly",

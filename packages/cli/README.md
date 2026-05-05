@@ -53,7 +53,7 @@ Hay conflicto de wrappers globales. Desinstala, limpia wrappers en `%APPDATA%/np
 
 ## Proyecto
 
-- Repositorio: [https://github.com/Meza-dev/GhostTester-AI](https://github.com/Meza-dev/GhostTester-AI)
+- Repositorio: [https://github.com/Meza-dev/Ghostly](https://github.com/Meza-dev/Ghostly)
 
 ## Licencia
 
