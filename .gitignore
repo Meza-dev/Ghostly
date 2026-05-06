@@ -22,3 +22,5 @@ Ghostly.zip
 
 # Reglas locales generadas por CLI
 .cursorrules
+.cursor/rules/
+.cursor/skills/
