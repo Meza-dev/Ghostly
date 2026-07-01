@@ -68,7 +68,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
     if (projects.length === 0) return "No hay proyectos disponibles. Crea uno primero.";
     if (!assistChecked) return "Validando configuración del modo asistido...";
     if (tab === "assisted" && !assistAvailable) {
-      return "Modo asistido no disponible: configura una API key de IA en el servidor.";
+      return "Modo asistido no disponible: configura el proveedor de IA en Preferencias.";
     }
     if (tab === "assisted" && !assistGoal.trim()) return "Escribe un objetivo para el modo asistido.";
     return null;
@@ -306,8 +306,9 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
           </p>
           {!assistAvailable && (
             <p className="text-caption text-warning-fg">
-              Modo asistido deshabilitado: falta API key de IA en el backend. Ejecuta{" "}
-              <span className="font-mono">ghostly config</span> y reinicia <span className="font-mono">ghostly up</span>.
+              Modo asistido deshabilitado: ve a{" "}
+              <span className="font-semibold">Preferencias → Modo asistido (IA)</span> y elige un proveedor
+              (Cursor CLI, Mistral, etc.).
             </p>
           )}
         </div>

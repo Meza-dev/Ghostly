@@ -3,6 +3,12 @@ import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { llmSettingsRouter } from "./routes/llm-settings.js";
+import { attachUserLlmMiddleware } from "./middleware/llm-config.js";
+import { runWithLlmConfigAsync } from "./llm/context.js";
+import { settingsToResolvedConfig } from "./llm/user-config.js";
+import { getUserLlmSettings } from "./store/llm-settings.js";
+import { getLlmDisplayModel, getLlmProviderId, isLlmConfigured } from "./llm/client.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { apiKeyMiddleware } from "./middleware/api-key.js";
 import { apiKeysRouter } from "./routes/api-keys.js";
@@ -52,22 +58,34 @@ export function createApp(): Hono {
     return authMiddleware(c, next);
   });
 
-  app.get("/v1/ping", (c) =>
-    c.json({
-      ok: true,
-      service: "ghostly-api",
-      env: process.env.NODE_ENV ?? "development",
-      assistConfigured: Boolean(
-        process.env.OPENAI_API_KEY?.trim() || process.env.ASSIST_LLM_API_KEY?.trim(),
-      ),
-    }),
-  );
+  app.get("/v1/ping", async (c) => {
+    const user = c.get("user");
+    const stored = user ? await getUserLlmSettings(user.id) : null;
+    const config = settingsToResolvedConfig(stored);
+    return runWithLlmConfigAsync(config, async () =>
+      c.json({
+        ok: true,
+        service: "ghostly-api",
+        env: process.env.NODE_ENV ?? "development",
+        assistConfigured: await isLlmConfigured(),
+        llm: {
+          provider: getLlmProviderId(),
+          model: getLlmDisplayModel(),
+          available: await isLlmConfigured(),
+          source: stored ? "user" : "env",
+        },
+      }),
+    );
+  });
+
+  app.use("/v1/*", attachUserLlmMiddleware);
 
   app.route("/v1", runRouter);
   app.route("/v1", runEventsRouter);
   app.route("/v1", planRouter);
   app.route("/v1", projectsRouter);
   app.route("/v1", apiKeysRouter);
+  app.route("/v1", llmSettingsRouter);
 
   app.get("/artifacts/*", async (c) => {
     const relative = c.req.path.replace(/^\/artifacts\//, "");

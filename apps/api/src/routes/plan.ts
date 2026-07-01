@@ -3,6 +3,7 @@ import { z } from "zod";
 import { captureRecon } from "@ghostly-io/runner";
 import type { PlannedStep } from "@ghostly-io/runner";
 import { loadConfig } from "../config.js";
+import { getLlmDisplayModel } from "../llm/client.js";
 import { AssistPlanError, generateAssistPlan } from "../services/assist-plan.js";
 import { createStrategist } from "../services/assist-orchestrator.js";
 import { projectExistsForUser } from "../store/projects.js";
@@ -87,7 +88,7 @@ planRouter.post("/plan", async (c) => {
       });
       const meta = {
         goal,
-        model: process.env.ASSIST_LLM_MODEL?.trim() || "assist-fallback-v1",
+        model: getLlmDisplayModel(),
         generatedAt: new Date().toISOString(),
         promptVersion: "assist-v2-recon",
       };

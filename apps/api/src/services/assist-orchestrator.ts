@@ -10,6 +10,8 @@ import type {
   StrategistContext,
   StrategistFn,
 } from "@ghostly-io/runner";
+import { completeJson } from "../llm/client.js";
+import { LlmError } from "../llm/errors.js";
 
 type VisibleDialogHint = { heading?: string; ariaLabel?: string };
 type PlanProgressLite = {
@@ -28,20 +30,6 @@ export class AssistOrchestratorError extends Error {
     super(message);
     this.status = status;
   }
-}
-
-type LlmConfig = {
-  endpoint: string;
-  apiKey: string;
-  model: string;
-};
-
-function llmConfig(): LlmConfig {
-  return {
-    endpoint: process.env.ASSIST_LLM_API_URL?.trim() || "",
-    apiKey: process.env.ASSIST_LLM_API_KEY?.trim() || "",
-    model: process.env.ASSIST_LLM_MODEL?.trim() || "assist-fallback-v1",
-  };
 }
 
 const SELECTOR_FATIGUE_KEY_SEP = "::SEP::";
@@ -543,12 +531,6 @@ function filterFalseOverlaySteps(steps: Step[], snapshotMarkdown: string): Step[
   });
 }
 
-function extractJsonBlock(raw: string): string {
-  const fenced = raw.match(/```json\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) return fenced[1];
-  return raw;
-}
-
 function isDebugEnabled(): boolean {
   const raw = (process.env.ASSIST_LLM_DEBUG ?? "").trim().toLowerCase();
   if (raw === "") return process.env.NODE_ENV !== "production";
@@ -567,100 +549,28 @@ async function callLlmJson(
   timeoutMs: number,
   label: string = "llm",
 ): Promise<Record<string, unknown>> {
-  const empty: Record<string, unknown> = {};
-  const config = llmConfig();
-  if (!config.endpoint || !config.apiKey) {
-    debugLog(label, {
-      stage: "skip",
-      reason: "missing_env",
-      hasEndpoint: Boolean(config.endpoint),
-      hasApiKey: Boolean(config.apiKey),
-    });
-    return empty;
-  }
-  debugLog(label, {
-    stage: "request",
-    endpoint: config.endpoint,
-    model: config.model,
-    timeoutMs,
-    systemChars: system.length,
-    userChars: user.length,
-    systemPrompt: system,
-    userPrompt: user,
-  });
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const startedAt = Date.now();
   try {
-    const response = await fetch(config.endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.model,
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-      }),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => "");
-      debugLog(label, {
-        stage: "http_error",
-        status: response.status,
-        body: errBody.slice(0, 500),
-        elapsedMs: Date.now() - startedAt,
-      });
-      throw new AssistOrchestratorError("LLM no disponible", 502);
-    }
-    const payload = (await response.json()) as {
-      choices?: Array<{ message?: { content?: unknown } }>;
-      usage?: Record<string, unknown>;
-    };
-    const content = payload.choices?.[0]?.message?.content;
-    const rawContent =
-      typeof content === "string"
-        ? content
-        : Array.isArray(content)
-          ? content
-              .map((part) =>
-                part && typeof part === "object" && "text" in part
-                  ? String((part as { text?: unknown }).text ?? "")
-                  : "",
-              )
-              .join("")
-          : "";
-    debugLog(label, {
-      stage: "response",
-      elapsedMs: Date.now() - startedAt,
-      usage: payload.usage ?? null,
-      rawContent,
-    });
-    if (!rawContent) return empty;
-    const parsed = JSON.parse(extractJsonBlock(rawContent)) as unknown;
-    return parsed && typeof parsed === "object"
-      ? (parsed as Record<string, unknown>)
-      : empty;
+    return await completeJson(
+      [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      { timeoutMs, label },
+    );
   } catch (error) {
-    if (error instanceof AssistOrchestratorError) throw error;
-    if (error instanceof Error && error.name === "AbortError") {
-      debugLog(label, { stage: "timeout", timeoutMs, elapsedMs: Date.now() - startedAt });
+    if (error instanceof LlmError && error.status === 504) {
+      debugLog(label, { stage: "timeout", timeoutMs });
       throw new AssistOrchestratorError("Timeout al consultar LLM", 504);
+    }
+    if (error instanceof LlmError) {
+      debugLog(label, { stage: "error", message: error.message });
+      throw new AssistOrchestratorError("LLM no disponible", 502);
     }
     debugLog(label, {
       stage: "error",
       message: error instanceof Error ? error.message : String(error),
-      elapsedMs: Date.now() - startedAt,
     });
     throw new AssistOrchestratorError("Error LLM", 502);
-  } finally {
-    clearTimeout(timer);
   }
 }
 

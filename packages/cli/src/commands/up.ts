@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { authToEnv, readAuth } from "../lib/auth.js";
+import { isAssistLlmConfigured } from "../lib/llm-check.js";
+import { isCliLlmProvider } from "../lib/llm-providers.js";
 import {
   getApiDistDir,
   getApiPrismaDir,
@@ -133,12 +135,14 @@ export function registerUp(program: Command): void {
       };
 
       // ── 7. Advertir si falta config del LLM ──────────────────────────────
-      const hasConfiguredLlmKey = Boolean(auth.llm?.apiKey || auth.llm?.openaiApiKey);
-      if (!hasConfiguredLlmKey && !serverEnv["ASSIST_LLM_API_KEY"] && !serverEnv["OPENAI_API_KEY"]) {
+      const assistConfigured = isAssistLlmConfigured(auth);
+      if (!assistConfigured && !serverEnv["ASSIST_LLM_API_KEY"] && !serverEnv["OPENAI_API_KEY"]) {
         p.log.warn(
           "El modo asistido con IA no está configurado. Para habilitarlo ejecuta:\n" +
-          "  ghostly config",
+            "  ghostly config",
         );
+      } else if (isCliLlmProvider(auth.llm?.provider)) {
+        p.log.info("Modo asistido: Cursor Agent CLI (auth local)");
       }
 
       // ── 8. Lanzar servidor (API + Frontend estático) ──────────────────────

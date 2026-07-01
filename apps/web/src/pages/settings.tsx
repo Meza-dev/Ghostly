@@ -1,5 +1,6 @@
 import { Copy, Key, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { LlmSettingsPanel } from "../components/llm-settings-panel";
 import { useTheme, type Theme } from "../context/theme-context";
 import { apiFetch } from "../lib/api";
 
@@ -51,10 +52,12 @@ function SettingsSection({
   title,
   desc,
   children,
+  bare,
 }: {
   title: string;
   desc: string;
   children: React.ReactNode;
+  bare?: boolean;
 }) {
   return (
     <section className="flex min-h-0 flex-col overflow-hidden rounded-surface border border-border bg-card shadow-surface">
@@ -62,7 +65,7 @@ function SettingsSection({
         <h2 className="text-body font-nav-active text-foreground">{title}</h2>
         <p className="mt-0.5 text-caption text-muted-fg">{desc}</p>
       </header>
-      <div className="divide-y divide-border">{children}</div>
+      {bare ? children : <div className="divide-y divide-border">{children}</div>}
     </section>
   );
 }
@@ -215,6 +218,14 @@ export function SettingsPage() {
         </div>
 
         <div className="flex min-h-0 flex-col gap-6">
+          <SettingsSection
+            title="Modo asistido (IA)"
+            desc="Proveedor para planificar flujos asistidos (estilo Open Design BYOK)."
+            bare
+          >
+            <LlmSettingsPanel />
+          </SettingsSection>
+
           <SettingsSection title="Integraciones" desc="Servicios externos.">
             <SettingsRow title="MCP servers" desc="Servidores MCP disponibles para esta workspace.">
               <span className="font-mono text-caption text-muted-fg">3 conectados</span>

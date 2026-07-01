@@ -4,6 +4,8 @@ import {
   type RunInput,
 } from "@ghostly-io/runner";
 import { z } from "zod";
+import { completeJson, getLlmDisplayModel, isLlmConfigured } from "../llm/client.js";
+import { LlmError } from "../llm/errors.js";
 
 export class AssistPlanError extends Error {
   status: number;
@@ -36,14 +38,6 @@ export type AssistPlanResult = {
   draft: RunInput;
   meta: AssistedMeta;
 };
-
-function llmConfig() {
-  return {
-    endpoint: process.env.ASSIST_LLM_API_URL?.trim() || "",
-    apiKey: process.env.ASSIST_LLM_API_KEY?.trim() || "",
-    model: process.env.ASSIST_LLM_MODEL?.trim() || "assist-fallback-v1",
-  };
-}
 
 const SYSTEM_PROMPT = [
   "Eres un planificador de pruebas E2E para Playwright. Razona según el CONTEXTO DE URL y el objetivo del usuario.",
@@ -107,12 +101,6 @@ function buildUserPrompt(baseUrl: string, goal: string, retryHint?: string): str
   ].join("\n");
   if (!retryHint) return context;
   return `${context}\n\nLa respuesta anterior NO cumplió el contrato. Errores: ${retryHint}\nDevuelve ahora el JSON con la forma EXACTA {"baseUrl":..., "steps":[...]}.`;
-}
-
-function extractJsonBlock(raw: string): string {
-  const fenced = raw.match(/```json\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) return fenced[1];
-  return raw;
 }
 
 function normalizeAction(value: unknown): string {
@@ -245,8 +233,8 @@ async function callAssistLlm(
   timeoutMs: number,
   retryHint?: string,
 ): Promise<unknown> {
-  const config = llmConfig();
-  if (!config.endpoint || !config.apiKey) {
+  const configured = await isLlmConfigured();
+  if (!configured) {
     logAssist("Usando fallback local (sin proveedor LLM configurado)", {
       baseUrl,
       goalLength: goal.length,
@@ -259,89 +247,44 @@ async function callAssistLlm(
   }
 
   logAssist("Llamando proveedor LLM para generar plan", {
-    endpoint: config.endpoint,
-    model: config.model,
+    model: getLlmDisplayModel(),
     baseUrl,
     goalLength: goal.length,
     timeoutMs,
     retry: Boolean(retryHint),
   });
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const response = await fetch(config.endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.model,
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: SYSTEM_PROMPT,
-          },
-          {
-            role: "user",
-            content: buildUserPrompt(baseUrl, goal, retryHint),
-          },
-        ],
-      }),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new AssistPlanError("No se pudo generar plan asistido", 502);
-    }
-    const payload = (await response.json()) as {
-      choices?: Array<{
-        message?: {
-          content?: unknown;
-        };
-      }>;
-    };
-    // Respuesta completa del proveedor (útil para depurar formato / errores del modelo)
-    // eslint-disable-next-line no-console
-    console.log("[assist-plan] IA — cuerpo HTTP del proveedor", JSON.stringify(payload, null, 2));
-    const content = payload.choices?.[0]?.message?.content;
-    const rawContent = typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content
-            .map((part) =>
-              part && typeof part === "object" && "text" in part
-                ? String((part as { text?: unknown }).text ?? "")
-                : "",
-            )
-            .join("")
-        : "";
-    if (!rawContent) {
+    const parsed = await completeJson(
+      [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: buildUserPrompt(baseUrl, goal, retryHint) },
+      ],
+      { timeoutMs, label: "assist-plan", model: getLlmDisplayModel() },
+    );
+    if (Object.keys(parsed).length === 0) {
       throw new AssistPlanError("Respuesta LLM vacía", 502);
     }
-    // Texto que devolvió el modelo (antes de extraer fence ```json)
+    const validated = z.unknown().parse(parsed);
     // eslint-disable-next-line no-console
-    console.log("[assist-plan] IA — contenido assistant (raw)", rawContent);
-    const parsed = z.unknown().parse(JSON.parse(extractJsonBlock(rawContent)));
-    // eslint-disable-next-line no-console
-    console.log("[assist-plan] IA — JSON parseado", JSON.stringify(parsed, null, 2));
-    const normalized = normalizePlanCandidate(parsed, baseUrl);
+    console.log("[assist-plan] IA — JSON parseado", JSON.stringify(validated, null, 2));
+    const normalized = normalizePlanCandidate(validated, baseUrl);
     logAssist("Respuesta LLM parseada correctamente");
     return normalized as RunInput;
   } catch (error) {
     if (error instanceof AssistPlanError) throw error;
-    if (error instanceof Error && error.name === "AbortError") {
+    if (error instanceof LlmError && error.status === 504) {
       throw new AssistPlanError("Timeout al generar plan asistido", 504);
     }
+    if (error instanceof LlmError) {
+      throw new AssistPlanError("No se pudo generar plan asistido", 502);
+    }
     throw new AssistPlanError("Error al procesar respuesta del plan asistido", 502);
-  } finally {
-    clearTimeout(timer);
   }
 }
 
 export async function generateAssistPlan(input: AssistPlanRequest): Promise<AssistPlanResult> {
-  const config = llmConfig();
+  const model = getLlmDisplayModel();
   logAssist("Inicio de generación de plan asistido", {
     baseUrl: input.baseUrl,
     maxSteps: input.maxSteps,
@@ -400,14 +343,14 @@ export async function generateAssistPlan(input: AssistPlanRequest): Promise<Assi
 
   logAssist("Plan asistido validado", {
     steps: parsed.data.steps.length,
-    model: config.model,
+    model,
   });
 
   return {
     draft: parsed.data,
     meta: {
       goal: input.goal,
-      model: config.model,
+      model,
       generatedAt: new Date().toISOString(),
       promptVersion: "assist-v2",
     },

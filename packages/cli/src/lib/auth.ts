@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
 import { getAuthFile } from "./paths.js";
+import { isCliLlmProvider, normalizeLlmProviderId } from "./llm-providers.js";
 
 export type LlmConfig = {
   /** Nombre del modelo, ej. "gpt-4o", "claude-3-5-sonnet", "llama3" */
@@ -11,7 +12,7 @@ export type LlmConfig = {
   openaiApiKey?: string;
   /** Base URL personalizada (Ollama, Azure OpenAI, OpenRouter, etc.) */
   baseUrl?: string;
-  /** Proveedor explícito, ej. "openai", "anthropic", "ollama" */
+  /** Proveedor explícito: `http`, `openai`, `cursor-cli`, etc. */
   provider?: string;
 };
 
@@ -63,16 +64,29 @@ export function authToEnv(auth: GhostAuth): Record<string, string> {
   };
 
   if (auth.llm) {
-    if (auth.llm.model) env["LLM_MODEL"] = auth.llm.model;
-    const llmApiKey = auth.llm.apiKey ?? auth.llm.openaiApiKey;
-    if (llmApiKey) {
-      // Variable genérica usada por el backend Assist.
-      env["ASSIST_LLM_API_KEY"] = llmApiKey;
-      // Compatibilidad hacia atrás con implementaciones que esperan OPENAI_API_KEY.
-      env["OPENAI_API_KEY"] = llmApiKey;
+    const provider = auth.llm.provider?.trim();
+    if (provider) {
+      const normalized = normalizeLlmProviderId(provider);
+      env["ASSIST_LLM_PROVIDER"] = normalized;
+      env["LLM_PROVIDER"] = normalized;
     }
-    if (auth.llm.baseUrl) env["LLM_BASE_URL"] = auth.llm.baseUrl;
-    if (auth.llm.provider) env["LLM_PROVIDER"] = auth.llm.provider;
+    if (auth.llm.model) {
+      env["ASSIST_LLM_MODEL"] = auth.llm.model;
+      env["LLM_MODEL"] = auth.llm.model;
+    }
+
+    const useCli = isCliLlmProvider(provider);
+    if (!useCli) {
+      const llmApiKey = auth.llm.apiKey ?? auth.llm.openaiApiKey;
+      if (llmApiKey) {
+        env["ASSIST_LLM_API_KEY"] = llmApiKey;
+        env["OPENAI_API_KEY"] = llmApiKey;
+      }
+      if (auth.llm.baseUrl) {
+        env["ASSIST_LLM_API_URL"] = auth.llm.baseUrl;
+        env["LLM_BASE_URL"] = auth.llm.baseUrl;
+      }
+    }
   }
 
   if (auth.extraEnv) {
