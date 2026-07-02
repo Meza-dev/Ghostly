@@ -1,6 +1,8 @@
 # Integración de Cursor CLI como proveedor de IA en Ghostly
 
 > Documento de arquitectura — refactor para soportar proveedores HTTP (API Key) y Cursor CLI (auth local).
+>
+> **Estado: IMPLEMENTADO.** El módulo `apps/api/src/llm/` existe con el contrato `LlmProvider`, las implementaciones `providers/http-openai.ts` y `providers/cli.ts`, resolución de binarios (`resolve-cli-bin.ts`, `cli-registry.ts`), catálogo de modelos y configuración por usuario (`UserLlmSettings`). Las secciones de "estado actual" y "deuda técnica" describen el código ANTERIOR al refactor y se conservan como registro de diseño.
 
 ## Resumen ejecutivo
 

@@ -2,11 +2,9 @@
 
 Automated E2E Testing Engine for Modern Development Workflows.
 
-Ghostly es una plataforma de automatización de pruebas diseñada para integrarse en el ciclo de vida del desarrollo de software (SDLC) sin fricciones. Utiliza inteligencia artificial para la generación de pruebas y ejecución autónoma, permitiendo a los equipos de ingeniería mantener una alta velocidad de despliegue con garantías de regresión total.
+Ghostly es un motor de pruebas E2E **local-first y asistido por IA**. A partir de un objetivo en lenguaje natural, genera y ejecuta flujos de navegador con Playwright de forma autónoma, repara selectores fallidos (self-healing) y transmite el progreso en vivo a un dashboard web. Se distribuye como CLI global de npm (`ghostly`, alias legado `ghost`) bajo el scope `@ghostly-io`.
 
 ## 🛠 Instalación
-
-Ghostly se distribuye como un paquete global de Node.js a través del registro de NPM.
 
 ```bash
 npm install -g @ghostly-io/cli
@@ -14,45 +12,69 @@ npm install -g @ghostly-io/cli
 
 Los paquetes npm se publican bajo la organización **`@ghostly-io`**. El comando de la CLI es **`ghostly`** (se mantiene el alias `ghost` por compatibilidad).
 
-## 🏗 Arquitectura y Funcionamiento
+## 🏗 Arquitectura y funcionamiento
 
-Ghostly opera de forma asíncrona y no intrusiva dentro del entorno local del desarrollador:
+Ghostly opera como un runtime local compuesto por varios servicios:
 
-1. **Análisis de Cambios**: Monitorea el sistema de archivos para detectar mutaciones en el código fuente.
-2. **Planificación Dinámica**: Genera un plan de ejecución basado en el impacto de los cambios detectados.
-3. **Ejecución Autónoma**: Ejecuta flujos de prueba mediante Playwright de manera transparente.
-4. **Persistencia de Artefactos**: Genera documentación técnica automática, incluyendo trazas de red, logs de consola y evidencias visuales (video/capturas).
+1. **CLI (`ghostly`)**: instala, configura y levanta el motor en la máquina del desarrollador.
+2. **API de orquestación** (`apps/api`): recibe el objetivo del test, envuelve al proveedor de IA (strategist/healer) y persiste runs, pasos y eventos en SQLite (Prisma).
+3. **Runner** (`packages/runner`): motor de ejecución Playwright. Corre el pipeline asistido — planifica en horizontes, ejecuta pasos, observa la página tras cada acción y repara selectores fallidos.
+4. **Dashboard web** (`apps/web`): visualización de runs en vivo (SSE), detalle de pasos, artefactos (screenshots, video, trazas) y configuración del proveedor LLM.
+5. **Servidor MCP** (`packages/mcp-server`): expone las herramientas de Ghostly (`ghostly_run_flow`, project map, submit plan) a IDEs compatibles como Cursor.
+6. **Scanner** (`packages/scanner`): análisis estático (AST) del repo objetivo para generar el mapa de rutas y componentes que alimenta la planificación.
 
-## 📑 Comandos de Referencia
+El proveedor de IA es configurable (BYO-LLM): cualquier endpoint HTTP compatible con OpenAI o un CLI local (p. ej. Cursor CLI). Ver `docs/cursor-cli-llm-provider.md`.
 
+## 📑 Comandos de referencia
 
-| Comando         | Descripción Técnica                                                                                |
-| --------------- | -------------------------------------------------------------------------------------------------- |
-| `ghostly keygen`  | Inicializa el sistema de criptografía local y genera las credenciales de identidad.                |
-| `ghostly install` | Implementa el servidor de protocolo de contexto de modelo (MCP) en el entorno de desarrollo (IDE). |
-| `ghostly up`      | Inicializa el motor de ejecución y los servicios de orquestación local.                            |
+| Comando           | Descripción técnica                                                                                 |
+| ----------------- | --------------------------------------------------------------------------------------------------- |
+| `ghostly keygen`  | Inicializa el sistema de criptografía local y genera las credenciales de identidad.                 |
+| `ghostly install` | Implementa el servidor MCP en el entorno de desarrollo (IDE), instala Chromium y sincroniza reglas.  |
+| `ghostly config`  | Configura proveedor/modelo/API key/base URL de IA para el modo asistido (`--clear` para limpiar).    |
+| `ghostly up`      | Prepara la base de datos local y levanta el motor de ejecución y la API en `http://localhost:4000`.  |
+| `ghostly update`  | Actualiza la instalación global de la CLI.                                                           |
 
-
-## 🔒 Privacidad y Seguridad (Local-First)
+## 🔒 Privacidad y seguridad (local-first)
 
 Ghostly ha sido diseñado bajo un modelo de seguridad de confianza cero y arquitectura local:
 
-- **Generación Local de Claves**: Todas las claves criptográficas y secretos de API se gestionan en el almacenamiento seguro del host local.
-- **Aislamiento de Datos**: La lógica de ejecución y el procesamiento de pruebas no requieren la exfiltración de código fuente a nubes externas.
-- **Cumplimiento**: Ideal para entornos con normativas estrictas de seguridad donde el código debe permanecer dentro del perímetro del desarrollador.
+- **Generación local de claves**: todas las claves criptográficas y secretos de API se gestionan en el almacenamiento seguro del host local.
+- **Aislamiento de datos**: la lógica de ejecución y el procesamiento de pruebas no requieren la exfiltración de código fuente a nubes externas.
+- **Cumplimiento**: ideal para entornos con normativas estrictas de seguridad donde el código debe permanecer dentro del perímetro del desarrollador.
 
-## 📋 Requisitos del Sistema
+## 📋 Requisitos del sistema
 
-- **Runtime**: Node.js v18.0.0 o superior (v20.x recomendado).
-- **Entorno**: IDE compatible con protocolo MCP (ej. Cursor).
-- **Dependencias de Sistema**: Chromium Browser (gestionado automáticamente vía Playwright).
+- **Runtime**: Node.js v20 o superior.
+- **Entorno**: IDE compatible con protocolo MCP (ej. Cursor) para la integración de herramientas.
+- **Dependencias de sistema**: Chromium (gestionado automáticamente vía Playwright).
 
-## 🗺 Hoja de Ruta (MVP)
+## 📚 Documentación
 
-- **Orquestación CI/CD**: Integración mediante Webhooks con proveedores de Git (GitHub/GitLab).
-- **Motor AI Proactivo**: Algoritmos de "Self-healing" para la reparación automática de selectores en pruebas fallidas.
-- **Dashboard Analítico**: Interfaz de visualización de métricas de cobertura y estados de salud del proyecto.
-- **Agregación de Flujos**: Ejecución de lotes de pruebas con agregación de resultados jerárquica.
+Toda la documentación del proyecto vive en [`docs/`](docs/README.md):
+
+- [Índice de documentación](docs/README.md)
+- [Spec: Ghostly v0.2 — Trust Release](docs/specs/ghostly-v0.2-trust-release.md)
+- [Setup de una máquina nueva](docs/setup-new-machine.md)
+- [Arquitectura del proveedor LLM (HTTP / Cursor CLI)](docs/cursor-cli-llm-provider.md)
+
+## ✅ Implementado
+
+- **Pipeline asistido**: planificación por horizontes con strategist + observer + healer (self-healing de selectores).
+- **Dashboard web**: overview, runs en vivo (SSE), detalle de run con artefactos, settings y panel LLM.
+- **Memoria de flujos** (`AssistMemory`): los runs exitosos se reutilizan para acelerar y estabilizar corridas futuras.
+- **Proveedor LLM configurable**: HTTP OpenAI-compatible o CLI local, por usuario.
+- **Integración MCP**: herramientas Ghostly disponibles desde el IDE.
+
+## 🗺 Hoja de ruta
+
+La siguiente versión es **v0.2 "Trust Release"** — fiabilidad del veredicto antes que nuevas features. Ver el [spec completo](docs/specs/ghostly-v0.2-trust-release.md).
+
+- **Percepción de errores**: captura estructurada de errores de consola, red (4xx/5xx) y alerts/toasts en el observer.
+- **Veredictos veraces**: victoria verificada por el motor (no declarada por la IA) + agente juez con taxonomía de 6 veredictos.
+- **Orquestación CI/CD**: modo `--ci` con exit codes y reporte JSON/JUnit; integración por webhooks con proveedores Git.
+- **Scheduling local**: ejecución programada (cron) desde el daemon local.
+- **Agregación de flujos**: ejecución de lotes de pruebas con agregación de resultados jerárquica.
 
 ## ⚖️ Licencia
 
