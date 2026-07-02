@@ -7,7 +7,8 @@ export default defineConfig({
     sourcemap: false,
   },
   server: {
-    port: 5173,
+    port: 5273,
+    strictPort: true,
     proxy: {
       "/v1": "http://localhost:4000",
       "/artifacts": "http://localhost:4000",

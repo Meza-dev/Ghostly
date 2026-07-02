@@ -4,6 +4,7 @@
   "packageManager": "pnpm@9.15.4",
   "scripts": {
     "dev": "pnpm -r --parallel --filter @ghostly-io/runner --filter @ghostly-io/api run dev",
+    "dev:all": "pnpm -r --parallel --filter @ghostly-io/runner --filter @ghostly-io/api --filter @ghostly-io/web run dev",
     "dev:api": "pnpm --filter @ghostly-io/api dev",
     "dev:web": "pnpm --filter @ghostly-io/web dev",
     "build": "pnpm -r run build",
