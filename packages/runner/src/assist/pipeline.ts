@@ -5,7 +5,7 @@ import { chromium, type BrowserContext, type Page, type Video } from "playwright
 import type { Locator } from "playwright";
 import type { StepOutcome, RunResult } from "../run.js";
 import type { Step } from "../schema.js";
-import { captureObserverSnapshot } from "./observer.js";
+import { captureObserverSnapshot, createPageErrorTracker } from "./observer.js";
 import { sanitizeHealerSteps } from "./healer.js";
 import type {
   AssistEvent,
@@ -1805,6 +1805,9 @@ export async function runAssistedFlow(
     page = await context.newPage();
     pageVideo = page.video();
     page.setDefaultTimeout(input.defaultTimeoutMs);
+    // Listeners continuos de consola/red (Capa 1 — percepción, spec §4.1): se adjuntan una
+    // sola vez por página; los toasts/errores efímeros no sobreviven hasta el próximo snapshot.
+    const pageErrorTracker = createPageErrorTracker(page, { baseUrl: input.baseUrl });
     const onAbort = () => {
       aborted = true;
       void context?.close().catch(() => undefined);
@@ -1820,7 +1823,7 @@ export async function runAssistedFlow(
     });
 
     // Recon inicial
-    lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+    lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, { pageErrorTracker, stepIndex: -1 });
     emit("recon", {
       url: lastSnapshot.url,
       title: lastSnapshot.title,
@@ -1887,7 +1890,10 @@ export async function runAssistedFlow(
         lastSnapshot = snapshotOverride;
       } else {
         await waitForKnownModalLoadersToFinish(page!, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-        lastSnapshot = await captureObserverSnapshot(page!, observerMaxNodes);
+        lastSnapshot = await captureObserverSnapshot(page!, observerMaxNodes, {
+          pageErrorTracker,
+          stepIndex,
+        });
       }
       const victory = assist.victory
         ? await evaluateVictory(page!, lastSnapshot, assist.victory, history)
@@ -1946,7 +1952,10 @@ export async function runAssistedFlow(
         }
         emit("loop_state", { state: "planning", horizon });
         await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-        lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+        lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+          pageErrorTracker,
+          stepIndex: nextStepIndex,
+        });
         const chunk = await deps.strategist({
           goal: assist.goal,
           baseUrl: input.baseUrl,
@@ -2130,7 +2139,10 @@ export async function runAssistedFlow(
             index,
           );
           await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-          lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+          lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+            pageErrorTracker,
+            stepIndex: index,
+          });
           const stateAfter = snapshotStateKey(lastSnapshot);
           const stateChanged = stateBefore !== undefined && stateAfter !== undefined
             ? stateBefore !== stateAfter
@@ -2181,7 +2193,10 @@ export async function runAssistedFlow(
             try {
               healerWasInvoked = true;
               await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-              lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+              lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+                pageErrorTracker,
+                stepIndex: index,
+              });
               const stateBeforeHeal = snapshotStateKey(lastSnapshot);
               emit(
                 "heal_start",
@@ -2254,7 +2269,10 @@ export async function runAssistedFlow(
                 }
               }
               await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-              const postHealSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+              const postHealSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+                pageErrorTracker,
+                stepIndex: index,
+              });
               const stateAfterHeal = snapshotStateKey(postHealSnapshot);
               const stateChangedByHeal =
                 stateBeforeHeal !== undefined && stateAfterHeal !== undefined
@@ -2392,7 +2410,10 @@ export async function runAssistedFlow(
             let replannedFromError = false;
             try {
               await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-              lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+              lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+                pageErrorTracker,
+                stepIndex: index,
+              });
               const replanChunk = await deps.strategist({
                 goal: assist.goal,
                 baseUrl: input.baseUrl,
@@ -2516,7 +2537,10 @@ export async function runAssistedFlow(
 
       if (!runOk || victoryMet) break;
       await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-      lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+      lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+        pageErrorTracker,
+        stepIndex: nextStepIndex,
+      });
       emit("horizon_end", {
         horizon,
         pendingSteps: pendingSteps.length,

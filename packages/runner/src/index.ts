@@ -12,7 +12,13 @@ export {
   type Step,
 } from "./schema.js";
 export { runFlow, type RunResult, type StepOutcome } from "./run.js";
-export { captureObserverSnapshot } from "./assist/observer.js";
+export {
+  captureObserverSnapshot,
+  createPageErrorTracker,
+  type CaptureObserverSnapshotOptions,
+  type PageErrorTracker,
+  type PageErrorTrackerOptions,
+} from "./assist/observer.js";
 export { sanitizeHealerSteps } from "./assist/healer.js";
 export { captureRecon, type ReconOptions } from "./assist/recon.js";
 export {
@@ -30,6 +36,10 @@ export type {
   HealerFn,
   HealerResult,
   ObserverSnapshot,
+  PageError,
+  PageErrorDetail,
+  PageErrorSeverity,
+  PageErrorSource,
   PlanProgressItem,
   PlanProgressReportItem,
   PlannedChunk,

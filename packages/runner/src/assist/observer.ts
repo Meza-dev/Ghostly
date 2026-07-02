@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 import type { Page } from "playwright";
-import type { ObserverSnapshot, VisibleDialogInfo } from "./types.js";
+import type { ObserverSnapshot, PageError, PageErrorSeverity, VisibleDialogInfo } from "./types.js";
 
 const INTERACTIVE_REGEX = /^\s*-\s+(button|link|textbox|combobox|checkbox|radio|menuitem|searchbox|spinbutton|switch|tab|option|slider|listbox)\b/i;
 
@@ -93,6 +93,186 @@ async function detectFormInputs(page: Page): Promise<DetectedInput[]> {
   } catch {
     return [];
   }
+}
+
+// ---------------------------------------------------------------------------
+// Capa 1 — Percepción: PageError (consola, red, DOM). Spec §4.1.
+// ---------------------------------------------------------------------------
+
+const REDACTED = "[REDACTED]";
+const SENSITIVE_QUERY_KEYS = ["token", "apikey", "api_key", "secret", "password", "authorization", "auth"];
+
+/** Redacta valores de query params sensibles (mismo criterio que `lib/redact-assist.ts` del lado API). */
+function redactUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    let redactedAny = false;
+    for (const key of Array.from(parsed.searchParams.keys())) {
+      if (SENSITIVE_QUERY_KEYS.some((needle) => key.toLowerCase().includes(needle))) {
+        parsed.searchParams.set(key, REDACTED);
+        redactedAny = true;
+      }
+    }
+    return redactedAny ? parsed.toString() : rawUrl;
+  } catch {
+    return rawUrl;
+  }
+}
+
+function truncateMessage(message: string, max = 500): string {
+  const clean = message.replace(/\s+/g, " ").trim();
+  return clean.length > max ? `${clean.slice(0, max)}…` : clean;
+}
+
+/** Patrones de error típicos (es/en) para clasificar `role="alert"` visible como blocking. */
+const DOM_ERROR_TEXT_RE = /error|fall[oó]|no se pudo|failed|falló|excepci[oó]n|exception|crash/i;
+
+function classifyDomSeverity(role: string, text: string): PageErrorSeverity {
+  if (role === "alert" || role === "alertdialog") {
+    return DOM_ERROR_TEXT_RE.test(text) ? "blocking" : "warning";
+  }
+  return "warning";
+}
+
+function classifyNetworkSeverity(status: number): PageErrorSeverity {
+  return status >= 500 ? "blocking" : "warning";
+}
+
+/** Same-origin (o subdominio del baseUrl); requests de terceros/analytics son ignorables por defecto. */
+function isAllowedNetworkOrigin(url: string, baseUrl: string): boolean {
+  try {
+    const target = new URL(url);
+    const base = new URL(baseUrl);
+    return target.hostname === base.hostname || target.hostname.endsWith(`.${base.hostname}`);
+  } catch {
+    return false;
+  }
+}
+
+type DetectedDomError = {
+  role: string;
+  text: string;
+  selector: string;
+};
+
+async function detectDomErrors(page: Page): Promise<DetectedDomError[]> {
+  try {
+    return await page.evaluate<DetectedDomError[]>(() => {
+      const isVisible = (el: Element): boolean => {
+        const he = el as HTMLElement;
+        const rect = he.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return false;
+        const style = window.getComputedStyle(he);
+        if (style.display === "none" || style.visibility === "hidden" || parseFloat(style.opacity || "1") === 0) {
+          return false;
+        }
+        return true;
+      };
+      const out: DetectedDomError[] = [];
+      const seen = new Set<Element>();
+      const pushFrom = (el: Element, selectorHint: string) => {
+        if (seen.has(el) || !isVisible(el)) return;
+        const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+        if (!text) return;
+        seen.add(el);
+        const role = (el.getAttribute("role") || (el.getAttribute("aria-live") ? "status" : "")).trim();
+        out.push({ role, text: text.slice(0, 500), selector: selectorHint });
+      };
+      for (const el of Array.from(document.querySelectorAll('[role="alert"]'))) {
+        pushFrom(el, '[role="alert"]');
+      }
+      for (const el of Array.from(document.querySelectorAll('[role="alertdialog"]'))) {
+        pushFrom(el, '[role="alertdialog"]');
+      }
+      for (const el of Array.from(document.querySelectorAll('[aria-live="assertive"]'))) {
+        pushFrom(el, '[aria-live="assertive"]');
+      }
+      return out.slice(0, 10);
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function captureDomPageErrors(page: Page, observedAtStep: number): Promise<PageError[]> {
+  const detected = await detectDomErrors(page);
+  return detected.map((d) => ({
+    source: "dom",
+    severity: classifyDomSeverity(d.role, d.text),
+    message: truncateMessage(d.text),
+    detail: { selector: d.selector },
+    observedAtStep,
+  }));
+}
+
+export type PageErrorTrackerOptions = {
+  /** URL base del run; delimita el allowlist same-origin para captura de red. */
+  baseUrl: string;
+};
+
+export type PageErrorTracker = {
+  /**
+   * Devuelve los `PageError` de consola/red acumulados desde la última llamada
+   * (ventana móvil por paso) y limpia el acumulador. `observedAtStep` se
+   * asigna con el índice de paso recibido.
+   */
+  collectForStep: (stepIndex: number) => PageError[];
+};
+
+/**
+ * Adjunta listeners continuos de consola/red a la página (no por snapshot, spec §4.1 y §9:
+ * los toasts efímeros desaparecen antes del snapshot, por eso consola/red son continuos).
+ * Debe llamarse UNA vez por página/run.
+ */
+export function createPageErrorTracker(page: Page, options: PageErrorTrackerOptions): PageErrorTracker {
+  const buffer: PageError[] = [];
+
+  page.on("console", (msg) => {
+    if (msg.type() !== "error") return;
+    buffer.push({
+      source: "console",
+      severity: "warning",
+      message: truncateMessage(msg.text()),
+      observedAtStep: -1,
+    });
+  });
+
+  page.on("pageerror", (err) => {
+    buffer.push({
+      source: "console",
+      severity: "blocking",
+      message: truncateMessage(err instanceof Error ? err.message : String(err)),
+      observedAtStep: -1,
+    });
+  });
+
+  page.on("response", (res) => {
+    const status = res.status();
+    if (status < 400) return;
+    const url = res.url();
+    if (!isAllowedNetworkOrigin(url, options.baseUrl)) return;
+    let method = "GET";
+    try {
+      method = res.request().method();
+    } catch {
+      // seguimos con GET por defecto
+    }
+    buffer.push({
+      source: "network",
+      severity: classifyNetworkSeverity(status),
+      message: truncateMessage(`${method} ${redactUrl(url)} → ${status}`),
+      detail: { url: redactUrl(url), status },
+      observedAtStep: -1,
+    });
+  });
+
+  return {
+    collectForStep: (stepIndex: number) => {
+      const collected = buffer.map((e) => ({ ...e, observedAtStep: stepIndex }));
+      buffer.length = 0;
+      return collected;
+    },
+  };
 }
 
 async function detectVisibleDialogs(page: Page): Promise<VisibleDialogInfo[]> {
@@ -265,9 +445,17 @@ async function waitForHydration(page: Page): Promise<void> {
  *  4. Anexa un bloque con inputs/botones visibles detectados por DOM para robustecer el prompt
  *     cuando `ariaSnapshot({ mode: "ai" })` colapsa nodos genéricos.
  */
+export type CaptureObserverSnapshotOptions = {
+  /** Tracker de errores de consola/red creado con `createPageErrorTracker` (opcional). */
+  pageErrorTracker?: PageErrorTracker;
+  /** Índice de paso actual, usado para etiquetar `observedAtStep` en los `pageErrors` recolectados. */
+  stepIndex?: number;
+};
+
 export async function captureObserverSnapshot(
   page: Page,
   maxNodes = 300,
+  opts: CaptureObserverSnapshotOptions = {},
 ): Promise<ObserverSnapshot> {
   await waitForHydration(page);
 
@@ -304,6 +492,11 @@ export async function captureObserverSnapshot(
   const visibleDialogs = await detectVisibleDialogs(page);
   const dialogBlock = formatVisibleDialogsBlock(visibleDialogs);
 
+  const stepIndex = opts.stepIndex ?? -1;
+  const domPageErrors = await captureDomPageErrors(page, stepIndex);
+  const trackedPageErrors = opts.pageErrorTracker?.collectForStep(stepIndex) ?? [];
+  const pageErrors = [...trackedPageErrors, ...domPageErrors];
+
   const combined = [visibleInteractives, markdown, domBlock, dialogBlock].filter(Boolean).join("\n");
   const { text, nodeCount } = countLines(combined, Math.max(20, maxNodes));
   return {
@@ -313,5 +506,6 @@ export async function captureObserverSnapshot(
     treeMarkdown: text || "(sin mapa semántico disponible)",
     nodeCount,
     ...(visibleDialogs.length > 0 ? { visibleDialogs } : {}),
+    pageErrors,
   };
 }

@@ -7,6 +7,31 @@ export type VisibleDialogInfo = {
   ariaLabel?: string;
 };
 
+/** Fuente de captura de un error de página (spec 4.1: consola, red, DOM). */
+export type PageErrorSource = "console" | "network" | "dom";
+
+/** Severidad conservadora: solo `blocking` corta el loop (Capa 2, fuera de esta fase). */
+export type PageErrorSeverity = "blocking" | "warning";
+
+export type PageErrorDetail = {
+  /** network: URL de la request fallida (redactada de secretos). */
+  url?: string;
+  /** network: status HTTP 4xx/5xx. */
+  status?: number;
+  /** dom: selector donde se encontró el alert/toast/banner. */
+  selector?: string;
+};
+
+export type PageError = {
+  source: PageErrorSource;
+  severity: PageErrorSeverity;
+  /** Texto del error, truncado y redactado. */
+  message: string;
+  detail?: PageErrorDetail;
+  /** Índice del paso tras el cual se capturó el error. */
+  observedAtStep: number;
+};
+
 export type ObserverSnapshot = {
   url: string;
   title: string;
@@ -15,6 +40,8 @@ export type ObserverSnapshot = {
   nodeCount: number;
   /** Vacío o ausente si no hay ninguno visible. */
   visibleDialogs?: VisibleDialogInfo[];
+  /** Errores de página capturados por la Capa 1 (consola, red, DOM) desde el último snapshot. */
+  pageErrors: PageError[];
 };
 
 export type SemanticHint = {
