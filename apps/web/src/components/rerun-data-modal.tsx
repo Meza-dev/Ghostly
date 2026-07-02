@@ -3,7 +3,6 @@ import type { EditableFillField } from "../lib/rerun-fields";
 import { ModalShell } from "./modal-shell";
 
 type Props = {
-  open: boolean;
   fields: EditableFillField[];
   submitting: boolean;
   onClose: () => void;
@@ -11,12 +10,10 @@ type Props = {
 };
 
 /** Modal "Cambiar datos": un campo editable por cada step `fill` reconstruido del run. */
-export function RerunDataModal({ open, fields, submitting, onClose, onSubmit }: Props) {
+export function RerunDataModal({ fields, submitting, onClose, onSubmit }: Props) {
   const [values, setValues] = useState<Record<number, string>>(() =>
     Object.fromEntries(fields.map((field) => [field.replayIndex, field.sensitive ? "" : field.currentValue ?? ""])),
   );
-
-  if (!open) return null;
 
   const hasEmptySensitive = fields.some((field) => field.sensitive && !values[field.replayIndex]?.trim());
   const canSubmit = !submitting && !hasEmptySensitive;

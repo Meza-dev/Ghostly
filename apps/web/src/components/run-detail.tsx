@@ -778,7 +778,6 @@ export function RunDetail() {
     </div>
     {dataModalOpen && (
       <RerunDataModal
-        open={dataModalOpen}
         fields={editableFillFields}
         submitting={rerunning}
         onClose={() => setDataModalOpen(false)}
@@ -787,7 +786,6 @@ export function RunDetail() {
     )}
     {instructionsModalOpen && (
       <AddInstructionsModal
-        open={instructionsModalOpen}
         submitting={rerunning}
         onClose={() => setInstructionsModalOpen(false)}
         onSubmit={handleAddInstructionsSubmit}

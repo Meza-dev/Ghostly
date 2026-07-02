@@ -2,17 +2,14 @@ import { useState } from "react";
 import { ModalShell } from "./modal-shell";
 
 type Props = {
-  open: boolean;
   submitting: boolean;
   onClose: () => void;
   onSubmit: (text: string) => void;
 };
 
 /** Modal "Añadir instrucciones": textarea libre que se appendea al goal asistido. */
-export function AddInstructionsModal({ open, submitting, onClose, onSubmit }: Props) {
+export function AddInstructionsModal({ submitting, onClose, onSubmit }: Props) {
   const [text, setText] = useState("");
-
-  if (!open) return null;
 
   function handleClose() {
     if (submitting) return;

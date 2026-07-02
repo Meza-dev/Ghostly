@@ -4,7 +4,6 @@ import type { Step } from "../../../../packages/runner/src/schema.js";
 export type EditableFillField = {
   /** Posición del step dentro de `rerunnableSteps` — clave determinista para overridear. */
   replayIndex: number;
-  selector: string;
   /** Etiqueta legible derivada del selector. */
   label: string;
   sensitive: boolean;
@@ -55,7 +54,7 @@ function truncateSelector(selector: string, max = MAX_LABEL_LENGTH): string {
  * aria/placeholder estructurados en los eventos persistidos — ver ADR-2 del diseño).
  * Prioridad: aria-label > placeholder > name > #id > input[type] > selector crudo truncado.
  */
-export function deriveFieldLabel(selector: string): string {
+function deriveFieldLabel(selector: string): string {
   const ariaMatch = ARIA_LABEL_RE.exec(selector);
   if (ariaMatch?.[1]) return ariaMatch[1];
 
@@ -80,7 +79,7 @@ export function deriveFieldLabel(selector: string): string {
  * (`redactStepForEvent`, señal autoritativa) o cuando su selector matchea la
  * misma heurística que usa el runner para detectar passwords/secrets/tokens.
  */
-export function isSensitiveFillStep(step: Extract<Step, { action: "fill" }>): boolean {
+function isSensitiveFillStep(step: Extract<Step, { action: "fill" }>): boolean {
   return step.value === "[REDACTED]" || SENSITIVE_SELECTOR_RE.test(step.selector);
 }
 
@@ -92,7 +91,6 @@ export function deriveEditableFillFields(rerunnableSteps: Step[]): EditableFillF
     const sensitive = isSensitiveFillStep(step);
     fields.push({
       replayIndex: index,
-      selector: step.selector,
       label: deriveFieldLabel(step.selector),
       sensitive,
       ...(sensitive ? {} : { currentValue: step.value }),
