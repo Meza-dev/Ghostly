@@ -1,10 +1,14 @@
-import { ArrowLeft, Film, Loader2, RotateCcw } from "lucide-react";
+import { ArrowLeft, Film } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { RunRecord, Step } from "../../../../packages/runner/src/schema.js";
 import { useRunStream } from "../hooks/use-run-stream";
 import { apiFetch } from "../lib/api";
+import { appendInstructionsToGoal, buildOverriddenSteps, deriveEditableFillFields } from "../lib/rerun-fields";
+import { AddInstructionsModal } from "./add-instructions-modal";
 import type { AssistEvent } from "./assist-timeline";
+import { RerunDataModal } from "./rerun-data-modal";
+import { RerunSplitButton } from "./rerun-split-button";
 
 type RunRecordWithEvents = RunRecord & { events?: AssistEvent[] };
 type PlanChunkSummary = {
@@ -170,6 +174,8 @@ export function RunDetail() {
   const [selectedStepIndex, setSelectedStepIndex] = useState(0);
   const [artifactLoading, setArtifactLoading] = useState(false);
   const [copiedPlan, setCopiedPlan] = useState(false);
+  const [dataModalOpen, setDataModalOpen] = useState(false);
+  const [instructionsModalOpen, setInstructionsModalOpen] = useState(false);
 
   const fetchRun = async () => {
     if (!id) return;
@@ -218,54 +224,86 @@ export function RunDetail() {
     }
   }
 
-  async function handleRerun(): Promise<void> {
+  async function handleRerun(options?: {
+    valueOverrides?: Record<number, string>;
+    extraInstructions?: string;
+  }): Promise<void> {
     if (!run || rerunning || !run.project) return;
     const goal = run.assisted?.goal?.trim();
     const replaySteps = rerunnableSteps;
     const plannedSteps = plannedReplaySteps;
+    const valueOverrides = options?.valueOverrides;
+    const extraInstructions = options?.extraInstructions;
     const canUseAssistGoal = Boolean(goal);
     const canUseReplaySteps = replaySteps.length > 0;
-    if (!canUseAssistGoal && !canUseReplaySteps) {
+    if (!valueOverrides && !extraInstructions && !canUseAssistGoal && !canUseReplaySteps) {
       setRerunError("No hay objetivo asistido ni pasos replayables para reejecutar.");
       return;
     }
     setRerunError(null);
     setRerunning(true);
     try {
-      const assistConfig = run.assisted?.assistConfig;
-      const inheritedIsFullPlan =
-        assistConfig?.isFullPlan ?? run.assisted?.model === "ghostly-mcp";
-      const inheritedMemoryMode =
-        assistConfig?.memoryMode ?? (inheritedIsFullPlan ? "runtime" : "adaptive");
-      const effectiveBaseUrl = inheritedIsFullPlan
-        ? deriveRerunBaseUrl(run.baseUrl, plannedSteps.length > 0 ? plannedSteps : replaySteps)
-        : run.baseUrl;
       const body: Record<string, unknown> = {
-        baseUrl: effectiveBaseUrl,
         project: run.project,
         headless: true,
         captureScreenshotAfterEachStep: true,
         recordVideoOnFailure: true,
       };
-      if (canUseAssistGoal) {
-        const firstStep: Step = { action: "goto", url: getInitialGotoFromBaseUrl(run.baseUrl) };
-        const stepsForAssist = inheritedIsFullPlan && plannedSteps.length > 0
-          ? plannedSteps
-          : [firstStep];
-        body.steps = stepsForAssist;
-        body.assisted = run.assisted;
-        body.assist = {
-          v2: true,
-          goal,
-          isFullPlan: inheritedIsFullPlan,
-          memoryMode: inheritedMemoryMode,
-          ...(assistConfig?.victory ? { victory: assistConfig.victory } : {}),
-          ...(assistConfig?.maxHorizons !== undefined ? { maxHorizons: assistConfig.maxHorizons } : {}),
-          ...(assistConfig?.stepsPerHorizon !== undefined ? { stepsPerHorizon: assistConfig.stepsPerHorizon } : {}),
-          ...(assistConfig?.maxLoopMs !== undefined ? { maxLoopMs: assistConfig.maxLoopMs } : {}),
-        };
+      if (valueOverrides) {
+        // "Cambiar datos": replay literal puro sobre los steps ejecutados, sin assist
+        // ni goal, determinista sin importar isFullPlan (ADR-4). Nunca toca AssistMemory.
+        body.baseUrl = run.baseUrl;
+        body.steps = buildOverriddenSteps(replaySteps, valueOverrides, run.baseUrl);
       } else {
-        body.steps = replaySteps;
+        const assistConfig = run.assisted?.assistConfig;
+        const inheritedIsFullPlan =
+          assistConfig?.isFullPlan ?? run.assisted?.model === "ghostly-mcp";
+        const inheritedMemoryMode =
+          assistConfig?.memoryMode ?? (inheritedIsFullPlan ? "runtime" : "adaptive");
+        const effectiveBaseUrl = inheritedIsFullPlan
+          ? deriveRerunBaseUrl(run.baseUrl, plannedSteps.length > 0 ? plannedSteps : replaySteps)
+          : run.baseUrl;
+        body.baseUrl = effectiveBaseUrl;
+        if (extraInstructions && goal) {
+          // "Añadir instrucciones": rama asistida con el goal enriquecido.
+          const effectiveGoal = appendInstructionsToGoal(goal, extraInstructions);
+          const firstStep: Step = { action: "goto", url: getInitialGotoFromBaseUrl(run.baseUrl) };
+          const stepsForAssist = inheritedIsFullPlan && plannedSteps.length > 0
+            ? plannedSteps
+            : [firstStep];
+          body.steps = stepsForAssist;
+          body.assisted = { ...run.assisted, goal: effectiveGoal };
+          body.assist = {
+            v2: true,
+            goal: effectiveGoal,
+            isFullPlan: inheritedIsFullPlan,
+            memoryMode: inheritedMemoryMode,
+            ...(assistConfig?.victory ? { victory: assistConfig.victory } : {}),
+            ...(assistConfig?.maxHorizons !== undefined ? { maxHorizons: assistConfig.maxHorizons } : {}),
+            ...(assistConfig?.stepsPerHorizon !== undefined ? { stepsPerHorizon: assistConfig.stepsPerHorizon } : {}),
+            ...(assistConfig?.maxLoopMs !== undefined ? { maxLoopMs: assistConfig.maxLoopMs } : {}),
+          };
+        } else if (canUseAssistGoal) {
+          // "Reejecutar igual" (comportamiento actual, sin cambios).
+          const firstStep: Step = { action: "goto", url: getInitialGotoFromBaseUrl(run.baseUrl) };
+          const stepsForAssist = inheritedIsFullPlan && plannedSteps.length > 0
+            ? plannedSteps
+            : [firstStep];
+          body.steps = stepsForAssist;
+          body.assisted = run.assisted;
+          body.assist = {
+            v2: true,
+            goal,
+            isFullPlan: inheritedIsFullPlan,
+            memoryMode: inheritedMemoryMode,
+            ...(assistConfig?.victory ? { victory: assistConfig.victory } : {}),
+            ...(assistConfig?.maxHorizons !== undefined ? { maxHorizons: assistConfig.maxHorizons } : {}),
+            ...(assistConfig?.stepsPerHorizon !== undefined ? { stepsPerHorizon: assistConfig.stepsPerHorizon } : {}),
+            ...(assistConfig?.maxLoopMs !== undefined ? { maxLoopMs: assistConfig.maxLoopMs } : {}),
+          };
+        } else {
+          body.steps = replaySteps;
+        }
       }
       const res = await apiFetch("/v1/run", {
         method: "POST",
@@ -369,6 +407,8 @@ export function RunDetail() {
     }
     return [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, step]) => step);
   }, [mergedEvents]);
+
+  const editableFillFields = useMemo(() => deriveEditableFillFields(rerunnableSteps), [rerunnableSteps]);
 
   const plannedReplaySteps = useMemo<Step[]>(() => {
     const steps: Step[] = [];
@@ -483,7 +523,18 @@ export function RunDetail() {
   }
   const canRerun = !isLive && Boolean(run.project) && (Boolean(run.assisted?.goal) || rerunnableSteps.length > 0);
 
+  function handleChangeDataSubmit(overrides: Record<number, string>): void {
+    setDataModalOpen(false);
+    void handleRerun({ valueOverrides: overrides });
+  }
+
+  function handleAddInstructionsSubmit(text: string): void {
+    setInstructionsModalOpen(false);
+    void handleRerun({ extraInstructions: text });
+  }
+
   return (
+    <>
     <div className="ghostly-scrollbar flex min-h-0 flex-1 flex-col gap-4 overflow-auto pb-4">
       <button
         type="button"
@@ -537,15 +588,15 @@ export function RunDetail() {
                 {cancelling ? "Cancelando..." : "Cancelar ejecución"}
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={() => void handleRerun()}
-                disabled={!canRerun || rerunning}
-                className="inline-flex items-center gap-1.5 rounded-control-sm border border-border bg-muted px-3 py-1.5 text-small font-button text-primary-fg hover:bg-bg-muted disabled:opacity-60"
-              >
-                {rerunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                {rerunning ? "Reejecutando..." : "Reejecutar"}
-              </button>
+              <RerunSplitButton
+                disabled={!canRerun}
+                rerunning={rerunning}
+                canChangeData={editableFillFields.length > 0}
+                canAddInstructions={Boolean(run.assisted?.goal)}
+                onRerunSame={() => void handleRerun()}
+                onChangeData={() => setDataModalOpen(true)}
+                onAddInstructions={() => setInstructionsModalOpen(true)}
+              />
             )}
           </div>
         </div>
@@ -725,5 +776,23 @@ export function RunDetail() {
       )}
 
     </div>
+    {dataModalOpen && (
+      <RerunDataModal
+        open={dataModalOpen}
+        fields={editableFillFields}
+        submitting={rerunning}
+        onClose={() => setDataModalOpen(false)}
+        onSubmit={handleChangeDataSubmit}
+      />
+    )}
+    {instructionsModalOpen && (
+      <AddInstructionsModal
+        open={instructionsModalOpen}
+        submitting={rerunning}
+        onClose={() => setInstructionsModalOpen(false)}
+        onSubmit={handleAddInstructionsSubmit}
+      />
+    )}
+    </>
   );
 }
