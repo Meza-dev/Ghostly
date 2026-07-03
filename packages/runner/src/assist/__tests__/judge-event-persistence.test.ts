@@ -96,6 +96,44 @@ describe("summarizeJudgeEventForPersistence (RunEvent shaping, spec §4.3/§6)",
     expect(payload.verdict).toBe("continue");
   });
 
+  it("never leaks a secret-looking token from the judge hint into the persisted payload (C2)", () => {
+    const event = baseEvent({
+      reason: "stalled",
+      verdict: {
+        verdict: "continue",
+        confidence: "medium",
+        reasoning: "Hay un modal de confirmación tapando el botón; cerralo primero.",
+        evidence: ["dialog role=alertdialog visible"],
+        hint: "el modal muestra token=sk-live-hint-999 en el body; cerralo antes de continuar",
+      },
+    });
+
+    const payload = summarizeJudgeEventForPersistence(event);
+    const serialized = JSON.stringify(payload);
+
+    expect(serialized).not.toContain("sk-live-hint-999");
+    expect(payload.hint).toBe("[REDACTED]");
+  });
+
+  it("truncates an unreasonably long hint to keep RunEvent rows compact", () => {
+    const longHint = "a".repeat(3000);
+    const event = baseEvent({
+      reason: "stalled",
+      verdict: {
+        verdict: "continue",
+        confidence: "medium",
+        reasoning: "Obstáculo recuperable detectado.",
+        evidence: [],
+        hint: longHint,
+      },
+    });
+
+    const payload = summarizeJudgeEventForPersistence(event);
+
+    expect((payload.hint as string).length).toBeLessThanOrEqual(1000);
+    expect((payload.hint as string).endsWith("…")).toBe(true);
+  });
+
   it("omits hint entirely for terminal verdicts (never leaks an undefined key)", () => {
     const payload = summarizeJudgeEventForPersistence(baseEvent());
     expect("hint" in payload).toBe(false);
@@ -121,6 +159,33 @@ describe("summarizeJudgeEventForPersistence (RunEvent shaping, spec §4.3/§6)",
     const payload = summarizeJudgeEventForPersistence(baseEvent());
     expect(payload.reasoning).toBe("El texto 'Guardado' persiste tras recargar la página.");
     expect(payload.evidence).toEqual(["deterministicChecks: victory.textIncludes=true"]);
+  });
+
+  it("never leaks a secret-looking token placed in ANY free-text field simultaneously (exhaustive field audit, C2 regression guard)", () => {
+    const event = baseEvent({
+      dossierSummary: {
+        goal: "Usar token=sk-live-goal-111 para iniciar sesión",
+        reason: "stalled",
+        recentActionsCount: 2,
+        pageErrorsCount: 1,
+      },
+      reason: "stalled",
+      verdict: {
+        verdict: "continue",
+        confidence: "medium",
+        reasoning: "El header trae authorization=sk-live-reasoning-222 expuesto.",
+        evidence: ["pageErrors[0]: token=sk-live-evidence-333 filtrado"],
+        hint: "cerrá el modal que muestra token=sk-live-hint-444",
+      },
+    });
+
+    const payload = summarizeJudgeEventForPersistence(event);
+    const serialized = JSON.stringify(payload);
+
+    expect(serialized).not.toContain("sk-live-goal-111");
+    expect(serialized).not.toContain("sk-live-reasoning-222");
+    expect(serialized).not.toContain("sk-live-evidence-333");
+    expect(serialized).not.toContain("sk-live-hint-444");
   });
 
   it("truncates an unreasonably long reasoning string to keep RunEvent rows compact", () => {

@@ -442,6 +442,11 @@ export function summarizeJudgeEventForPersistence(event: JudgeEvent): Record<str
     confidence: event.verdict.confidence,
     reasoning: redactOrTruncateText(event.verdict.reasoning),
     evidence: redactOrTruncateList(event.verdict.evidence),
-    ...(event.verdict.hint ? { hint: event.verdict.hint } : {}),
+    // `hint` es texto libre AUTORADO POR EL JUEZ (LLM), emitido solo en
+    // veredictos `continue` (spec §4.3 regla 5) — puede citar contenido de
+    // página/DOM igual que `reasoning`/`evidence` (ej. "el modal muestra
+    // token=..."), así que sigue el MISMO contrato de redacción antes de
+    // llegar a cualquier capa de persistencia (C2, fix post-review).
+    ...(event.verdict.hint ? { hint: redactOrTruncateText(event.verdict.hint) } : {}),
   };
 }
