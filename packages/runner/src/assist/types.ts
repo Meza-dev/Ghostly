@@ -234,6 +234,14 @@ export type StrategistContext = {
   history: Array<{ step: Step; ok: boolean; error?: string }>;
   planProgress?: PlanProgressItem[];
   maxSteps: number;
+  /**
+   * Pista textual del juez tras un veredicto `continue` (spec §4.3 regla 5):
+   * "hay un modal de confirmación tapando el botón; cerralo primero". Solo
+   * presente en el horizonte inmediatamente siguiente a la intervención del
+   * juez — el strategist la recibe como contexto adicional, nunca como una
+   * instrucción ejecutable directa (el juez clasifica, no actúa).
+   */
+  judgeHint?: string;
 };
 
 export type StrategistFn = (ctx: StrategistContext) => Promise<PlannedChunk>;
@@ -254,3 +262,99 @@ export type HealerResult = {
 };
 
 export type HealerFn = (ctx: HealerContext) => Promise<HealerResult>;
+
+/**
+ * Motivo por el que el motor invoca al juez (spec §4.3 — tabla de triggers).
+ * `error-signal` cubre `PageError` de severidad `warning` que el circuit
+ * breaker (Capa 2a) no resuelve por sí solo (los `blocking` mapean directo a
+ * `fail-app-bug` sin pasar por el juez). Los otros 4 valores corresponden 1:1
+ * a los `JudgeTriggerStopReason` que la Capa 2 (Fase 2b) ya produce:
+ * `victory-candidate`, `stalled`, `budget-exhausted` y el caso "sin condición
+ * configurada" (que también entra como `victory-candidate` — el juez decide
+ * sobre la misma zona gris, sea que la condición exista o no). `healing-exhausted`
+ * es neto-nuevo de esta fase: el healer agotó sus intentos sobre un paso.
+ */
+export type JudgeTrigger =
+  | "error-signal"
+  | "victory-candidate"
+  | "stalled"
+  | "healing-exhausted"
+  | "budget-exhausted";
+
+/** Resultado de un check determinista de Capa 2 (p. ej. una condición de victoria individual). */
+export type JudgeDeterministicCheck = {
+  check: string;
+  passed: boolean;
+};
+
+/** Una acción reciente del historial, resumida para el dossier del juez (spec §4.3). */
+export type JudgeRecentAction = {
+  step: string;
+  outcome: "ok" | "failed" | "healed";
+  error?: string;
+};
+
+/**
+ * El expediente que recibe el juez (spec §4.3) — un paquete curado, NO el
+ * snapshot crudo. `screenshot` queda deliberadamente fuera del contrato del
+ * runner: el provider-gating (adjuntar imagen solo si el LLM del usuario
+ * soporta multimodal) es responsabilidad del lado API (GHOST-30); el runner
+ * nunca decide ni construye evidencia visual.
+ */
+export type JudgeDossier = {
+  goal: string;
+  victoryCondition?: VictoryCondition;
+  reason: JudgeTrigger;
+  recentActions: JudgeRecentAction[];
+  currentSnapshot: string;
+  snapshotDiff: string;
+  pageErrors: PageError[];
+  deterministicChecks: JudgeDeterministicCheck[];
+  /** Opcional/omitido en el runner (spec §4.3) — el provider-gating de imágenes es GHOST-30. */
+  screenshot?: Buffer;
+};
+
+/** Confianza del juez en su propio veredicto (spec §4.3). */
+export type JudgeConfidence = "high" | "medium" | "low";
+
+/**
+ * Salida del juez (spec §4.3 — contrato estricto). `continue` es el único
+ * veredicto no terminal: el motor sigue el loop con el `hint` opcional
+ * como contexto adicional para el strategist. El resto detiene el run.
+ */
+export type JudgeVerdict = {
+  verdict:
+    | "continue"
+    | "success"
+    | "fail-app-bug"
+    | "fail-test-broken"
+    | "fail-agent-lost"
+    | "inconclusive-environment"
+    | "inconclusive";
+  confidence: JudgeConfidence;
+  reasoning: string;
+  evidence: string[];
+  /** Solo relevante cuando `verdict === "continue"`. */
+  hint?: string;
+};
+
+/**
+ * Función inyectada del juez (mismo patrón de inyección que `StrategistFn`/
+ * `HealerFn` — el runner NUNCA importa un LLM; la implementación real vive
+ * del lado API, GHOST-30). Recibe el dossier curado y devuelve un veredicto
+ * ya validado (la validación Zod + reintento vive en `judge.ts`, no acá).
+ */
+export type JudgeFn = (dossier: JudgeDossier) => Promise<JudgeVerdict>;
+
+/** Un evento de invocación del juez, para observabilidad (spec §4.3, `judgeEvents[]`). */
+export type JudgeEvent = {
+  reason: JudgeTrigger;
+  dossierSummary: {
+    goal: string;
+    reason: JudgeTrigger;
+    recentActionsCount: number;
+    pageErrorsCount: number;
+  };
+  verdict: JudgeVerdict;
+  at: string;
+};
