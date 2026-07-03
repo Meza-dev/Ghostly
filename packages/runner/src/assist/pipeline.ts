@@ -7,12 +7,22 @@ import type { StepOutcome, RunResult } from "../run.js";
 import type { Step } from "../schema.js";
 import { captureObserverSnapshot, createPageErrorTracker } from "./observer.js";
 import { sanitizeHealerSteps } from "./healer.js";
+import {
+  buildJudgeDossier,
+  createJudgeContinueCapTracker,
+  MAX_CONTINUE_VERDICTS_PER_REASON,
+  validateJudgeVerdict,
+} from "./judge.js";
 import type {
   AssistEvent,
   AssistEventType,
   AssistedRunInput,
   HealerFn,
-  JudgeTriggerStopReason,
+  JudgeDeterministicCheck,
+  JudgeEvent,
+  JudgeFn,
+  JudgeTrigger,
+  JudgeVerdict,
   ObserverSnapshot,
   PageError,
   PlanProgressItem,
@@ -36,11 +46,19 @@ export type AssistedRunResult = RunResult & {
   stopReason?: string;
   /** Evidencia dura que sustenta el veredicto (p. ej. los `PageError` que dispararon el circuit breaker). */
   verdictEvidence?: PageError[];
+  /** Secuencia de invocaciones del juez (dossier resumido + veredicto) — observabilidad (spec §4.3). */
+  judgeEvents?: JudgeEvent[];
 };
 
 export type AssistedDeps = {
   strategist: StrategistFn;
   healer: HealerFn;
+  /**
+   * El juez (Capa 3, spec §4.3) — mismo patrón de inyección que strategist/healer:
+   * el runner NUNCA importa un LLM. La implementación real vive del lado API
+   * (`createJudge`, GHOST-30); acá solo se consume vía el contrato de `judge.ts`.
+   */
+  judge: JudgeFn;
   log?: (message: string, details?: Record<string, unknown>) => void;
 };
 
@@ -1620,6 +1638,33 @@ export function detectBlockingAppError(
   return correlated.length > 0 ? correlated : undefined;
 }
 
+/** Clave estable de un `PageError` para deduplicar cuáles ya se enviaron al juez (trigger `error-signal`). */
+export function pageErrorKey(error: PageError): string {
+  return `${error.source}|${error.severity}|${error.observedAtStep}|${error.message}`;
+}
+
+/**
+ * Trigger `error-signal` (Capa 3, spec §4.3): `PageError` de severidad
+ * `warning` correlacionados con la acción recién ejecutada que la Capa 2 NO
+ * resolvió por sí sola (los `blocking` ya cortaron vía `detectBlockingAppError`
+ * antes de llegar acá). `alreadyJudged` evita re-disparar el juez por el
+ * mismo warning en cada paso subsiguiente — solo interesa el momento en que
+ * aparece por primera vez.
+ */
+export function detectUnresolvedWarningSignal(
+  pageErrors: PageError[],
+  currentStepIndex: number,
+  alreadyJudged: ReadonlySet<string>,
+): PageError[] | undefined {
+  const correlated = pageErrors.filter(
+    (e) =>
+      e.severity === "warning" &&
+      (e.observedAtStep === currentStepIndex || e.observedAtStep === currentStepIndex - 1) &&
+      !alreadyJudged.has(pageErrorKey(e)),
+  );
+  return correlated.length > 0 ? correlated : undefined;
+}
+
 /**
  * Victoria verificada (Capa 2 — reglas duras, spec §4.2b).
  *
@@ -1763,6 +1808,13 @@ export async function runAssistedFlow(
   let verdict: Verdict | undefined;
   let verdictReason: string | undefined;
   let verdictEvidence: PageError[] | undefined;
+  const judgeEvents: JudgeEvent[] = [];
+  const judgeContinueCap = createJudgeContinueCapTracker();
+  let previousJudgeSnapshot: ObserverSnapshot | undefined;
+  /** Pista del último veredicto `continue` del juez — consumida por el próximo pedido al strategist, luego limpiada. */
+  let judgeHint: string | undefined;
+  /** `PageError` de severidad warning ya enviados al juez (trigger `error-signal`) — evita re-disparar por el mismo error en cada paso. */
+  const judgedWarningKeys = new Set<string>();
 
   try {
     throwIfAborted(opts.signal);
@@ -1957,6 +2009,76 @@ export async function runAssistedFlow(
       return { decision: "continue" };
     };
 
+    // Capa 3 — el juez (spec §4.3): invocado por eventos en los 5 triggers
+    // exhaustivos de la tabla (error-signal, victory-candidate, stalled,
+    // healing-exhausted, budget-exhausted). Autoridad: evidencia determinista
+    // > juez > strategist — este helper solo se llama en los puntos donde la
+    // Capa 2 ya agotó lo que puede decidir gratis. Construye el dossier,
+    // valida el veredicto (Zod + reintento único), aplica el cap de 2
+    // `continue` por motivo, y registra el evento para observabilidad.
+    const invokeJudge = async (
+      reason: JudgeTrigger,
+      stepIndex: number,
+      deterministicChecks: JudgeDeterministicCheck[] = [],
+    ): Promise<JudgeVerdict> => {
+      const dossier = buildJudgeDossier({
+        goal: assist.goal,
+        victoryCondition: assist.victory,
+        reason,
+        history,
+        currentSnapshot: lastSnapshot!,
+        previousSnapshot: previousJudgeSnapshot,
+        pageErrors: lastSnapshot!.pageErrors,
+        deterministicChecks,
+      });
+      previousJudgeSnapshot = lastSnapshot;
+      emit("loop_state", { state: "judge_invoked", reason, stepIndex }, stepIndex);
+      let outcome = await validateJudgeVerdict(() => deps.judge(dossier));
+      if (outcome.verdict === "continue" && !judgeContinueCap.canContinue(reason)) {
+        // 3ra invocación por el mismo motivo (spec §4.3 regla 5): el juez ya
+        // no puede seguir pateando el problema — se fuerza un veredicto
+        // terminal en vez de propagar un `continue` que excede el cap.
+        outcome = {
+          verdict: "inconclusive",
+          confidence: "low",
+          reasoning:
+            `El juez propuso "continue" por el motivo "${reason}" por 3ra vez consecutiva; ` +
+            `el cap de ${MAX_CONTINUE_VERDICTS_PER_REASON} intervenciones por motivo (spec §4.3) ` +
+            "fuerza un veredicto terminal en vez de seguir reintentando.",
+          evidence: outcome.evidence,
+        };
+      } else if (outcome.verdict === "continue") {
+        judgeContinueCap.recordContinue(reason);
+      }
+      judgeEvents.push({
+        reason,
+        dossierSummary: {
+          goal: dossier.goal,
+          reason: dossier.reason,
+          recentActionsCount: dossier.recentActions.length,
+          pageErrorsCount: dossier.pageErrors.length,
+        },
+        verdict: outcome,
+        at: new Date().toISOString(),
+      });
+      emit(
+        "loop_state",
+        { state: "judge_verdict", reason, stepIndex, verdict: outcome.verdict, confidence: outcome.confidence },
+        stepIndex,
+      );
+      return outcome;
+    };
+
+    /** Traduce un veredicto terminal del juez a los campos de resultado del run. */
+    const applyTerminalJudgeVerdict = (outcome: JudgeVerdict): void => {
+      runOk = false;
+      verdict = outcome.verdict as Verdict;
+      verdictReason = outcome.reasoning;
+      stopReason = "judge-terminal-verdict";
+      pendingSteps.length = 0;
+      strategistHasMore = false;
+    };
+
     while (runOk && (Date.now() - started) < maxLoopMs && horizon < maxHorizons) {
       throwIfAborted(opts.signal);
       horizon += 1;
@@ -1967,15 +2089,24 @@ export async function runAssistedFlow(
           !healerWasInvoked &&
           !hasGeneratedPlanActivity(planProgress);
         if (isFullPlan && !awaitingSeedExpansion) {
+          let judgeAllowedContinue = false;
           if (!assist.victory) {
             // Sin condición de victoria configurada, el desenlace SIEMPRE lo
             // decide el juez (spec §4.2b) — nunca "plan consumido" implícito.
-            runOk = false;
-            stopReason = "needs-judge:no-victory-condition" satisfies JudgeTriggerStopReason;
-          } else {
-            stopReason = "full-plan-consumed";
+            const stopIndex = nextStepIndex - 1;
+            const outcome = await invokeJudge("victory-candidate", stopIndex, [
+              { check: "victory.configured", passed: false },
+            ]);
+            if (outcome.verdict === "continue") {
+              judgeHint = outcome.hint;
+              judgeAllowedContinue = true;
+            } else {
+              applyTerminalJudgeVerdict(outcome);
+              break;
+            }
           }
-          break;
+          stopReason = "full-plan-consumed";
+          if (!judgeAllowedContinue) break;
         }
         emit("loop_state", { state: "planning", horizon });
         await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
@@ -1991,7 +2122,9 @@ export async function runAssistedFlow(
           history,
           planProgress,
           maxSteps: stepsPerHorizon,
+          ...(judgeHint ? { judgeHint } : {}),
         });
+        judgeHint = undefined;
         strategistHasMore = chunk.hasMore;
         const dropped: Step[] = [];
         for (const ps of chunk.steps) {
@@ -2058,13 +2191,22 @@ export async function runAssistedFlow(
             if (!assist.victory) {
               // Sin condición de victoria configurada, el desenlace SIEMPRE lo
               // decide el juez (spec §4.2b) — nunca "sin más pasos" implícito.
-              runOk = false;
-              stopReason = "needs-judge:no-victory-condition" satisfies JudgeTriggerStopReason;
+              const outcome = await invokeJudge("victory-candidate", nextStepIndex - 1, [
+                { check: "victory.configured", passed: false },
+              ]);
+              if (outcome.verdict === "continue") {
+                judgeHint = outcome.hint;
+                // Sin pasos pendientes ni memoria: el próximo horizonte vuelve
+                // a pedir plan al strategist con el hint del juez como contexto.
+              } else {
+                applyTerminalJudgeVerdict(outcome);
+                break;
+              }
             } else {
               stopReason = "no-steps-generated";
               runOk = false;
+              break;
             }
-            break;
           }
         }
       }
@@ -2210,14 +2352,13 @@ export async function runAssistedFlow(
             strategistHasMore = false;
             break;
           }
-          if (detectStall(consecutiveTrivialDiffs, stalledThreshold)) {
-            runOk = false;
-            stopReason = "needs-judge:stalled" satisfies JudgeTriggerStopReason;
-            emit("loop_state", { state: "stalled", stepIndex: index, consecutiveTrivialDiffs }, index);
-            pendingSteps.length = 0;
-            strategistHasMore = false;
-            break;
-          }
+          // Autoridad: evidencia determinista > juez > strategist (spec §3). La
+          // victoria verificada se evalúa ANTES que los triggers `error-signal`/
+          // `stalled` del juez — un `PageError` warning correlacionado (p. ej. un
+          // `role="alert"` de validación) puede ser EXACTAMENTE la condición de
+          // victoria configurada (caso `validation-reject-is-app-bug-not-agent-fault`
+          // del benchmark); si el motor ya puede resolverlo determinísticamente,
+          // el juez ni se invoca.
           const immediateVictory = await checkImmediateVictory(index, horizon, lastSnapshot);
           if (immediateVictory.decision === "success") {
             victoryMet = true;
@@ -2236,6 +2377,32 @@ export async function runAssistedFlow(
             pendingSteps.length = 0;
             strategistHasMore = false;
             break;
+          }
+          const unresolvedWarning = detectUnresolvedWarningSignal(lastSnapshot.pageErrors, index, judgedWarningKeys);
+          if (unresolvedWarning) {
+            for (const e of unresolvedWarning) judgedWarningKeys.add(pageErrorKey(e));
+            const outcome = await invokeJudge("error-signal", index, [
+              { check: "pageErrors.warning.correlated", passed: false },
+            ]);
+            if (outcome.verdict === "continue") {
+              judgeHint = outcome.hint;
+            } else {
+              applyTerminalJudgeVerdict(outcome);
+              break;
+            }
+          }
+          if (detectStall(consecutiveTrivialDiffs, stalledThreshold)) {
+            emit("loop_state", { state: "stalled", stepIndex: index, consecutiveTrivialDiffs }, index);
+            const outcome = await invokeJudge("stalled", index, [
+              { check: `consecutiveTrivialDiffs < ${stalledThreshold}`, passed: false },
+            ]);
+            if (outcome.verdict === "continue") {
+              judgeHint = outcome.hint;
+              consecutiveTrivialDiffs = 0;
+            } else {
+              applyTerminalJudgeVerdict(outcome);
+              break;
+            }
           }
         } catch (error) {
           if (aborted || isAbortLikeError(error)) {
@@ -2448,13 +2615,10 @@ export async function runAssistedFlow(
                 verdictEvidence = circuitBreakerAfterHeal.evidence;
                 pendingSteps.length = 0;
                 strategistHasMore = false;
-              } else if (detectStall(consecutiveTrivialDiffs, stalledThreshold)) {
-                runOk = false;
-                stopReason = "needs-judge:stalled" satisfies JudgeTriggerStopReason;
-                emit("loop_state", { state: "stalled", stepIndex: index, consecutiveTrivialDiffs }, index);
-                pendingSteps.length = 0;
-                strategistHasMore = false;
               } else {
+                // Autoridad: evidencia determinista > juez > strategist (spec §3) —
+                // misma prioridad que en el camino normal: victoria verificada
+                // primero, luego los triggers del juez sobre lo que quede sin resolver.
                 const immediateVictoryAfterHeal = await checkImmediateVictory(index, horizon, lastSnapshot);
                 if (immediateVictoryAfterHeal.decision === "success") {
                   victoryMet = true;
@@ -2470,6 +2634,34 @@ export async function runAssistedFlow(
                   }
                   pendingSteps.length = 0;
                   strategistHasMore = false;
+                } else {
+                  const unresolvedWarningAfterHeal = detectUnresolvedWarningSignal(
+                    lastSnapshot.pageErrors,
+                    index,
+                    judgedWarningKeys,
+                  );
+                  if (unresolvedWarningAfterHeal) {
+                    for (const e of unresolvedWarningAfterHeal) judgedWarningKeys.add(pageErrorKey(e));
+                    const errorSignalOutcome = await invokeJudge("error-signal", index, [
+                      { check: "pageErrors.warning.correlated", passed: false },
+                    ]);
+                    if (errorSignalOutcome.verdict === "continue") {
+                      judgeHint = errorSignalOutcome.hint;
+                    } else {
+                      applyTerminalJudgeVerdict(errorSignalOutcome);
+                    }
+                  } else if (detectStall(consecutiveTrivialDiffs, stalledThreshold)) {
+                    emit("loop_state", { state: "stalled", stepIndex: index, consecutiveTrivialDiffs }, index);
+                    const stalledOutcome = await invokeJudge("stalled", index, [
+                      { check: `consecutiveTrivialDiffs < ${stalledThreshold}`, passed: false },
+                    ]);
+                    if (stalledOutcome.verdict === "continue") {
+                      judgeHint = stalledOutcome.hint;
+                      consecutiveTrivialDiffs = 0;
+                    } else {
+                      applyTerminalJudgeVerdict(stalledOutcome);
+                    }
+                  }
                 }
               }
               if (victoryMet || !runOk) break;
@@ -2613,8 +2805,22 @@ export async function runAssistedFlow(
               },
               index,
             );
-            runOk = false;
-            stopReason = "step-failed";
+            // Healer agotó sus intentos (o no había ninguno configurado) Y el
+            // replan del strategist tampoco produjo pasos usables: zona gris
+            // clásica del trigger `healing-exhausted` (spec §4.3) — ¿el
+            // selector estaba mal (test-broken), Ghostly se perdió con un
+            // camino que existía (agent-lost), o la app realmente no ofrece
+            // ese control (app-bug)? Solo el juez puede distinguirlos con el
+            // dossier completo; el motor no adivina.
+            const outcome = await invokeJudge("healing-exhausted", index, [
+              { check: "healer.recovered", passed: false },
+              { check: "strategist.replanProducedSteps", passed: false },
+            ]);
+            if (outcome.verdict === "continue") {
+              judgeHint = outcome.hint;
+            } else {
+              applyTerminalJudgeVerdict(outcome);
+            }
             break;
           }
         }
@@ -2670,14 +2876,20 @@ export async function runAssistedFlow(
         !healerWasInvoked &&
         !hasGeneratedPlanActivity(planProgress);
       if (isFullPlan && pendingSteps.length === 0 && !strategistHasMore && !awaitingSeedExpansion) {
-        runOk = false;
         // Plan agotado sin victoria clara resuelta por el motor: zona gris —
         // el desenlace (¿test mal armado? ¿agente perdido? ¿condición ambigua?)
         // lo decide el juez, nunca una heurística (spec §4.2b/§4.3).
-        stopReason = (assist.victory
-          ? "needs-judge:victory-candidate"
-          : "needs-judge:no-victory-condition") satisfies JudgeTriggerStopReason;
-        break;
+        const reason: JudgeTrigger = "victory-candidate";
+        const outcome = await invokeJudge(reason, nextStepIndex - 1, [
+          { check: "victory.configured", passed: Boolean(assist.victory) },
+          ...(assist.victory ? [{ check: "victory.met", passed: victory.met }] : []),
+        ]);
+        if (outcome.verdict === "continue") {
+          judgeHint = outcome.hint;
+        } else {
+          applyTerminalJudgeVerdict(outcome);
+          break;
+        }
       }
       if (!assist.victory && pendingSteps.length === 0 && !strategistHasMore) {
         if (assist.replayFromMemory) {
@@ -2687,22 +2899,41 @@ export async function runAssistedFlow(
         }
         // Sin condición de victoria configurada, el desenlace SIEMPRE lo decide
         // el juez (spec §4.2b) — nunca se asume éxito por haber consumido pasos.
-        runOk = false;
-        stopReason = "needs-judge:no-victory-condition" satisfies JudgeTriggerStopReason;
-        break;
+        const outcome = await invokeJudge("victory-candidate", nextStepIndex - 1, [
+          { check: "victory.configured", passed: false },
+        ]);
+        if (outcome.verdict === "continue") {
+          judgeHint = outcome.hint;
+        } else {
+          applyTerminalJudgeVerdict(outcome);
+          break;
+        }
       }
       // Si hay victory configurada y ya no quedan pasos, NO fallar todavía:
       // en el siguiente horizonte pedimos otro chunk al strategist.
     }
 
     if (runOk && assist.victory && !victoryMet) {
+      const budgetExhausted = (Date.now() - started) >= maxLoopMs || horizon >= maxHorizons;
+      const reason: JudgeTrigger = budgetExhausted ? "budget-exhausted" : "victory-candidate";
+      // El `while` ya terminó acá (se agotó el presupuesto o no hubo más horizontes/plan):
+      // no hay a dónde "continuar" aunque el juez proponga `continue` — spec §4.2d exige
+      // que el desenlace SIEMPRE lo clasifique el juez en este punto, así que igual se
+      // invoca, pero un `continue` se degrada a `inconclusive` (no hay presupuesto para
+      // actuar sobre un hint que ya no puede ejecutarse).
+      const outcome = await invokeJudge(reason, nextStepIndex - 1, [
+        { check: "victory.met", passed: false },
+        { check: budgetExhausted ? "budget.exhausted" : "budget.remaining", passed: !budgetExhausted },
+      ]);
       runOk = false;
-      if ((Date.now() - started) >= maxLoopMs || horizon >= maxHorizons) {
-        // Presupuesto agotado (spec §4.2d): el desenlace lo clasifica el juez
-        // (motivo `budget-exhausted`), no un fail genérico.
-        stopReason = "needs-judge:budget-exhausted" satisfies JudgeTriggerStopReason;
-      } else if (stopReason === "completed" || stopReason === "full-plan-consumed") {
-        stopReason = "needs-judge:victory-candidate" satisfies JudgeTriggerStopReason;
+      if (outcome.verdict === "continue") {
+        verdict = "inconclusive";
+        verdictReason =
+          "El juez propuso continuar, pero el presupuesto del run (maxLoopMs/maxHorizons) ya se agotó — " +
+          `no hay más horizontes disponibles para actuar sobre el hint. Motivo original: ${outcome.reasoning}`;
+        stopReason = "judge-terminal-verdict";
+      } else {
+        applyTerminalJudgeVerdict(outcome);
       }
     }
     emit("loop_state", { state: "stopped", reason: stopReason, horizons: horizon });
@@ -2743,6 +2974,7 @@ export async function runAssistedFlow(
     planProgress: planProgressReport,
     finalPlan: finalPlan.map(redactStepForEvent),
     ...(verdict ? { verdict, verdictReason } : {}),
+    ...(judgeEvents.length > 0 ? { judgeInvocations: judgeEvents.length } : {}),
   });
 
   return {
@@ -2759,5 +2991,6 @@ export async function runAssistedFlow(
     ...(verdict ? { verdict } : {}),
     ...(verdictReason ? { verdictReason } : {}),
     ...(verdictEvidence ? { verdictEvidence } : {}),
+    ...(judgeEvents.length > 0 ? { judgeEvents } : {}),
   };
 }
