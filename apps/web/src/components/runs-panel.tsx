@@ -4,7 +4,9 @@ import { useLocation, useNavigate } from "react-router-dom";
 import type { RunRecord } from "../../../../packages/runner/src/schema.js";
 import { useAppContext } from "../context/app-context";
 import { apiFetch } from "../lib/api";
+import { ALL_VERDICTS, getVerdictMeta, type Verdict } from "../lib/verdict";
 import { NewRunModal } from "./new-run-modal";
+import { VerdictBadge } from "./verdict-badge";
 
 function StatusBadge({ status }: { status: RunRecord["status"] }) {
   if (status === "pass") {
@@ -39,6 +41,7 @@ export function RunsPanel() {
   const [showModal, setShowModal] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"all" | "pass" | "fail" | "running">("all");
   const [projectFilter, setProjectFilter] = useState<string | "all">("all");
+  const [verdictFilter, setVerdictFilter] = useState<"all" | Verdict>("all");
   const navigate = useNavigate();
   const location = useLocation();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -48,6 +51,7 @@ export function RunsPanel() {
   const visibleRuns = runs.filter((r) => {
     if (projectFilter !== "all" && r.project !== projectFilter) return false;
     if (statusFilter !== "all" && r.status !== statusFilter) return false;
+    if (verdictFilter !== "all" && r.verdict !== verdictFilter) return false;
     return true;
   });
 
@@ -162,6 +166,19 @@ export function RunsPanel() {
               </button>
             ))}
             </div>
+            <select
+              value={verdictFilter}
+              onChange={(e) => setVerdictFilter(e.target.value as "all" | Verdict)}
+              className="h-9 rounded-control-sm border border-border bg-card px-2.5 text-small text-foreground outline-none ring-primary focus:ring-2"
+              title="Filtrar por veredicto"
+            >
+              <option value="all">Todos los veredictos</option>
+              {ALL_VERDICTS.map((v) => (
+                <option key={v} value={v}>
+                  {getVerdictMeta(v).shortLabel}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               onClick={() => void fetchRuns()}
@@ -176,11 +193,12 @@ export function RunsPanel() {
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-surface border border-border bg-card">
           <div
             className="grid h-11 shrink-0 items-center border-b border-border bg-muted px-3 text-caption font-overline uppercase tracking-wide text-muted-fg"
-            style={{ gridTemplateColumns: "120px 110px 88px minmax(0,1.35fr) 140px 84px 84px" }}
+            style={{ gridTemplateColumns: "120px 110px 88px 130px minmax(0,1.35fr) 140px 84px 84px" }}
           >
             <span className="px-1.5">Run ID</span>
             <span className="px-1.5">Proyecto</span>
             <span className="px-1.5 text-center">Estado</span>
+            <span className="px-1.5">Veredicto</span>
             <span className="px-1.5">Objetivo</span>
             <span className="px-1.5">Inicio</span>
             <span className="px-1.5">Pasos</span>
@@ -208,7 +226,7 @@ export function RunsPanel() {
                     key={r.id}
                     onClick={() => navigate(`/runs/${r.id}`)}
                     className="grid h-12 cursor-pointer items-center border-b border-border px-3 text-body transition-colors hover:bg-muted"
-                    style={{ gridTemplateColumns: "120px 110px 88px minmax(0,1.35fr) 140px 84px 84px" }}
+                    style={{ gridTemplateColumns: "120px 110px 88px 130px minmax(0,1.35fr) 140px 84px 84px" }}
                   >
                     <span className="truncate px-1.5 font-mono text-small text-muted-fg">
                       {r.id.slice(0, 8)}…
@@ -218,6 +236,9 @@ export function RunsPanel() {
                     </span>
                     <span className="flex justify-center px-1.5">
                       <StatusBadge status={r.status} />
+                    </span>
+                    <span className="px-1.5">
+                      {r.status !== "running" && <VerdictBadge verdict={r.verdict} size="sm" />}
                     </span>
                     <span className="truncate px-1.5 text-small text-foreground">{objetivo}</span>
                     <span className="truncate px-1.5 font-mono text-small text-muted-fg">

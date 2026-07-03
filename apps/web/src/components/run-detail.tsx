@@ -5,10 +5,13 @@ import type { RunRecord, Step } from "../../../../packages/runner/src/schema.js"
 import { useRunStream } from "../hooks/use-run-stream";
 import { apiFetch } from "../lib/api";
 import { appendInstructionsToGoal, buildOverriddenSteps, deriveEditableFillFields } from "../lib/rerun-fields";
+import { getVerdictMeta } from "../lib/verdict";
 import { AddInstructionsModal } from "./add-instructions-modal";
 import type { AssistEvent } from "./assist-timeline";
 import { RerunDataModal } from "./rerun-data-modal";
 import { RerunSplitButton } from "./rerun-split-button";
+import { VerdictBadge } from "./verdict-badge";
+import { VerdictWhyPanel } from "./verdict-why-panel";
 
 type RunRecordWithEvents = RunRecord & { events?: AssistEvent[] };
 type PlanChunkSummary = {
@@ -135,6 +138,7 @@ function timelineLabel(type: AssistEvent["type"]): string {
     heal_action: "heal action",
     heal_success: "heal success",
     heal_failure: "heal fail",
+    judge_verdict: "veredicto del juez",
     run_end: "run end",
   };
   return labels[type] ?? type;
@@ -156,7 +160,15 @@ function timelineDetail(evt: AssistEvent): string {
     return payload.error.split("\n")[0] ?? payload.error;
   }
   if (evt.type === "victory_check") {
+    // `objectiveLikelyCompleted`/`terminalStep` fueron eliminados del motor en
+    // GHOST-28 (spec §4.2b) — la victoria ya no se declara por heurística.
     return payload.met === true ? "victory cumplida" : "victory selector ausente";
+  }
+  if (evt.type === "judge_verdict") {
+    const reason = typeof payload.reason === "string" ? payload.reason : "?";
+    const verdict = typeof payload.verdict === "string" ? payload.verdict : "?";
+    const meta = getVerdictMeta(verdict);
+    return `motivo=${reason} · ${meta.shortLabel}`;
   }
   return JSON.stringify(payload).slice(0, 140);
 }
@@ -331,6 +343,12 @@ export function RunDetail() {
     }
     return Array.from(byKey.values()).sort((a, b) => a.seq - b.seq);
   }, [run?.events, stream.events]);
+
+  /** Eventos del juez, ordenados por seq — el panel "por qué" usa el último. */
+  const judgeEvents = useMemo(
+    () => mergedEvents.filter((e) => e.type === "judge_verdict"),
+    [mergedEvents],
+  );
 
   const loopProgress = useMemo(() => {
     const horizons = mergedEvents
@@ -558,6 +576,7 @@ export function RunDetail() {
               }`}>
                 {run.status === "pass" ? "Pass" : run.status === "fail" ? "Fail" : "Run"}
               </span>
+              {run.status !== "running" && <VerdictBadge verdict={run.verdict} />}
               <span className="text-caption uppercase tracking-wide text-muted-fg">{run.project ?? "sin proyecto"}</span>
             </div>
             <h1 className="text-xl font-title tracking-tight text-foreground">{objective || `Run ${run.id.slice(0, 9)}`}</h1>
@@ -610,6 +629,10 @@ export function RunDetail() {
 
       {(cancelError || rerunError) && (
         <p className="rounded-control-sm bg-error px-3 py-2 text-caption text-error-fg">{cancelError ?? rerunError}</p>
+      )}
+
+      {run.status !== "running" && (
+        <VerdictWhyPanel verdict={run.verdict} verdictReason={run.verdictReason} judgeEvents={judgeEvents} />
       )}
 
       <div className="flex items-end gap-1 border-b border-border">
