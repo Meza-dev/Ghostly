@@ -10,7 +10,7 @@ export type VisibleDialogInfo = {
 /** Fuente de captura de un error de página (spec 4.1: consola, red, DOM). */
 export type PageErrorSource = "console" | "network" | "dom";
 
-/** Severidad conservadora: solo `blocking` corta el loop (Capa 2, fuera de esta fase). */
+/** Severidad conservadora: solo `blocking` corta el loop (Capa 2 — circuit breaker, spec 4.2a). */
 export type PageErrorSeverity = "blocking" | "warning";
 
 export type PageErrorDetail = {
@@ -43,6 +43,20 @@ export type ObserverSnapshot = {
   /** Errores de página capturados por la Capa 1 (consola, red, DOM) desde el último snapshot. */
   pageErrors: PageError[];
 };
+
+/**
+ * Taxonomía de veredictos del run (spec §5). Fase 2a solo produce `fail-app-bug`
+ * (mapeo directo desde el circuit breaker); el resto de los valores los
+ * emitirán las fases posteriores (victoria verificada → `success`, juez →
+ * el resto de la zona gris).
+ */
+export type Verdict =
+  | "success"
+  | "fail-app-bug"
+  | "fail-test-broken"
+  | "fail-agent-lost"
+  | "inconclusive-environment"
+  | "inconclusive";
 
 export type SemanticHint = {
   role?: string;

@@ -13,9 +13,11 @@ import type {
   AssistedRunInput,
   HealerFn,
   ObserverSnapshot,
+  PageError,
   PlanProgressItem,
   PlanProgressReportItem,
   StrategistFn,
+  Verdict,
 } from "./types.js";
 
 export type AssistedRunResult = RunResult & {
@@ -24,6 +26,14 @@ export type AssistedRunResult = RunResult & {
   learnedFlow?: Step[];
   finalPlan?: Step[];
   planProgress?: PlanProgressReportItem[];
+  /** Taxonomía de veredictos (spec §5). Ausente hasta que una fase determinista o el juez lo produzcan. */
+  verdict?: Verdict;
+  /** Explicación del veredicto — descripción del check determinista o razonamiento del juez. */
+  verdictReason?: string;
+  /** Motivo interno de corte del loop (spec §6): `blocked-by-app-error`, `victory-met`, etc. */
+  stopReason?: string;
+  /** Evidencia dura que sustenta el veredicto (p. ej. los `PageError` que dispararon el circuit breaker). */
+  verdictEvidence?: PageError[];
 };
 
 export type AssistedDeps = {
@@ -1694,6 +1704,27 @@ function looksLikeIncompleteLoginReplay(steps: Step[]): boolean {
   return hasUserFill && hasLoginClick && !hasPasswordFill;
 }
 
+/**
+ * Circuit breaker de errores (Capa 2 — reglas duras, spec §4.2a).
+ *
+ * Correlaciona los `PageError` de severidad `blocking` con la acción recién
+ * ejecutada: solo cuentan los observados en el paso actual o el inmediato
+ * anterior (`currentStepIndex - 1`). Es una función pura y determinista —
+ * no consulta al LLM — para que el corte del loop sea siempre reproducible.
+ * Devuelve `undefined` cuando no hay evidencia correlacionada.
+ */
+export function detectBlockingAppError(
+  pageErrors: PageError[],
+  currentStepIndex: number,
+): PageError[] | undefined {
+  const correlated = pageErrors.filter(
+    (e) =>
+      e.severity === "blocking" &&
+      (e.observedAtStep === currentStepIndex || e.observedAtStep === currentStepIndex - 1),
+  );
+  return correlated.length > 0 ? correlated : undefined;
+}
+
 async function evaluateVictory(
   page: Page,
   snapshot: ObserverSnapshot,
@@ -1791,6 +1822,10 @@ export async function runAssistedFlow(
   let aborted = false;
   const learnedFlow: Step[] = [];
   const planProgress: PlanProgressItem[] = [];
+  let stopReason = "completed";
+  let verdict: Verdict | undefined;
+  let verdictReason: string | undefined;
+  let verdictEvidence: PageError[] | undefined;
 
   try {
     throwIfAborted(opts.signal);
@@ -1854,7 +1889,6 @@ export async function runAssistedFlow(
     let nextStepIndex = 0;
     let horizon = 0;
     let victoryMet = false;
-    let stopReason = "completed";
     let healerWasInvoked = false;
     const runtimeMemory: Step[] = [];
     const runtimeMemoryKeys = new Set<string>();
@@ -1879,6 +1913,20 @@ export async function runAssistedFlow(
         hasMore: false,
       });
     }
+
+    // Capa 2 — circuit breaker (spec §4.2a): corte determinista por código, sin LLM.
+    // Autoridad: evidencia determinista > juez > strategist — se evalúa ANTES que la
+    // victoria en cada punto de chequeo post-paso, así un 500/crash nunca queda
+    // enmascarado por una condición de victoria que coincida por accidente.
+    const checkCircuitBreaker = (
+      snapshot: ObserverSnapshot,
+      stepIndex: number,
+    ): { tripped: boolean; evidence?: PageError[] } => {
+      const evidence = detectBlockingAppError(snapshot.pageErrors, stepIndex);
+      if (!evidence) return { tripped: false };
+      emit("loop_state", { state: "circuit_breaker_tripped", stepIndex, evidence }, stepIndex);
+      return { tripped: true, evidence };
+    };
 
     const checkImmediateVictory = async (
       stepIndex: number,
@@ -2158,6 +2206,17 @@ export async function runAssistedFlow(
               ...(stateChanged !== undefined ? { stateChanged } : {}),
             };
           }
+          const circuitBreaker = checkCircuitBreaker(lastSnapshot, index);
+          if (circuitBreaker.tripped) {
+            runOk = false;
+            stopReason = "blocked-by-app-error";
+            verdict = "fail-app-bug";
+            verdictReason = `Error bloqueante de la app tras la acción (paso ${index}): ${circuitBreaker.evidence![0]!.message}`;
+            verdictEvidence = circuitBreaker.evidence;
+            pendingSteps.length = 0;
+            strategistHasMore = false;
+            break;
+          }
           const immediateVictory = await checkImmediateVictory(index, horizon, lastSnapshot, step);
           if (immediateVictory.decision === "success") {
             victoryMet = true;
@@ -2370,22 +2429,33 @@ export async function runAssistedFlow(
                 index,
               );
               lastSnapshot = postHealSnapshot;
-              const immediateVictoryAfterHeal = await checkImmediateVictory(
-                index,
-                horizon,
-                lastSnapshot,
-                step,
-              );
-              if (immediateVictoryAfterHeal.decision === "success") {
-                victoryMet = true;
-                stopReason = immediateVictoryAfterHeal.reason ?? "victory-met";
-                pendingSteps.length = 0;
-                strategistHasMore = false;
-              } else if (immediateVictoryAfterHeal.decision === "fail") {
+              const circuitBreakerAfterHeal = checkCircuitBreaker(lastSnapshot, index);
+              if (circuitBreakerAfterHeal.tripped) {
                 runOk = false;
-                stopReason = immediateVictoryAfterHeal.reason ?? "victory-not-met-after-goal-complete";
+                stopReason = "blocked-by-app-error";
+                verdict = "fail-app-bug";
+                verdictReason = `Error bloqueante de la app tras la acción curada (paso ${index}): ${circuitBreakerAfterHeal.evidence![0]!.message}`;
+                verdictEvidence = circuitBreakerAfterHeal.evidence;
                 pendingSteps.length = 0;
                 strategistHasMore = false;
+              } else {
+                const immediateVictoryAfterHeal = await checkImmediateVictory(
+                  index,
+                  horizon,
+                  lastSnapshot,
+                  step,
+                );
+                if (immediateVictoryAfterHeal.decision === "success") {
+                  victoryMet = true;
+                  stopReason = immediateVictoryAfterHeal.reason ?? "victory-met";
+                  pendingSteps.length = 0;
+                  strategistHasMore = false;
+                } else if (immediateVictoryAfterHeal.decision === "fail") {
+                  runOk = false;
+                  stopReason = immediateVictoryAfterHeal.reason ?? "victory-not-met-after-goal-complete";
+                  pendingSteps.length = 0;
+                  strategistHasMore = false;
+                }
               }
               if (victoryMet || !runOk) break;
             } catch (healErr) {
@@ -2650,6 +2720,7 @@ export async function runAssistedFlow(
     planProgressSummary,
     planProgress: planProgressReport,
     finalPlan: finalPlan.map(redactStepForEvent),
+    ...(verdict ? { verdict, verdictReason } : {}),
   });
 
   return {
@@ -2662,5 +2733,9 @@ export async function runAssistedFlow(
     ...(finalPlan.length > 0 ? { learnedFlow: finalPlan } : {}),
     ...(finalPlan.length > 0 ? { finalPlan } : {}),
     ...(planProgressReport.length > 0 ? { planProgress: planProgressReport } : {}),
+    stopReason,
+    ...(verdict ? { verdict } : {}),
+    ...(verdictReason ? { verdictReason } : {}),
+    ...(verdictEvidence ? { verdictEvidence } : {}),
   };
 }

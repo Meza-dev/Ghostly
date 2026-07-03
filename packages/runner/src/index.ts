@@ -23,6 +23,7 @@ export { sanitizeHealerSteps } from "./assist/healer.js";
 export { captureRecon, type ReconOptions } from "./assist/recon.js";
 export {
   runAssistedFlow,
+  detectBlockingAppError,
   type AssistedRunResult,
   type AssistedDeps,
 } from "./assist/pipeline.js";
@@ -47,5 +48,6 @@ export type {
   SemanticHint,
   StrategistContext,
   StrategistFn,
+  Verdict,
   VisibleDialogInfo,
 } from "./assist/types.js";
