@@ -428,7 +428,16 @@ export function summarizeJudgeEventForPersistence(event: JudgeEvent): Record<str
   return {
     reason: event.reason,
     at: event.at,
-    dossierSummary: event.dossierSummary,
+    dossierSummary: {
+      ...event.dossierSummary,
+      // `goal` es el texto libre en lenguaje natural del usuario (spec §6):
+      // el resto del proyecto ya lo redacta antes de persistir
+      // (`apps/api/src/routes/run.ts` via `redactAssistedMeta`/`redactGoal`
+      // sobre `assistedMeta`). Este evento `judge_verdict` es una segunda
+      // ruta de persistencia y debe seguir el mismo contrato — nunca texto
+      // libre del usuario en plano en un `RunEvent`.
+      goal: redactOrTruncateText(event.dossierSummary.goal),
+    },
     verdict: event.verdict.verdict,
     confidence: event.verdict.confidence,
     reasoning: redactOrTruncateText(event.verdict.reasoning),

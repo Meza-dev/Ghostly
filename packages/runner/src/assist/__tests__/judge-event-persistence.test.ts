@@ -34,7 +34,7 @@ function baseEvent(overrides: Partial<JudgeEvent> = {}): JudgeEvent {
 }
 
 describe("summarizeJudgeEventForPersistence (RunEvent shaping, spec §4.3/§6)", () => {
-  it("shapes a terminal verdict into a persistable payload with all dossier/verdict fields", () => {
+  it("shapes a terminal verdict into a persistable payload with all dossier/verdict fields, running the goal through the same redaction contract as reasoning/evidence", () => {
     const event = baseEvent();
     const payload = summarizeJudgeEventForPersistence(event);
 
@@ -42,6 +42,8 @@ describe("summarizeJudgeEventForPersistence (RunEvent shaping, spec §4.3/§6)",
       reason: "victory-candidate",
       at: "2026-07-02T12:00:00.000Z",
       dossierSummary: {
+        // No sensitive keyword present — same contract as `redactGoal` in
+        // apps/api/src/lib/redact-assist.ts: passes through untouched.
         goal: "Guardar la nota",
         reason: "victory-candidate",
         recentActionsCount: 3,
@@ -51,6 +53,28 @@ describe("summarizeJudgeEventForPersistence (RunEvent shaping, spec §4.3/§6)",
       confidence: "high",
       reasoning: "El texto 'Guardado' persiste tras recargar la página.",
       evidence: ["deterministicChecks: victory.textIncludes=true"],
+    });
+  });
+
+  it("never leaks a secret-looking token from the user goal into the persisted payload", () => {
+    const event = baseEvent({
+      dossierSummary: {
+        goal: "Iniciar sesión usando token=sk-live-abc123 y guardar la nota",
+        reason: "victory-candidate",
+        recentActionsCount: 3,
+        pageErrorsCount: 0,
+      },
+    });
+
+    const payload = summarizeJudgeEventForPersistence(event);
+    const serialized = JSON.stringify(payload);
+
+    expect(serialized).not.toContain("sk-live-abc123");
+    expect(payload.dossierSummary).toEqual({
+      goal: "[REDACTED]",
+      reason: "victory-candidate",
+      recentActionsCount: 3,
+      pageErrorsCount: 0,
     });
   });
 
