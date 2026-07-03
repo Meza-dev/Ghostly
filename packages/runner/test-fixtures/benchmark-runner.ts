@@ -11,6 +11,7 @@
  * no adelantar la implementación real del juez.
  */
 import { runAssistedFlow, type AssistedDeps, type AssistedRunResult } from "../src/index.js";
+import type { JudgeDossier, JudgeFn, JudgeVerdict } from "../src/index.js";
 import { startFixtureApp, type FixtureApp } from "./app.js";
 import { BENCHMARK_FLOWS, type BenchmarkFlow, type ExpectedVerdict } from "./flows.js";
 
@@ -44,6 +45,101 @@ const noopStrategist: AssistedDeps["strategist"] = async () => {
 
 /** Healer inerte: hoy no hay reintentos automáticos en los flujos del benchmark (maxHealingAttemptsPerStep=0). */
 const noopHealer: AssistedDeps["healer"] = async () => ({ steps: [] });
+
+/**
+ * Juez ORÁCULO DE TEST — NO es el juez real (ese es GHOST-30, un LLM vía
+ * `createJudge`). Es un doble determinista que clasifica el trigger SOLO a
+ * partir de las señales que el dossier ya trae (deterministicChecks +
+ * pageErrors), sin ningún LLM. Su único propósito es probar que el WIRING de
+ * los 5 triggers de la Capa 3 (Fase 3a, este archivo) llega al lugar correcto
+ * y aplica el veredicto correctamente — NO mide precisión de clasificación de
+ * un juez real. GHOST-30 reemplazará esto por un juez con LLM real, validado
+ * contra el mismo ground truth de `flows.ts`.
+ */
+/** Señales textuales de fallo de red/conexión (no de selector) en el mensaje de error de una acción fallida. */
+const CONNECTION_ERROR_RE = /ERR_EMPTY_RESPONSE|ERR_CONNECTION_REFUSED|net::ERR_|ECONNREFUSED|ERR_NAME_NOT_RESOLVED/i;
+
+const testOracleJudge: JudgeFn = async (dossier: JudgeDossier): Promise<JudgeVerdict> => {
+  const victoryConfigured = dossier.deterministicChecks.some(
+    (c) => c.check === "victory.configured" && c.passed,
+  );
+  const victoryConfiguredCheck = dossier.deterministicChecks.find((c) => c.check === "victory.configured");
+  const victoryMetCheck = dossier.deterministicChecks.find((c) => c.check === "victory.met");
+  const healerRecoveredCheck = dossier.deterministicChecks.find((c) => c.check === "healer.recovered");
+  const connectionErrorAction = dossier.recentActions.find(
+    (a) => a.outcome === "failed" && a.error && CONNECTION_ERROR_RE.test(a.error),
+  );
+
+  if (dossier.reason === "healing-exhausted" && connectionErrorAction) {
+    // La acción falló por un error de RED/CONEXIÓN (server caído), no por un
+    // selector mal resuelto — el entorno está roto, no la app ni el agente.
+    // Ground truth: inconclusive-environment.
+    return {
+      verdict: "inconclusive-environment",
+      confidence: "high",
+      reasoning:
+        "Test oracle (GHOST-29 wiring, no LLM real): healing-exhausted con un error de conexión de red " +
+        `("${connectionErrorAction.error}") en la última acción — el servidor no respondió. No es un ` +
+        "selector mal resuelto: es el entorno el que falló.",
+      evidence: [`recentActions[].error matches connection-refused pattern`],
+    };
+  }
+
+  if (dossier.reason === "healing-exhausted" && healerRecoveredCheck?.passed === false) {
+    // El healer (y el replan del strategist) no encontraron el camino. En el
+    // benchmark full-plan esto solo ocurre por un selector con typo cuyo
+    // camino correcto SÍ existe en la página — ground truth: fail-agent-lost.
+    return {
+      verdict: "fail-agent-lost",
+      confidence: "high",
+      reasoning:
+        "Test oracle (GHOST-29 wiring, no LLM real): healing-exhausted sin recuperación ni replan " +
+        "productivo. El selector falló pero no hay evidencia de un error de la app (pageErrors vacío) — " +
+        "el camino existía y Ghostly no lo encontró.",
+      evidence: [`healer.recovered=false`, `pageErrors.length=${dossier.pageErrors.length}`],
+    };
+  }
+
+  if (dossier.reason === "victory-candidate" && victoryConfiguredCheck && !victoryConfigured) {
+    // Sin condición de victoria configurada: nunca hay evidencia suficiente
+    // para afirmar nada — ground truth: inconclusive.
+    return {
+      verdict: "inconclusive",
+      confidence: "high",
+      reasoning:
+        "Test oracle (GHOST-29 wiring, no LLM real): victory-candidate sin condición de victoria " +
+        "configurada (victory.configured=false). Sin ella, ningún desenlace puede afirmarse con evidencia.",
+      evidence: ["victory.configured=false"],
+    };
+  }
+
+  if (dossier.reason === "victory-candidate" && victoryConfigured && victoryMetCheck?.passed === false) {
+    // Victoria configurada pero nunca satisfecha y sin PageError de la app:
+    // la condición de victoria (selector/texto/url) está mal definida — la
+    // app en sí funcionó bien. Ground truth: fail-test-broken.
+    return {
+      verdict: "fail-test-broken",
+      confidence: "high",
+      reasoning:
+        "Test oracle (GHOST-29 wiring, no LLM real): victory-candidate con condición configurada pero " +
+        "nunca satisfecha (victory.met=false) y sin evidencia de error de la app. La condición de " +
+        "victoria (selector/texto) está mal definida, no la app.",
+      evidence: [`victory.met=false`, `pageErrors.length=${dossier.pageErrors.length}`],
+    };
+  }
+
+  // Zona gris no cubierta por este oráculo (p. ej. error-signal, stalled,
+  // budget-exhausted no ejercitados por los 10 flujos actuales): degrada a
+  // inconclusive en vez de adivinar — mismo sesgo anti-falso-éxito del juez real.
+  return {
+    verdict: "inconclusive",
+    confidence: "low",
+    reasoning:
+      `Test oracle (GHOST-29 wiring, no LLM real): trigger "${dossier.reason}" sin regla de clasificación ` +
+      "en el oráculo — no hay flujo del benchmark que lo ejercite todavía.",
+    evidence: [],
+  };
+};
 
 /**
  * Infiere el desenlace observado a partir del resultado crudo del pipeline actual.
@@ -87,7 +183,7 @@ async function runOneFlow(baseUrl: string, flow: BenchmarkFlow): Promise<Benchma
     index === 0 && step.action === "goto" ? { ...step, url: scenarioUrl.pathname + scenarioUrl.search } : step,
   );
 
-  const deps: AssistedDeps = { strategist: noopStrategist, healer: noopHealer };
+  const deps: AssistedDeps = { strategist: noopStrategist, healer: noopHealer, judge: testOracleJudge };
 
   const runResult = await runAssistedFlow(
     {
@@ -113,7 +209,7 @@ async function runOneFlow(baseUrl: string, flow: BenchmarkFlow): Promise<Benchma
     observedVerdict,
     truthful,
     falseSuccess,
-    judgeInvocations: 0, // el juez no existe todavía (Fase 3a/3b) — placeholder deliberado
+    judgeInvocations: runResult.judgeEvents?.length ?? 0,
     runResult,
   };
 }

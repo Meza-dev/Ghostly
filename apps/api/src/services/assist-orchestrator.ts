@@ -4,6 +4,7 @@ import type {
   HealerFn,
   HealerResult,
   CodeHints,
+  JudgeFn,
   ObserverSnapshot,
   PlannedChunk,
   Step,
@@ -813,4 +814,29 @@ export function createHealer(opts: OrchestratorOptions): HealerFn {
     });
     return result;
   };
+}
+
+/**
+ * TODO(GHOST-30): reemplazar por `createJudge` real — factory con el mismo
+ * patrón de inyección que `createStrategist`/`createHealer`, usando
+ * `UserLlmSettings` (mismo LLM del usuario, spec §4.3 decisión de diseño) y
+ * el prompt de sistema del juez (clasifica-no-actúa, sesgo anti-falso-éxito,
+ * no contradice evidencia dura, taxonomía de responsables, screenshot
+ * gating por capacidad del provider).
+ *
+ * Este placeholder SOLO existe para que `AssistDeps.judge` (campo requerido
+ * desde Fase 3a, GHOST-29) compile en los call-sites de `run.ts`/`plan.ts`.
+ * Nunca debe alcanzar producción: cualquier invocación real degrada a
+ * `inconclusive` con una nota explícita — el mismo sesgo anti-falso-éxito
+ * del contrato del juez (spec §4.3 regla 2), nunca `success` por defecto.
+ */
+export function createJudgePlaceholder(): JudgeFn {
+  return async (dossier) => ({
+    verdict: "inconclusive",
+    confidence: "low",
+    reasoning:
+      "El juez real todavía no está implementado (GHOST-30) — este es un placeholder que nunca debería " +
+      `invocarse en producción. Trigger recibido: "${dossier.reason}".`,
+    evidence: [],
+  });
 }

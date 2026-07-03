@@ -3,11 +3,18 @@
  *
  * Corre los 10 flujos etiquetados contra la app fixture usando el pipeline
  * asistido REAL. Capas 2a (circuit breaker) y 2b (victoria verificada +
- * double-check de persistencia + estancamiento) ya están implementadas;
- * Capa 3 (el juez) todavía no — los 3 flujos de zona gris que dependen de él
- * quedan como `todo`/aserciones laxas explícitas hasta Fase 3a/3b. El
- * objetivo de este test es DOCUMENTAR el comportamiento real, no hacerlo
- * pasar a la fuerza.
+ * double-check de persistencia + estancamiento) ya están implementadas.
+ *
+ * Capa 3 (Fase 3a, GHOST-29): el CONTRATO del juez, el dossier builder y el
+ * WIRING de los 5 triggers en `pipeline.ts` ya están implementados y probados
+ * acá — pero el juez inyectado en este archivo es un ORÁCULO DE TEST
+ * determinista (`testOracleJudge` en `benchmark-runner.ts`), NO un LLM real.
+ * Clasifica solo a partir de las señales que el dossier ya trae
+ * (deterministicChecks + pageErrors + patrones de error de red), sin ningún
+ * modelo. El 10/10 que este archivo alcanza mide que el WIRING resuelve
+ * correctamente los 5 triggers hacia el veredicto esperado — NO mide
+ * precisión de clasificación de un juez real, que es explícitamente Fase
+ * 3b/GHOST-30 (factory `createJudge` del lado API + prompt de sistema).
  *
  * Ejecutar: `pnpm --filter @ghostly-io/runner test reliability-benchmark`
  */
@@ -63,8 +70,31 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
     30_000,
   );
 
-  it.todo(
-    "RED baseline: hoy el pipeline no distingue fail-test-broken de fail-agent-lost — ambos colapsan en un fail genérico (AC4 — se cierra en Fase 3a/3b, requiere el juez)",
+  it(
+    "distingue fail-test-broken de fail-agent-lost vía el trigger healing-exhausted/victory-candidate del juez " +
+      "(AC4, Fase 3a — wiring probado con el oráculo de test, NO con un juez LLM real; ver GHOST-30)",
+    async () => {
+      const report = await runReliabilityBenchmark(
+        BENCHMARK_FLOWS.filter(
+          (f) =>
+            f.id === "test-broken-wrong-victory-selector" ||
+            f.id === "agent-lost-selector-typo-recoverable-path-exists",
+        ),
+      );
+      expect(report.results).toHaveLength(2);
+      const testBroken = report.results.find((r) => r.flow.id === "test-broken-wrong-victory-selector");
+      const agentLost = report.results.find(
+        (r) => r.flow.id === "agent-lost-selector-typo-recoverable-path-exists",
+      );
+      expect(testBroken!.observedVerdict).toBe("fail-test-broken");
+      expect(agentLost!.observedVerdict).toBe("fail-agent-lost");
+      // Antes de este slice ambos colapsaban en un fail sin clasificar
+      // (`unclassified`) — ya no colapsan: son veredictos DISTINTOS.
+      expect(testBroken!.observedVerdict).not.toBe(agentLost!.observedVerdict);
+      expect(testBroken!.runResult.judgeEvents?.length ?? 0).toBeGreaterThan(0);
+      expect(agentLost!.runResult.judgeEvents?.length ?? 0).toBeGreaterThan(0);
+    },
+    30_000,
   );
 
   it(
@@ -90,32 +120,35 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
   );
 
   it.todo(
-    "RED baseline: hoy el modal bloqueante depende de que el paso explícito de cierre esté en el plan; sin Capa 3 (juez con hint) un agente real sin ese paso queda perdido (AC4 — se cierra en Fase 3a/3b)",
+    "RED baseline: el benchmark de Fase 3a corre en full-plan con un strategist noop — no puede probar que " +
+      "un agente real SIN el paso explícito de cierre del modal se recupere usando el hint del juez (requiere " +
+      "un strategist real que consuma StrategistContext.judgeHint, Fase 3b/GHOST-30)",
   );
 
   it(
-    "cero falsos éxitos (spec AC1/AC3 — invariante duro desde Fase 2b, no espera al juez)",
+    "cero falsos éxitos (spec AC1/AC3 — invariante duro desde Fase 2b, se mantiene con el juez wireado)",
     async () => {
       const report = await runReliabilityBenchmark();
-      // A diferencia del truthfulCount total (que sí depende del juez para los
-      // 3 flujos de zona gris restantes), "cero falsos éxitos" es una garantía
-      // que la Capa 2 determinista debe sostener SOLA desde esta fase: mentir
-      // que algo tuvo éxito es el peor defecto posible (spec §1). Este test
-      // congela ese invariante como regresión — si vuelve a subir de 0, algo
-      // rompió el circuit breaker o el double-check de persistencia.
+      // Mentir que algo tuvo éxito es el peor defecto posible (spec §1). Este
+      // test congela ese invariante como regresión — si vuelve a subir de 0,
+      // algo rompió el circuit breaker, el double-check de persistencia, o
+      // (desde esta fase) el sesgo anti-falso-éxito del juez/oráculo.
       expect(report.falseSuccessCount).toBe(0);
     },
     120_000,
   );
 
-  it("meta objetivo del benchmark (spec AC1): 10/10 veredictos veraces — aún NO se cumple hoy (requiere el juez, Fase 3a/3b)", async () => {
-    const report = await runReliabilityBenchmark();
-    // Esta aserción documenta la meta final de la versión; hoy es baseline RED
-    // para el conteo TOTAL (3 flujos de zona gris siguen sin el juez) y se
-    // promueve a expectativa estricta cuando las Fases 3a/3b estén implementadas
-    // (ver Fase 3b, tarea 3b.8). El invariante de cero falsos éxitos YA se
-    // sostiene desde esta fase (ver test anterior).
-    const isFullyTruthfulYet = report.truthfulCount === report.total;
-    expect(isFullyTruthfulYet).toBe(false);
-  }, 120_000);
+  it(
+    "meta objetivo del benchmark (spec AC1): 10/10 veredictos veraces con el WIRING de la Capa 3 + oráculo de " +
+      "test determinista (Fase 3a) — esto mide correctitud del wiring, NO precisión de un juez LLM real, que " +
+      "es explícitamente Fase 3b/GHOST-30 y se valida contra el mismo ground truth de flows.ts",
+    async () => {
+      const report = await runReliabilityBenchmark();
+      // eslint-disable-next-line no-console
+      console.log(formatBenchmarkReport(report));
+      expect(report.truthfulCount).toBe(report.total);
+      expect(report.falseSuccessCount).toBe(0);
+    },
+    120_000,
+  );
 });

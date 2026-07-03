@@ -12,7 +12,7 @@ import { Hono } from "hono";
 import { loadConfig } from "../config.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { redactAssistedMeta } from "../lib/redact-assist.js";
-import { createHealer, createStrategist } from "../services/assist-orchestrator.js";
+import { createHealer, createJudgePlaceholder, createStrategist } from "../services/assist-orchestrator.js";
 import { runControlRegistry } from "../services/run-control.js";
 import { runEventBus } from "../services/run-event-bus.js";
 import { projectExistsForUser } from "../store/projects.js";
@@ -443,6 +443,10 @@ runRouter.post("/run", async (c) => {
           chunkSize: appConfig.assistV2.chunkSize,
           codeHints,
         });
+        // TODO(GHOST-30): reemplazar por el juez real (createJudge, mismo LLM
+        // del usuario). Placeholder requerido para que AssistDeps compile —
+        // ver nota en assist-orchestrator.ts.
+        const judge = createJudgePlaceholder();
         let seedMemorySteps: Step[] = [];
         if ((assistV2.memoryMode ?? appConfig.assistV2.memoryMode) === "adaptive") {
           seedMemorySteps = await getAssistMemory({
@@ -485,6 +489,7 @@ runRouter.post("/run", async (c) => {
         const assistedResult = await runAssistedFlow(assistedInput, {
           strategist,
           healer,
+          judge,
           log: (message: string, details?: Record<string, unknown>) => {
             // eslint-disable-next-line no-console
             console.log(`[assist-run v2] ${message}`, details ?? {});
