@@ -1,31 +1,19 @@
-import type { AssistedMeta } from "@ghostly-io/runner";
+import { redactOrTruncateText, type AssistedMeta } from "@ghostly-io/runner";
 
-const REDACTED = "[REDACTED]";
-const SENSITIVE_WORDS = [
-  "password",
-  "passwd",
-  "token",
-  "secret",
-  "api key",
-  "apikey",
-  "authorization",
-];
-
-function normalize(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function redactGoal(goal: string): string {
-  const normalized = normalize(goal);
-  if (SENSITIVE_WORDS.some((word) => normalized.includes(word))) {
-    return REDACTED;
-  }
-  return goal;
-}
-
+/**
+ * Redacta `assistedMeta.goal` antes de persistirlo (spec §6). Delega en el
+ * boundary único de redacción de texto libre (`redactOrTruncateText`,
+ * `packages/runner/src/assist/redaction.ts`, Kanon GHOST-35) en vez de
+ * mantener su propia copia de `SENSITIVE_WORDS`/lógica — el runner y apps/api
+ * NO pueden compartir código en runtime salvo vía el paquete publicado
+ * (`@ghostly-io/runner`, consumido desde `dist/`), y ese paquete YA es una
+ * dependencia de apps/api, así que importar la función real (no solo la
+ * lista de palabras) elimina la duplicación por completo en vez de solo
+ * evitar que diverja.
+ */
 export function redactAssistedMeta(meta: AssistedMeta): AssistedMeta {
   return {
     ...meta,
-    goal: redactGoal(meta.goal),
+    goal: redactOrTruncateText(meta.goal),
   };
 }
