@@ -54,8 +54,26 @@ describe("reliability benchmark (RED baseline — pipeline sin Capa 2/3)", () =>
     "RED baseline: hoy el pipeline no distingue fail-test-broken de fail-agent-lost — ambos colapsan en un fail genérico (AC4 — se cierra en Fase 3a/3b, requiere el juez)",
   );
 
-  it.todo(
-    "RED baseline: hoy un error 500 en /save agota el timeout en vez de cortar de inmediato con fail-app-bug (AC2 — se cierra en Fase 2a, circuit breaker)",
+  it(
+    "500 en /save corta el run de inmediato con verdict=fail-app-bug y evidencia (AC2, Fase 2a — circuit breaker)",
+    async () => {
+      const report = await runReliabilityBenchmark(
+        BENCHMARK_FLOWS.filter((f) => f.id === "500-on-save-cuts-run"),
+      );
+      const [result] = report.results;
+      expect(result).toBeDefined();
+      expect(result!.observedVerdict).toBe("fail-app-bug");
+      expect(result!.truthful).toBe(true);
+      expect(result!.falseSuccess).toBe(false);
+      // No consultó al LLM (deps.strategist/healer del benchmark son noop y no
+      // deberían invocarse en full-plan) y no agotó el presupuesto del flujo
+      // (maxLoopMs=30_000): el corte determinista debe ser mucho más rápido.
+      expect(result!.runResult.durationMs).toBeLessThan(15_000);
+      expect(result!.runResult.stopReason).toBe("blocked-by-app-error");
+      expect(result!.runResult.verdictEvidence?.length ?? 0).toBeGreaterThan(0);
+      expect(result!.runResult.verdictEvidence?.[0]?.severity).toBe("blocking");
+    },
+    30_000,
   );
 
   it.todo(

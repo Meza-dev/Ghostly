@@ -49,8 +49,15 @@ const noopHealer: AssistedDeps["healer"] = async () => ({ steps: [] });
  * Infiere el desenlace observado a partir del resultado crudo del pipeline actual.
  * Esto NO es el juez real (Fase 3) — es una clasificación equivalente mínima para poder
  * comparar contra las etiquetas del benchmark y medir el gap de hoy.
+ *
+ * Desde la Fase 2a, el pipeline puede producir un `verdict` real (circuit breaker
+ * determinista, spec §4.2a): cuando está presente, es la fuente de verdad y se usa
+ * directo, sin heurística. El resto de los casos (Fases 2b/3 aún no implementadas)
+ * sigue infiriéndose por heurística hasta que esas fases produzcan su propio `verdict`.
  */
 function inferObservedVerdict(flow: BenchmarkFlow, result: AssistedRunResult): ObservedVerdict {
+  if (result.verdict) return result.verdict;
+
   const lastOutcome = result.steps.at(-1);
   const allStepsOk = result.steps.length > 0 && result.steps.every((s) => s.ok);
 
