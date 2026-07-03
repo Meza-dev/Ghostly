@@ -24,6 +24,9 @@ export { captureRecon, type ReconOptions } from "./assist/recon.js";
 export {
   runAssistedFlow,
   detectBlockingAppError,
+  goalImpliesPersistence,
+  shouldRevalidateVictory,
+  detectStall,
   type AssistedRunResult,
   type AssistedDeps,
 } from "./assist/pipeline.js";
@@ -36,6 +39,7 @@ export type {
   HealerContext,
   HealerFn,
   HealerResult,
+  JudgeTriggerStopReason,
   ObserverSnapshot,
   PageError,
   PageErrorDetail,
@@ -49,5 +53,6 @@ export type {
   StrategistContext,
   StrategistFn,
   Verdict,
+  VictoryCondition,
   VisibleDialogInfo,
 } from "./assist/types.js";

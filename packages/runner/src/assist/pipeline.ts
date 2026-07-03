@@ -12,12 +12,14 @@ import type {
   AssistEventType,
   AssistedRunInput,
   HealerFn,
+  JudgeTriggerStopReason,
   ObserverSnapshot,
   PageError,
   PlanProgressItem,
   PlanProgressReportItem,
   StrategistFn,
   Verdict,
+  VictoryCondition,
 } from "./types.js";
 
 export type AssistedRunResult = RunResult & {
@@ -347,52 +349,6 @@ async function victoryTargetVisible(page: Page, raw: string): Promise<boolean> {
   }
 }
 
-function naturalLanguageVictorySatisfied(
-  snapshot: ObserverSnapshot,
-  raw: string,
-  history: Array<{ step: Step; ok: boolean; error?: string }>,
-): boolean {
-  const phrase = normalizeLooseText(raw);
-  if (!phrase) return false;
-  const hay = normalizeLooseText(`${snapshot.title}\n${snapshot.url}\n${snapshot.treeMarkdown}`);
-  if (!hay) return false;
-  if (hay.includes(phrase)) return true;
-
-  const looksNatural =
-    /[\s,;]/.test(phrase) || phrase.length > 40 || (!/[#.\[\]=:]/.test(phrase) && !/^text=/.test(phrase));
-  if (!looksNatural) return false;
-
-  const asksToast = /\b(toast|alerta|notific|mensaje)\b/.test(phrase);
-  const asksCreate = /\b(creacion|crear|creada|creado|guardad|confirm|exito)\b/.test(phrase);
-  const asksTable = /\b(tabla|listado|table|row|fila)\b/.test(phrase);
-  const asksCalif = /\bcalific/.test(phrase);
-  const asksNueva = /\bnueva\b/.test(phrase);
-
-  const hasListadoCalif = /listado de calificaciones/.test(hay);
-  const hasNuevaCalifRow = /row\s+"[^"\n]*nueva calific/.test(hay) || /cell\s+"nueva calific/.test(hay);
-
-  // Frases tipo "toast de creación y aparece en tabla nueva calificación":
-  // si la tabla ya refleja la nueva fila, consideramos victoria aunque el toast sea efímero.
-  const hasFinalize = hasAnyFinalizeAction(history);
-  // Evita falso positivo temprano: para "aparece en tabla / toast creación"
-  // exigimos que ya exista acción final de guardado/confirmación.
-  if ((asksToast || asksCreate) && asksTable && asksCalif && hasNuevaCalifRow) return hasFinalize;
-  if (asksNueva && asksCalif && hasListadoCalif && hasNuevaCalifRow) return hasFinalize;
-  if (asksTable && asksCalif && hasNuevaCalifRow) return hasFinalize;
-
-  return false;
-}
-
-function selectorLikelyNeedsFinalizeAction(raw: string): boolean {
-  const phrase = normalizeLooseText(raw);
-  if (!phrase) return false;
-  const asksToast = /\b(toast|alerta|notific|mensaje)\b/.test(phrase);
-  const asksCreate = /\b(creacion|crear|creada|creado|guardad|confirm|exito)\b/.test(phrase);
-  const asksTable = /\b(tabla|listado|table|row|fila)\b/.test(phrase);
-  const asksCalif = /\bcalific/.test(phrase);
-  return asksCalif && (asksTable || asksToast || asksCreate);
-}
-
 function goalMentionsCalificacionesCreate(goal: string): boolean {
   const g = normalizeLooseText(goal);
   return /calific/.test(g) && /(crear|crea|nueva|nuevo)/.test(g);
@@ -431,67 +387,6 @@ function isAuthLikeFillStep(step: Step): boolean {
   if (step.action !== "fill") return false;
   const s = step.selector.toLowerCase();
   return /user|usuario|email|login|pass|password|contrase|token|api[_-]?key|secret/i.test(s);
-}
-
-function collectRecentBusinessFillValues(history: Array<{ step: Step; ok: boolean; error?: string }>): string[] {
-  const out: string[] = [];
-  for (let i = history.length - 1; i >= 0; i--) {
-    const h = history[i]!;
-    if (!h.ok || h.step.action !== "fill" || isAuthLikeFillStep(h.step)) continue;
-    const v = h.step.value.trim();
-    if (v.length <= 1) continue;
-    if (/^\d+$/.test(v)) continue;
-    if (/^(ok|si|sí|no|n\/a)$/i.test(v)) continue;
-    if (!out.includes(v)) out.push(v);
-    if (out.length >= 8) break;
-  }
-  return out;
-}
-
-function snapshotContainsAnyValue(snapshot: ObserverSnapshot, values: string[]): boolean {
-  if (values.length === 0) return false;
-  const hay = normalizeLooseText(`${snapshot.title}\n${snapshot.url}\n${snapshot.treeMarkdown}`);
-  if (!hay) return false;
-  return values.some((v) => {
-    const n = normalizeLooseText(v);
-    return n.length >= 3 && hay.includes(n);
-  });
-}
-
-function isBusinessFillStep(step: Step): boolean {
-  return step.action === "fill" && !isAuthLikeFillStep(step);
-}
-
-function isBusinessFinalizeStep(step: Step): boolean {
-  if (step.action === "press") return /enter/i.test(step.key);
-  if (step.action !== "click") return false;
-  const s = step.selector.toLowerCase();
-  if (/ingresar|entrar|sign in|login/.test(s)) return false;
-  if (isLoginLikeStep(step)) return false;
-  return /guardar|save|confirm|confirmar|continuar|finalizar|crear calificaci[oó]n/i.test(s);
-}
-
-function hasAnyFinalizeAction(history: Array<{ step: Step; ok: boolean; error?: string }>): boolean {
-  let lastBusinessFill = -1;
-  for (let i = 0; i < history.length; i++) {
-    const h = history[i]!;
-    if (!h.ok) continue;
-    if (isBusinessFillStep(h.step)) lastBusinessFill = i;
-    if (isBusinessFinalizeStep(h.step) && lastBusinessFill >= 0 && i > lastBusinessFill) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function objectiveLikelyCompleted(
-  history: Array<{ step: Step; ok: boolean; error?: string }>,
-  snapshot: ObserverSnapshot,
-): boolean {
-  const fillValues = collectRecentBusinessFillValues(history);
-  if (fillValues.length === 0) return false;
-  if (!hasAnyFinalizeAction(history)) return false;
-  return snapshotContainsAnyValue(snapshot, fillValues);
 }
 
 function expandFillSelectors(primary: string): string[] {
@@ -1725,11 +1620,22 @@ export function detectBlockingAppError(
   return correlated.length > 0 ? correlated : undefined;
 }
 
+/**
+ * Victoria verificada (Capa 2 — reglas duras, spec §4.2b).
+ *
+ * La victoria se declara SOLO si las condiciones configuradas (URL, texto,
+ * selector visible) pasan la verificación del motor sobre la página real
+ * (`victoryTargetVisible`, que consulta el DOM vivo vía Playwright). Ya NO
+ * hay una vía de heurística de substring sobre el snapshot estático como
+ * atajo autónomo — eso era exactamente la causa raíz #4 de la spec (falso
+ * éxito por heurística débil). Donde no hay condición configurada, el
+ * llamador (`runAssistedFlow`) enruta al trigger del juez en lugar de
+ * adivinar aquí.
+ */
 async function evaluateVictory(
   page: Page,
   snapshot: ObserverSnapshot,
   victory: NonNullable<AssistedRunInput["assist"]>["victory"] | undefined,
-  history: Array<{ step: Step; ok: boolean; error?: string }>,
 ): Promise<{ configured: boolean; met: boolean; details: Record<string, unknown> }> {
   if (!victory) {
     return { configured: false, met: false, details: { reason: "not-configured" } };
@@ -1751,16 +1657,8 @@ async function evaluateVictory(
   }
   if (victory.selectorVisible && victory.selectorVisible.length > 0) {
     const selectorResults: boolean[] = [];
-    const finalized = hasAnyFinalizeAction(history);
     for (const selector of victory.selectorVisible) {
-      const visible = await victoryTargetVisible(page, selector);
-      const sem = naturalLanguageVictorySatisfied(snapshot, selector, history);
-      const candidate = visible || sem;
-      if (candidate && selectorLikelyNeedsFinalizeAction(selector) && !finalized) {
-        selectorResults.push(false);
-        continue;
-      }
-      selectorResults.push(candidate);
+      selectorResults.push(await victoryTargetVisible(page, selector));
     }
     details.selectorVisible = selectorResults;
     checks.push(victory.mustAll ? selectorResults.every(Boolean) : selectorResults.some(Boolean));
@@ -1768,6 +1666,45 @@ async function evaluateVictory(
 
   const met = checks.length === 0 ? false : (victory.mustAll ? checks.every(Boolean) : checks.some(Boolean));
   return { configured: true, met, details };
+}
+
+/**
+ * ¿El goal en lenguaje natural implica persistir estado (crear/guardar/enviar)?
+ * Spec §4.2b: estos objetivos requieren el double-check de recarga antes de
+ * aceptar la victoria — un guardado que no persiste no debe pasar como éxito.
+ * Heurística conservadora por palabra clave en español (idioma del producto);
+ * falsos negativos (goal de persistencia no detectado) son preferibles a
+ * falsos positivos que recarguen flujos efímeros/multi-paso sin necesidad.
+ */
+export function goalImpliesPersistence(goal: string): boolean {
+  const g = normalizeLooseText(goal);
+  return /\b(crear|crea|guardar|guardo|guardó|enviar|envio|envió|confirmar|confirmo|confirmó|registrar|registro)\b/.test(
+    g,
+  );
+}
+
+/**
+ * Decide si un candidato a victoria debe pasar por el double-check de recarga
+ * (spec §4.2b). El opt-out explícito `victory.revalidate` siempre gana sobre
+ * la heurística del goal — así flujos con estado efímero/multi-paso (wizards)
+ * pueden declarar `revalidate: false` sin pelear contra la detección automática.
+ */
+export function shouldRevalidateVictory(
+  goal: string,
+  victory: VictoryCondition | undefined,
+): boolean {
+  if (victory?.revalidate !== undefined) return victory.revalidate;
+  return goalImpliesPersistence(goal);
+}
+
+/**
+ * Detector de estancamiento (Capa 2, spec §4.2c): dispara cuando el diff entre
+ * snapshots consecutivos fue vacío/trivial durante `threshold` pasos seguidos
+ * (default 3). Función pura sobre el contador que mantiene el loop — separada
+ * para poder testearla sin Playwright.
+ */
+export function detectStall(consecutiveTrivialDiffs: number, threshold = 3): boolean {
+  return consecutiveTrivialDiffs >= threshold;
 }
 
 export async function runAssistedFlow(
@@ -1890,6 +1827,11 @@ export async function runAssistedFlow(
     let horizon = 0;
     let victoryMet = false;
     let healerWasInvoked = false;
+    // Capa 2 — detector de estancamiento (spec §4.2c): cuenta diffs de snapshot
+    // triviales/vacíos consecutivos tras un paso ejecutado con éxito. Se resetea
+    // en cuanto el estado cambia. `detectStall` decide el umbral (default N=3).
+    let consecutiveTrivialDiffs = 0;
+    const stalledThreshold = 3;
     const runtimeMemory: Step[] = [];
     const runtimeMemoryKeys = new Set<string>();
     for (const seed of assist.seedMemorySteps ?? []) {
@@ -1928,12 +1870,41 @@ export async function runAssistedFlow(
       return { tripped: true, evidence };
     };
 
+    // Capa 2 — double-check de persistencia (spec §4.2b): tras un candidato a
+    // victoria en un goal que implica persistir estado, re-navega a la vista base
+    // (GET fresco, no `page.reload()`) y re-verifica la MISMA condición
+    // configurada. Si no sobrevive, el dato nunca se persistió: es evidencia dura
+    // e inequívoca de un bug de la app (simétrico al 5xx del circuit breaker), no
+    // una victoria — y tampoco zona gris para el juez. Devuelve `undefined`
+    // cuando no aplica revalidar (goal no implica persistencia, o
+    // `revalidate: false` explícito).
+    //
+    // Nota deliberada: NO usamos `page.reload()`. Tras un submit de formulario
+    // (`method="post"`), Playwright deja `page.url()` apuntando a la URL de
+    // destino del POST (p. ej. `/save?...`); un `reload()` ahí re-ejecuta el
+    // POST y "revalida" contra su propia respuesta optimista — nunca detecta
+    // un guardado no persistente. Navegar de nuevo a `baseUrl` (GET) es la
+    // única forma de consultar el estado real del servidor.
+    const revalidateVictoryIfNeeded = async (
+      stepIndex: number,
+    ): Promise<{ survived: boolean } | undefined> => {
+      if (!shouldRevalidateVictory(assist.goal, assist.victory)) return undefined;
+      emit("loop_state", { state: "revalidating_persistence", stepIndex }, stepIndex);
+      await page!.goto(input.baseUrl, { waitUntil: "domcontentloaded", timeout: input.defaultTimeoutMs });
+      const reloadedSnapshot = await captureObserverSnapshot(page!, observerMaxNodes, {
+        pageErrorTracker,
+        stepIndex,
+      });
+      lastSnapshot = reloadedSnapshot;
+      const revalidated = await evaluateVictory(page!, reloadedSnapshot, assist.victory);
+      return { survived: revalidated.met };
+    };
+
     const checkImmediateVictory = async (
       stepIndex: number,
       horizonNo: number,
       snapshotOverride?: ObserverSnapshot,
-      executedStep?: Step,
-    ): Promise<{ decision: "continue" | "success" | "fail"; reason?: string }> => {
+    ): Promise<{ decision: "continue" | "success" | "fail"; reason?: string; verdict?: Verdict }> => {
       if (snapshotOverride) {
         lastSnapshot = snapshotOverride;
       } else {
@@ -1944,10 +1915,8 @@ export async function runAssistedFlow(
         });
       }
       const victory = assist.victory
-        ? await evaluateVictory(page!, lastSnapshot, assist.victory, history)
+        ? await evaluateVictory(page!, lastSnapshot, assist.victory)
         : { configured: false, met: false, details: { reason: "not-configured" } };
-      const objectiveComplete = healerWasInvoked && objectiveLikelyCompleted(history, lastSnapshot);
-      const terminalStep = executedStep ? isLikelyTerminalAction(executedStep) : false;
       const pendingInput = hasPendingInputSteps(planProgress);
       const awaitingSeedExpansion = isSeedInputForFullPlan && !healerWasInvoked && !hasGeneratedPlanActivity(planProgress);
       emit(
@@ -1963,8 +1932,6 @@ export async function runAssistedFlow(
           ...victory.details,
           configured: victory.configured,
           met: victory.met,
-          objectiveLikelyCompleted: objectiveComplete,
-          terminalStep,
         },
         stepIndex,
       );
@@ -1972,15 +1939,20 @@ export async function runAssistedFlow(
         if (isFullPlan && !healerWasInvoked && (pendingInput || awaitingSeedExpansion)) {
           return { decision: "continue", reason: "victory-deferred-full-plan" };
         }
+        const revalidation = await revalidateVictoryIfNeeded(stepIndex);
+        if (revalidation && !revalidation.survived) {
+          emit(
+            "loop_state",
+            { state: "persistence_check_failed", stepIndex, goal: assist.goal },
+            stepIndex,
+          );
+          return {
+            decision: "fail",
+            reason: "persistence-check-failed",
+            verdict: "fail-app-bug",
+          };
+        }
         return { decision: "success", reason: "victory-met" };
-      }
-      if (objectiveComplete) {
-        if (!assist.victory && terminalStep) {
-          return { decision: "success", reason: "objective-likely-complete" };
-        }
-        if (assist.victory) {
-          return { decision: "fail", reason: "victory-not-met-after-goal-complete" };
-        }
       }
       return { decision: "continue" };
     };
@@ -1995,7 +1967,14 @@ export async function runAssistedFlow(
           !healerWasInvoked &&
           !hasGeneratedPlanActivity(planProgress);
         if (isFullPlan && !awaitingSeedExpansion) {
-          stopReason = "full-plan-consumed";
+          if (!assist.victory) {
+            // Sin condición de victoria configurada, el desenlace SIEMPRE lo
+            // decide el juez (spec §4.2b) — nunca "plan consumido" implícito.
+            runOk = false;
+            stopReason = "needs-judge:no-victory-condition" satisfies JudgeTriggerStopReason;
+          } else {
+            stopReason = "full-plan-consumed";
+          }
           break;
         }
         emit("loop_state", { state: "planning", horizon });
@@ -2076,8 +2055,15 @@ export async function runAssistedFlow(
             }
           } else {
             emit("memory_miss", { horizon });
-            stopReason = "no-steps-generated";
-            if (assist.victory) runOk = false;
+            if (!assist.victory) {
+              // Sin condición de victoria configurada, el desenlace SIEMPRE lo
+              // decide el juez (spec §4.2b) — nunca "sin más pasos" implícito.
+              runOk = false;
+              stopReason = "needs-judge:no-victory-condition" satisfies JudgeTriggerStopReason;
+            } else {
+              stopReason = "no-steps-generated";
+              runOk = false;
+            }
             break;
           }
         }
@@ -2206,6 +2192,13 @@ export async function runAssistedFlow(
               ...(stateChanged !== undefined ? { stateChanged } : {}),
             };
           }
+          // Estancamiento (spec §4.2c): un paso "snapshot" es intencionalmente
+          // pasivo (no muta la página) y no debe contar como estancamiento.
+          if (stateChanged === false && step.action !== "snapshot") {
+            consecutiveTrivialDiffs += 1;
+          } else if (stateChanged === true) {
+            consecutiveTrivialDiffs = 0;
+          }
           const circuitBreaker = checkCircuitBreaker(lastSnapshot, index);
           if (circuitBreaker.tripped) {
             runOk = false;
@@ -2217,7 +2210,15 @@ export async function runAssistedFlow(
             strategistHasMore = false;
             break;
           }
-          const immediateVictory = await checkImmediateVictory(index, horizon, lastSnapshot, step);
+          if (detectStall(consecutiveTrivialDiffs, stalledThreshold)) {
+            runOk = false;
+            stopReason = "needs-judge:stalled" satisfies JudgeTriggerStopReason;
+            emit("loop_state", { state: "stalled", stepIndex: index, consecutiveTrivialDiffs }, index);
+            pendingSteps.length = 0;
+            strategistHasMore = false;
+            break;
+          }
+          const immediateVictory = await checkImmediateVictory(index, horizon, lastSnapshot);
           if (immediateVictory.decision === "success") {
             victoryMet = true;
             stopReason = immediateVictory.reason ?? "victory-met";
@@ -2228,6 +2229,10 @@ export async function runAssistedFlow(
           if (immediateVictory.decision === "fail") {
             runOk = false;
             stopReason = immediateVictory.reason ?? "victory-not-met-after-goal-complete";
+            if (immediateVictory.verdict) {
+              verdict = immediateVictory.verdict;
+              verdictReason = `Double-check de persistencia falló tras recargar (paso ${index}): el objetivo "${assist.goal}" implicaba persistir estado y el dato no sobrevivió la recarga.`;
+            }
             pendingSteps.length = 0;
             strategistHasMore = false;
             break;
@@ -2337,6 +2342,11 @@ export async function runAssistedFlow(
                 stateBeforeHeal !== undefined && stateAfterHeal !== undefined
                   ? stateBeforeHeal !== stateAfterHeal
                   : undefined;
+              if (stateChangedByHeal === false) {
+                consecutiveTrivialDiffs += 1;
+              } else if (stateChangedByHeal === true) {
+                consecutiveTrivialDiffs = 0;
+              }
               const healerReplacedOriginal = hasEquivalentReplacementStep(step, sanitized);
               const skipOriginalStep = healerReplacedOriginal ||
                 shouldDropStepInCurrentContext(step, postHealSnapshot, history) ||
@@ -2438,13 +2448,14 @@ export async function runAssistedFlow(
                 verdictEvidence = circuitBreakerAfterHeal.evidence;
                 pendingSteps.length = 0;
                 strategistHasMore = false;
+              } else if (detectStall(consecutiveTrivialDiffs, stalledThreshold)) {
+                runOk = false;
+                stopReason = "needs-judge:stalled" satisfies JudgeTriggerStopReason;
+                emit("loop_state", { state: "stalled", stepIndex: index, consecutiveTrivialDiffs }, index);
+                pendingSteps.length = 0;
+                strategistHasMore = false;
               } else {
-                const immediateVictoryAfterHeal = await checkImmediateVictory(
-                  index,
-                  horizon,
-                  lastSnapshot,
-                  step,
-                );
+                const immediateVictoryAfterHeal = await checkImmediateVictory(index, horizon, lastSnapshot);
                 if (immediateVictoryAfterHeal.decision === "success") {
                   victoryMet = true;
                   stopReason = immediateVictoryAfterHeal.reason ?? "victory-met";
@@ -2453,6 +2464,10 @@ export async function runAssistedFlow(
                 } else if (immediateVictoryAfterHeal.decision === "fail") {
                   runOk = false;
                   stopReason = immediateVictoryAfterHeal.reason ?? "victory-not-met-after-goal-complete";
+                  if (immediateVictoryAfterHeal.verdict) {
+                    verdict = immediateVictoryAfterHeal.verdict;
+                    verdictReason = `Double-check de persistencia falló tras recargar (paso ${index}, post-heal): el objetivo "${assist.goal}" implicaba persistir estado y el dato no sobrevivió la recarga.`;
+                  }
                   pendingSteps.length = 0;
                   strategistHasMore = false;
                 }
@@ -2617,10 +2632,7 @@ export async function runAssistedFlow(
         hasMore: strategistHasMore,
       });
 
-      const victory = await evaluateVictory(page, lastSnapshot, assist.victory, history);
-      const completed = assist.victory && healerWasInvoked
-        ? objectiveLikelyCompleted(history, lastSnapshot)
-        : false;
+      const victory = await evaluateVictory(page, lastSnapshot, assist.victory);
       emit("victory_check", {
         horizon,
         isFullPlan,
@@ -2633,7 +2645,6 @@ export async function runAssistedFlow(
         ...victory.details,
         configured: victory.configured,
         met: victory.met,
-        objectiveLikelyCompleted: completed,
       });
       if (victory.met) {
         const awaitingSeedExpansion = isSeedInputForFullPlan &&
@@ -2642,26 +2653,30 @@ export async function runAssistedFlow(
         if (isFullPlan && !healerWasInvoked && (hasPendingInputSteps(planProgress) || awaitingSeedExpansion)) {
           // Seguir con el plan de entrada completo antes de aceptar victory.
         } else {
+          const revalidation = await revalidateVictoryIfNeeded(nextStepIndex);
+          if (revalidation && !revalidation.survived) {
+            runOk = false;
+            stopReason = "persistence-check-failed";
+            verdict = "fail-app-bug";
+            verdictReason = `Double-check de persistencia falló tras recargar (horizonte ${horizon}): el objetivo "${assist.goal}" implicaba persistir estado y el dato no sobrevivió la recarga.`;
+            break;
+          }
           victoryMet = true;
           stopReason = "victory-met";
           break;
         }
       }
-      if (assist.victory && completed) {
-        runOk = false;
-        stopReason = "victory-not-met-after-goal-complete";
-        break;
-      }
       const awaitingSeedExpansion = isSeedInputForFullPlan &&
         !healerWasInvoked &&
         !hasGeneratedPlanActivity(planProgress);
       if (isFullPlan && pendingSteps.length === 0 && !strategistHasMore && !awaitingSeedExpansion) {
-        if (assist.victory && !victory.met) {
-          runOk = false;
-          stopReason = "victory-not-met-after-full-plan";
-        } else {
-          stopReason = "steps-completed";
-        }
+        runOk = false;
+        // Plan agotado sin victoria clara resuelta por el motor: zona gris —
+        // el desenlace (¿test mal armado? ¿agente perdido? ¿condición ambigua?)
+        // lo decide el juez, nunca una heurística (spec §4.2b/§4.3).
+        stopReason = (assist.victory
+          ? "needs-judge:victory-candidate"
+          : "needs-judge:no-victory-condition") satisfies JudgeTriggerStopReason;
         break;
       }
       if (!assist.victory && pendingSteps.length === 0 && !strategistHasMore) {
@@ -2670,7 +2685,10 @@ export async function runAssistedFlow(
           // para no asumir que la memoria parcial representa el flujo completo.
           continue;
         }
-        stopReason = "steps-completed";
+        // Sin condición de victoria configurada, el desenlace SIEMPRE lo decide
+        // el juez (spec §4.2b) — nunca se asume éxito por haber consumido pasos.
+        runOk = false;
+        stopReason = "needs-judge:no-victory-condition" satisfies JudgeTriggerStopReason;
         break;
       }
       // Si hay victory configurada y ya no quedan pasos, NO fallar todavía:
@@ -2679,9 +2697,13 @@ export async function runAssistedFlow(
 
     if (runOk && assist.victory && !victoryMet) {
       runOk = false;
-      if ((Date.now() - started) >= maxLoopMs) stopReason = "max-loop-ms";
-      else if (horizon >= maxHorizons) stopReason = "max-horizons";
-      else if (stopReason === "completed") stopReason = "victory-not-met";
+      if ((Date.now() - started) >= maxLoopMs || horizon >= maxHorizons) {
+        // Presupuesto agotado (spec §4.2d): el desenlace lo clasifica el juez
+        // (motivo `budget-exhausted`), no un fail genérico.
+        stopReason = "needs-judge:budget-exhausted" satisfies JudgeTriggerStopReason;
+      } else if (stopReason === "completed" || stopReason === "full-plan-consumed") {
+        stopReason = "needs-judge:victory-candidate" satisfies JudgeTriggerStopReason;
+      }
     }
     emit("loop_state", { state: "stopped", reason: stopReason, horizons: horizon });
   } finally {

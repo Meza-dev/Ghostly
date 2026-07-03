@@ -58,6 +58,20 @@ export type Verdict =
   | "inconclusive-environment"
   | "inconclusive";
 
+/**
+ * Motivos de `stopReason` que representan un punto de disparo hacia el juez
+ * (spec §4.3 — Capa 3, tabla de triggers). El juez todavía no existe (GHOST-29);
+ * estos valores son el contrato de espera: cuando el pipeline llega a uno de
+ * estos casos, NO decide el desenlace por heurística ni delega en el
+ * strategist — se detiene con uno de estos `stopReason` y deja el veredicto
+ * sin resolver (`verdict` ausente) para que la fase 3a los consuma.
+ */
+export type JudgeTriggerStopReason =
+  | "needs-judge:victory-candidate"
+  | "needs-judge:no-victory-condition"
+  | "needs-judge:stalled"
+  | "needs-judge:budget-exhausted";
+
 export type SemanticHint = {
   role?: string;
   name?: string;
@@ -96,6 +110,15 @@ export type VictoryCondition = {
   selectorVisible?: string[];
   urlIncludes?: string[];
   mustAll?: boolean;
+  /**
+   * Double-check de persistencia (spec §4.2b): tras un candidato a victoria en un
+   * objetivo que implica persistir estado (crear/guardar/enviar), el motor recarga
+   * la página y re-verifica la condición antes de declarar éxito. Poner `false`
+   * para flujos con estado efímero/multi-paso (wizards) donde una recarga rompería
+   * el flujo legítimamente — opt-out explícito (spec §9, riesgo mitigado).
+   * Default: `true` cuando el goal parece implicar persistencia.
+   */
+  revalidate?: boolean;
 };
 
 export type MemoryMode = "off" | "runtime" | "adaptive";

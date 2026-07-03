@@ -48,6 +48,7 @@ const assistV2Schema = z.object({
       selectorVisible: z.array(z.string().min(1)).max(10).optional(),
       urlIncludes: z.array(z.string().min(1)).max(10).optional(),
       mustAll: z.boolean().optional(),
+      revalidate: z.boolean().optional(),
     })
     .optional(),
   maxHorizons: z.number().int().min(1).max(50).optional(),
