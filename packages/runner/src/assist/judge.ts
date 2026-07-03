@@ -16,6 +16,7 @@
  */
 import { z } from "zod";
 import type { Step } from "../schema.js";
+import { redactOrTruncateList, redactOrTruncateText, SENSITIVE_TEXT_WORDS } from "./redaction.js";
 import type {
   JudgeDeterministicCheck,
   JudgeDossier,
@@ -372,54 +373,13 @@ export function buildJudgeUserPrompt(dossier: JudgeDossier): string {
 }
 
 /**
- * Palabras que disparan redacción total de un campo de texto libre (spec §6
- * — "closes PR1's W4 / PR3b's note about verdictReason strings reaching
- * persisted events"). Mismo criterio que `apps/api/src/lib/redact-assist.ts`
- * (`SENSITIVE_WORDS`), duplicado acá porque el runner nunca importa de
- * apps/api (regla de arquitectura, ver header del archivo) y esta función
- * necesita aplicarse ANTES de que el evento salga del runner hacia
- * `judgeEvents[]`/`RunEvent`.
+ * `redactOrTruncateText`/`redactOrTruncateList`/`SENSITIVE_TEXT_WORDS` son el
+ * boundary único de redacción de texto libre (Kanon GHOST-35, spec §6
+ * hardening) — viven en `./redaction.ts`, re-exportadas acá para no romper
+ * los imports existentes (`pipeline.ts`, tests) que ya las consumen desde
+ * `judge.ts`.
  */
-const SENSITIVE_TEXT_WORDS = [
-  "password",
-  "passwd",
-  "token",
-  "secret",
-  "api key",
-  "apikey",
-  "authorization",
-];
-
-/** Longitud máxima de un campo de texto libre persistido en un `RunEvent` (evita filas gigantes). */
-const MAX_PERSISTED_TEXT_LENGTH = 1000;
-
-function containsSensitiveWord(value: string): boolean {
-  const normalized = value.toLowerCase();
-  return SENSITIVE_TEXT_WORDS.some((word) => normalized.includes(word));
-}
-
-/** Trunca un texto libre a `MAX_PERSISTED_TEXT_LENGTH`, agregando un indicador de corte. */
-function truncateText(value: string): string {
-  if (value.length <= MAX_PERSISTED_TEXT_LENGTH) return value;
-  return `${value.slice(0, MAX_PERSISTED_TEXT_LENGTH - 1)}…`;
-}
-
-/**
- * Redacta un campo de texto libre si contiene una palabra sensible; si no, lo
- * trunca. Exportada porque es el ÚNICO contrato de redacción de texto libre
- * derivado del juez/goal del runner — reusada también por `pipeline.ts` para
- * cerrar `verdictReason` en la fuente (spec §6, Kanon GHOST-31, fix C3) en vez
- * de duplicar la lógica de redacción en cada sink que consume el resultado.
- */
-export function redactOrTruncateText(value: string): string {
-  if (containsSensitiveWord(value)) return "[REDACTED]";
-  return truncateText(value);
-}
-
-/** Redacta o trunca cada entrada de un array de texto libre (p. ej. `evidence`). */
-function redactOrTruncateList(values: string[]): string[] {
-  return values.map(redactOrTruncateText);
-}
+export { redactOrTruncateText, redactOrTruncateList, SENSITIVE_TEXT_WORDS };
 
 /**
  * Transforma un `JudgeEvent` crudo (spec §4.3, `AssistedRunResult.judgeEvents[]`)

@@ -46,6 +46,11 @@ export {
   type JudgeContinueCapTracker,
   type MemoryGuardRunResult,
 } from "./assist/judge.js";
+export {
+  redactOrTruncateList,
+  redactOrTruncateText,
+  SENSITIVE_TEXT_WORDS,
+} from "./assist/redaction.js";
 export type {
   AssistEvent,
   AssistEventType,

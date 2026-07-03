@@ -11,9 +11,9 @@ import {
   buildJudgeDossier,
   createJudgeContinueCapTracker,
   MAX_CONTINUE_VERDICTS_PER_REASON,
-  redactOrTruncateText,
   validateJudgeVerdict,
 } from "./judge.js";
+import { redactOrTruncateText } from "./redaction.js";
 import type {
   AssistEvent,
   AssistEventType,
@@ -1777,6 +1777,30 @@ export function redactVerdictReason(value: string | undefined): string | undefin
   return redactOrTruncateText(value);
 }
 
+/**
+ * Redacta `verdictEvidence` EN LA FUENTE, antes de que salga del pipeline
+ * hacia `AssistedRunResult` (W15, forward-carry del review de GHOST-31 —
+ * Kanon GHOST-35).
+ *
+ * `verdictEvidence` es un `PageError[]` (evidencia dura del circuit breaker,
+ * spec §4.2a) cuyo campo `.message` viene de texto de consola/DOM/red de la
+ * PÁGINA BAJO PRUEBA (`observer.ts` — `truncateMessage`/`redactUrl` solo
+ * truncan/redactan query params, NO pasan por el boundary de palabras
+ * sensibles). En GHOST-31 este campo NO se persistía (`finalizeRun` no lo
+ * consume), así que no era un leak activo — pero el momento en que
+ * GHOST-32 (dashboard) lo exponga en la UI o en una respuesta de API se
+ * vuelve un sink real. Se redacta acá, en el mismo choke point que
+ * `verdictReason`, para que el campo llegue SIEMPRE seguro sin que la
+ * slice de dashboard tenga que acordarse de hacerlo.
+ */
+export function redactVerdictEvidence(evidence: PageError[] | undefined): PageError[] | undefined {
+  if (!evidence) return undefined;
+  return evidence.map((entry) => ({
+    ...entry,
+    message: redactOrTruncateText(entry.message),
+  }));
+}
+
 export async function runAssistedFlow(
   input: AssistedRunInput,
   deps: AssistedDeps,
@@ -1943,7 +1967,15 @@ export async function runAssistedFlow(
     ): { tripped: boolean; evidence?: PageError[] } => {
       const evidence = detectBlockingAppError(snapshot.pageErrors, stepIndex);
       if (!evidence) return { tripped: false };
-      emit("loop_state", { state: "circuit_breaker_tripped", stepIndex, evidence }, stepIndex);
+      // `evidence[].message` viene de texto crudo de la página (consola/DOM/red,
+      // ver `observer.ts`) — este evento SÍ se persiste vía el log-bridge, así
+      // que pasa por el boundary de redacción antes de salir (GHOST-35, mismo
+      // gap que W15 pero en un sink ya activo, no latente).
+      emit(
+        "loop_state",
+        { state: "circuit_breaker_tripped", stepIndex, evidence: redactVerdictEvidence(evidence) },
+        stepIndex,
+      );
       return { tripped: true, evidence };
     };
 
@@ -2018,9 +2050,13 @@ export async function runAssistedFlow(
         }
         const revalidation = await revalidateVictoryIfNeeded(stepIndex);
         if (revalidation && !revalidation.survived) {
+          // `assist.goal` es texto libre del usuario — este evento se
+          // persiste vía el log-bridge, así que pasa por el boundary antes
+          // de salir (GHOST-35 audit: leak no detectado por C1/C2/C3, que
+          // solo auditaron el payload de `judge_verdict` y `verdictReason`).
           emit(
             "loop_state",
-            { state: "persistence_check_failed", stepIndex, goal: assist.goal },
+            { state: "persistence_check_failed", stepIndex, goal: redactOrTruncateText(assist.goal) },
             stepIndex,
           );
           return {
@@ -2464,7 +2500,15 @@ export async function runAssistedFlow(
             stopReason = "cancelled";
             break;
           }
-          const message = stripAnsi(error instanceof Error ? error.message : String(error));
+          // `error.message` es texto de excepción de Playwright/JS — puede
+          // ecoar contenido de página/selector observado por el motor. Se
+          // redacta EN LA FUENTE (mismo patrón que `verdictReason`, C3) así
+          // los 4 sinks que consumen `message` (este emit, `history.push`,
+          // el reintento de heal, y los `outcomes.push` más abajo) heredan
+          // el valor ya seguro sin redactar cada uno por separado (GHOST-35).
+          const message = redactOrTruncateText(
+            stripAnsi(error instanceof Error ? error.message : String(error)),
+          );
           emit("step_failure", { step: redactStepForEvent(step), error: message }, index);
 
           let recovered = false;
@@ -2499,10 +2543,15 @@ export async function runAssistedFlow(
                 recovery.steps,
                 input.defaultTimeoutMs,
               );
+              // `recovery.rationale` es texto libre AUTORADO POR EL HEALER (LLM) —
+              // mismo riesgo que el `hint` del juez (puede citar contenido de
+              // página/DOM observado). Pasa por el boundary de redacción antes
+              // de salir en `heal_failure`/`heal_action` (GHOST-35).
+              const safeRationale = recovery.rationale ? redactOrTruncateText(recovery.rationale) : null;
               if (sanitized.length === 0) {
                 emit(
                   "heal_failure",
-                  { reason: "no-valid-steps", rationale: recovery.rationale ?? null },
+                  { reason: "no-valid-steps", rationale: safeRationale },
                   index,
                 );
                 break;
@@ -2512,7 +2561,7 @@ export async function runAssistedFlow(
                   "heal_action",
                   {
                     step: redactStepForEvent(healStep),
-                    rationale: recovery.rationale ?? null,
+                    rationale: safeRationale,
                   },
                   index,
                 );
@@ -2723,8 +2772,9 @@ export async function runAssistedFlow(
               }
               if (victoryMet || !runOk) break;
             } catch (healErr) {
-              const healMessage = stripAnsi(
-                healErr instanceof Error ? healErr.message : String(healErr),
+              // Redacción en la fuente, mismo criterio que `message` arriba (GHOST-35).
+              const healMessage = redactOrTruncateText(
+                stripAnsi(healErr instanceof Error ? healErr.message : String(healErr)),
               );
               emit("heal_failure", { error: healMessage }, index);
             }
@@ -2827,8 +2877,9 @@ export async function runAssistedFlow(
                 );
               }
             } catch (replanErr) {
-              const replanMessage = stripAnsi(
-                replanErr instanceof Error ? replanErr.message : String(replanErr),
+              // Redacción en la fuente, mismo criterio que `message` arriba (GHOST-35).
+              const replanMessage = redactOrTruncateText(
+                stripAnsi(replanErr instanceof Error ? replanErr.message : String(replanErr)),
               );
               emit("heal_failure", { replanError: replanMessage }, index);
             }
@@ -3026,6 +3077,11 @@ export async function runAssistedFlow(
   // (evento `run_end`, `AssistedRunResult` -> DB `Run.verdictReason` ->
   // `RunRecord` API) recibe el valor ya redactado — nunca el crudo.
   const safeVerdictReason = redactVerdictReason(verdictReason);
+  // Choke point único (W15, Kanon GHOST-35): `verdictEvidence` sale del
+  // pipeline ya con `.message` redactado, para que cualquier consumidor
+  // futuro (dashboard GHOST-32, API response) reciba el valor seguro sin
+  // tener que acordarse de redactarlo en el sink de destino.
+  const safeVerdictEvidence = redactVerdictEvidence(verdictEvidence);
 
   emit("run_end", {
     ok: runOk,
@@ -3052,7 +3108,7 @@ export async function runAssistedFlow(
     stopReason,
     ...(verdict ? { verdict } : {}),
     ...(safeVerdictReason ? { verdictReason: safeVerdictReason } : {}),
-    ...(verdictEvidence ? { verdictEvidence } : {}),
+    ...(safeVerdictEvidence ? { verdictEvidence: safeVerdictEvidence } : {}),
     ...(judgeEvents.length > 0 ? { judgeEvents } : {}),
   };
 }
