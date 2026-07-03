@@ -95,6 +95,7 @@ export type AssistEventType =
   | "heal_action"
   | "heal_success"
   | "heal_failure"
+  | "judge_verdict"
   | "run_end";
 
 export type AssistEvent = {

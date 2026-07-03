@@ -40,6 +40,7 @@ export {
   judgeVerdictSchema,
   MAX_CONTINUE_VERDICTS_PER_REASON,
   qualifiesForMemoryPersistence,
+  summarizeJudgeEventForPersistence,
   validateJudgeVerdict,
   type BuildJudgeDossierInput,
   type JudgeContinueCapTracker,

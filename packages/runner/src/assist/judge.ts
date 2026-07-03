@@ -19,6 +19,7 @@ import type { Step } from "../schema.js";
 import type {
   JudgeDeterministicCheck,
   JudgeDossier,
+  JudgeEvent,
   JudgeFn,
   JudgeRecentAction,
   JudgeTrigger,
@@ -368,4 +369,70 @@ export function buildJudgeUserPrompt(dossier: JudgeDossier): string {
     "Snapshot actual (mapa semántico completo):",
     dossier.currentSnapshot,
   ].join("\n");
+}
+
+/**
+ * Palabras que disparan redacción total de un campo de texto libre (spec §6
+ * — "closes PR1's W4 / PR3b's note about verdictReason strings reaching
+ * persisted events"). Mismo criterio que `apps/api/src/lib/redact-assist.ts`
+ * (`SENSITIVE_WORDS`), duplicado acá porque el runner nunca importa de
+ * apps/api (regla de arquitectura, ver header del archivo) y esta función
+ * necesita aplicarse ANTES de que el evento salga del runner hacia
+ * `judgeEvents[]`/`RunEvent`.
+ */
+const SENSITIVE_TEXT_WORDS = [
+  "password",
+  "passwd",
+  "token",
+  "secret",
+  "api key",
+  "apikey",
+  "authorization",
+];
+
+/** Longitud máxima de un campo de texto libre persistido en un `RunEvent` (evita filas gigantes). */
+const MAX_PERSISTED_TEXT_LENGTH = 1000;
+
+function containsSensitiveWord(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return SENSITIVE_TEXT_WORDS.some((word) => normalized.includes(word));
+}
+
+/** Trunca un texto libre a `MAX_PERSISTED_TEXT_LENGTH`, agregando un indicador de corte. */
+function truncateText(value: string): string {
+  if (value.length <= MAX_PERSISTED_TEXT_LENGTH) return value;
+  return `${value.slice(0, MAX_PERSISTED_TEXT_LENGTH - 1)}…`;
+}
+
+/** Redacta un campo de texto libre si contiene una palabra sensible; si no, lo trunca. */
+function redactOrTruncateText(value: string): string {
+  if (containsSensitiveWord(value)) return "[REDACTED]";
+  return truncateText(value);
+}
+
+/** Redacta o trunca cada entrada de un array de texto libre (p. ej. `evidence`). */
+function redactOrTruncateList(values: string[]): string[] {
+  return values.map(redactOrTruncateText);
+}
+
+/**
+ * Transforma un `JudgeEvent` crudo (spec §4.3, `AssistedRunResult.judgeEvents[]`)
+ * en un payload compacto y saneado, apto para persistirse como `RunEvent`
+ * (`type: "judge_verdict"`) y publicarse por el bus SSE (spec §4.3
+ * "Observabilidad" + spec §6). Función PURA: no hace I/O, no conoce Prisma
+ * ni el bus — solo shaping + redacción de texto libre (`reasoning`/`evidence`,
+ * que pueden citar texto de página/errores potencialmente sensible) antes de
+ * que ese texto llegue a cualquier capa de persistencia.
+ */
+export function summarizeJudgeEventForPersistence(event: JudgeEvent): Record<string, unknown> {
+  return {
+    reason: event.reason,
+    at: event.at,
+    dossierSummary: event.dossierSummary,
+    verdict: event.verdict.verdict,
+    confidence: event.verdict.confidence,
+    reasoning: redactOrTruncateText(event.verdict.reasoning),
+    evidence: redactOrTruncateList(event.verdict.evidence),
+    ...(event.verdict.hint ? { hint: event.verdict.hint } : {}),
+  };
 }
