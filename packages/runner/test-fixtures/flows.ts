@@ -107,11 +107,21 @@ export const BENCHMARK_FLOWS: BenchmarkFlow[] = [
     assist: {
       ...DEFAULT_ASSIST_BASE,
       goal: "Crear una nota sin completar el título y guardarla igual",
-      victory: { selectorVisible: ['[data-testid="validation-error"]'], mustAll: true },
+      // revalidate: false — la condición de victoria es un mensaje de validación
+      // EFÍMERO (solo visible en la respuesta inmediata del POST rechazado), no
+      // un dato persistido. El double-check de persistencia (spec §4.2b) es para
+      // objetivos que implican guardar estado; este goal menciona "crear"/"guardar"
+      // por texto, pero la condición de victoria en sí no reclama persistencia —
+      // opt-out explícito, tal como prevé la spec §9 para este caso exacto.
+      victory: {
+        selectorVisible: ['[data-testid="validation-error"]'],
+        mustAll: true,
+        revalidate: false,
+      },
     },
     expectedVerdict: "success",
     rationale:
-      "El objetivo del flujo es verificar que la validación rechaza el título vacío; el error visible ES la victoria (comportamiento esperado de la app), verificado por selector.",
+      "El objetivo del flujo es verificar que la validación rechaza el título vacío; el error visible ES la victoria (comportamiento esperado de la app), verificado por selector. La condición es efímera por diseño (no persiste tras recargar) — revalidate:false documenta que este flujo no reclama persistencia.",
   },
   {
     id: "non-persisting-save-no-false-success",
