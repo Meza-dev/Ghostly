@@ -1,4 +1,10 @@
-import { qualifiesForMemoryPersistence, runAssistedFlow, runFlow, safeParseRunInput } from "@ghostly-io/runner";
+import {
+  qualifiesForMemoryPersistence,
+  runAssistedFlow,
+  runFlow,
+  safeParseRunInput,
+  summarizeJudgeEventForPersistence,
+} from "@ghostly-io/runner";
 import type {
   AssistedRunResult,
   AssistEvent,
@@ -515,6 +521,18 @@ runRouter.post("/run", async (c) => {
         memoryCandidateSteps = assistedResult.learnedFlow && assistedResult.learnedFlow.length > 0
           ? assistedResult.learnedFlow
           : parseMemoryStepsFromEvents(assistedResult.events);
+
+        // Persiste cada invocación del juez como su propio RunEvent (spec §4.3
+        // "Observabilidad" + spec §6, GHOST-31): el dashboard los mostrará en
+        // la línea de tiempo del run (GHOST-32). `summarizeJudgeEventForPersistence`
+        // ya sanea (redacta secretos, trunca texto libre) antes de que el
+        // payload salga del runner — ver judge.ts.
+        for (const judgeEvent of assistedResult.judgeEvents ?? []) {
+          publishAssistEvent({
+            type: "judge_verdict",
+            payload: summarizeJudgeEventForPersistence(judgeEvent),
+          });
+        }
       } else {
         result = await runFlow(parsed.data, {
           signal: controller.signal,
@@ -554,12 +572,20 @@ runRouter.post("/run", async (c) => {
       }
 
       const status: "pass" | "fail" = result.ok ? "pass" : "fail";
+      const assistedResultForVerdict = assistV2 ? (result as AssistedRunResult) : undefined;
       await finalizeRun({
         id,
         status,
         durationMs: result.durationMs,
         steps: result.steps,
         ...(result.videoPath !== undefined ? { videoPath: result.videoPath } : {}),
+        ...(assistedResultForVerdict?.verdict ? { verdict: assistedResultForVerdict.verdict } : {}),
+        ...(assistedResultForVerdict?.verdictReason
+          ? { verdictReason: assistedResultForVerdict.verdictReason }
+          : {}),
+        ...(assistedResultForVerdict?.stopReason
+          ? { stopReason: assistedResultForVerdict.stopReason }
+          : {}),
       });
 
       if (assistV2) {

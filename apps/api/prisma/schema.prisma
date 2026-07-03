@@ -76,7 +76,16 @@ model Project {
 model Run {
   id         String   @id @default(uuid())
   userId     String
-  status     String   // "pass" | "fail" | "running"
+  // status se mantiene por compatibilidad: "pass" | "fail" | "running"
+  // (pass <=> verdict=success; fail <=> cualquier fail-*; inconclusive-* mapea a fail para clientes viejos)
+  status     String
+  // Taxonomia de veredictos (spec Sec.5) - fuente de verdad del desenlace.
+  // Runs historicos quedan con verdict = null ("sin clasificar").
+  verdict       String?
+  // Reasoning del juez o descripcion del check determinista que resolvio el veredicto.
+  verdictReason String?
+  // stopReason interno del pipeline (packages/runner), hoy no persistido.
+  stopReason    String?
   startedAt  DateTime @default(now())
   durationMs Int      @default(0)
   baseUrl    String

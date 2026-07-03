@@ -178,6 +178,13 @@ export async function appendRunEvent(
 /**
  * Cierra un run pre-creado con su resultado final: status, duración, steps y videoPath.
  * Los eventos ya fueron persistidos incrementalmente.
+ *
+ * `verdict`/`verdictReason`/`stopReason` (spec §6, Kanon GHOST-31) se persisten
+ * ADEMÁS de `status` (no en su reemplazo) por compatibilidad: `status` sigue
+ * siendo "pass" | "fail" | "running" para clientes viejos, mientras que
+ * `verdict` es la fuente de verdad de la taxonomía de 6 estados (spec §5).
+ * Runs sin veredicto explícito (pipeline v1, o v2 sin judge/circuit-breaker
+ * involucrado) quedan con `verdict = null` — "sin clasificar" en el dashboard.
  */
 export async function finalizeRun(params: {
   id: string;
@@ -185,6 +192,9 @@ export async function finalizeRun(params: {
   durationMs: number;
   steps: StepOutcome[];
   videoPath?: string;
+  verdict?: string;
+  verdictReason?: string;
+  stopReason?: string;
 }): Promise<void> {
   await prisma.$transaction([
     prisma.step.deleteMany({ where: { runId: params.id } }),
@@ -205,6 +215,9 @@ export async function finalizeRun(params: {
         status: params.status,
         durationMs: params.durationMs,
         videoPath: params.videoPath ?? null,
+        verdict: params.verdict ?? null,
+        verdictReason: params.verdictReason ?? null,
+        stopReason: params.stopReason ?? null,
       },
     }),
   ]);
@@ -310,6 +323,9 @@ function toRecord(run: DbRun): RunRecordWithEvents {
   return {
     id: run.id,
     status: run.status as RunRecord["status"],
+    ...(run.verdict ? { verdict: run.verdict } : {}),
+    ...(run.verdictReason ? { verdictReason: run.verdictReason } : {}),
+    ...(run.stopReason ? { stopReason: run.stopReason } : {}),
     startedAt: run.startedAt.toISOString(),
     durationMs: run.durationMs,
     baseUrl: run.baseUrl,
