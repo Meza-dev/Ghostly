@@ -1,13 +1,18 @@
 /**
- * El juez — contrato, dossier builder y cap de intervenciones (Capa 3, spec §4.3).
+ * El juez — contrato, dossier builder, serialización de prompt y cap de
+ * intervenciones (Capa 3, spec §4.3).
  *
- * Este módulo NUNCA importa un LLM: el runner solo define el CONTRATO (tipos +
- * validación Zod), construye el dossier a partir del estado del pipeline, y
- * ofrece el tracker puro del límite de `continue` por motivo. La implementación
- * real del juez (prompt de sistema, provider LLM, screenshot gating) vive del
- * lado API (`apps/api/src/services/assist-orchestrator.ts`, `createJudge` —
- * GHOST-30) e inyecta su función vía `AssistedDeps.judge`, exactamente como
- * strategist/healer.
+ * Este módulo NUNCA importa un LLM ni hace I/O: el runner define el CONTRATO
+ * (tipos + validación Zod), construye el dossier a partir del estado del
+ * pipeline, serializa ese dossier a texto (`JUDGE_SYSTEM_PROMPT` +
+ * `buildJudgeUserPrompt`, funciones/constantes PURAS), y ofrece el tracker
+ * puro del límite de `continue` por motivo. Mantener la serialización acá
+ * (en vez de en apps/api) es deliberado: apps/api no tiene test runner, así
+ * que toda la lógica de prompt queda cubierta por vitest con LLM mocks. La
+ * llamada REAL al LLM del usuario (`createJudge`, provider HTTP/CLI,
+ * screenshot gating por capacidad del provider) vive del lado API
+ * (`apps/api/src/services/assist-orchestrator.ts`, GHOST-30) e inyecta su
+ * función vía `AssistedDeps.judge`, exactamente como strategist/healer.
  */
 import { z } from "zod";
 import type { Step } from "../schema.js";
@@ -182,12 +187,22 @@ export type BuildJudgeDossierInput = {
   previousSnapshot?: ObserverSnapshot;
   pageErrors: PageError[];
   deterministicChecks: JudgeDeterministicCheck[];
+  /**
+   * Buffer crudo del screenshot (PNG), si el caller lo capturó (spec §4.3 —
+   * evidencia visual "híbrido según provider"). El dossier SIEMPRE puede
+   * traerlo — la decisión de ENVIARLO al LLM (según si el provider soporta
+   * imágenes) es 100% responsabilidad de la capa API (`createJudge`,
+   * GHOST-30); esta función solo lo transporta sin interpretarlo.
+   */
+  screenshot?: Buffer;
 };
 
 /**
  * Ensambla el dossier del juez (spec §4.3) a partir del estado curado del
- * pipeline. Función pura — no toca Playwright ni hace I/O. `screenshot` queda
- * fuera intencionalmente (provider-gating es responsabilidad de GHOST-30).
+ * pipeline. Función pura respecto de Playwright/LLM — no abre páginas ni
+ * llama a un modelo; el screenshot (si viene) ya fue capturado por el caller
+ * (`invokeJudge` en `pipeline.ts`) y acá solo se transporta sin decidir nada
+ * sobre si debe enviarse a un LLM (eso es API-side, GHOST-30).
  */
 export function buildJudgeDossier(input: BuildJudgeDossierInput): JudgeDossier {
   const recentActions = input.history.slice(-RECENT_ACTIONS_LIMIT).map(toRecentAction);
@@ -200,5 +215,157 @@ export function buildJudgeDossier(input: BuildJudgeDossierInput): JudgeDossier {
     snapshotDiff: diffSnapshots(input.previousSnapshot, input.currentSnapshot),
     pageErrors: input.pageErrors,
     deterministicChecks: input.deterministicChecks,
+    ...(input.screenshot ? { screenshot: input.screenshot } : {}),
   };
+}
+
+/**
+ * Prompt de sistema del juez (spec §4.3 — "Reglas de comportamiento del
+ * juez", las 5 reglas van textualmente al prompt de sistema). Vive en el
+ * runner (no en apps/api) porque es un artefacto PURO — texto estático, sin
+ * LLM, sin I/O — y así queda cubierto por el mismo test runner (vitest) que
+ * el resto del contrato del juez. `createJudge` (apps/api, GHOST-30) solo lo
+ * importa y lo pasa como mensaje `system` al LLM del usuario.
+ *
+ * Estilo alineado con `STRATEGIST_SYSTEM`/`HEALER_SYSTEM` en
+ * `assist-orchestrator.ts`: español, reglas numeradas, taxonomía explícita.
+ */
+export const JUDGE_SYSTEM_PROMPT = [
+  "Eres el Juez de un runner E2E asistido (Ghostly v2, Capa 3 — spec §4.3).",
+  "Recibes un EXPEDIENTE (dossier) curado sobre un run que llegó a una zona gris que las reglas deterministas del motor no pudieron resolver por sí solas: objetivo, condición de victoria (si existe), motivo de tu invocación, acciones recientes, snapshot actual, diff contra el snapshot anterior, errores de página capturados y el resultado de los checks deterministas ya evaluados.",
+  "",
+  "REGLA 1 — Clasificás, no actuás: JAMÁS proponés ni ejecutás pasos. A lo sumo devolvés una 'hint' textual (SOLO cuando verdict='continue') que el strategist recibirá como contexto adicional, nunca como instrucción ejecutable directa.",
+  "",
+  "REGLA 2 — Sesgo ANTI-FALSO-ÉXITO (el más importante): solo declarás verdict='success' si podés CITAR evidencia concreta del dossier que lo PRUEBE (un check determinista que pasó, un texto que persiste, una URL correcta). En la duda, SIEMPRE 'inconclusive' — nunca 'success'. Un falso fallo molesta; un falso éxito destruye la confianza en el producto. Es preferible reportar de más 'inconclusive' que arriesgar un solo falso éxito.",
+  "",
+  "REGLA 3 — No contradecís la evidencia dura: si `deterministicChecks` trae un check de victoria fallido (`passed: false`), verdict='success' está PROHIBIDO — como mucho podés explicar por qué falló usando otro veredicto (fail-app-bug, fail-test-broken, etc). La jerarquía de autoridad es evidencia determinista > juez > strategist: nunca podés declarar éxito CONTRA un check determinista fallido.",
+  "",
+  "REGLA 4 — Distinguís responsables (tu trabajo central). Usá EXACTAMENTE estos 7 valores de `verdict`:",
+  "  - 'continue': el test sigue — obstáculo recuperable (modal, cookie banner, paso intermedio faltante). Requiere `hint`.",
+  "  - 'success': objetivo cumplido y RESPALDADO por evidencia citable del dossier.",
+  "  - 'fail-app-bug': la app bajo prueba está rota (500, crash, dato que no persiste). El test HIZO su trabajo: encontró un bug real — no es vergüenza, es el valor del producto.",
+  "  - 'fail-test-broken': el plan, los datos o la condición de victoria están mal definidos. No dice nada sobre la app.",
+  "  - 'fail-agent-lost': Ghostly no encontró el camino aunque existía (selector mal resuelto sin evidencia de error de la app). Métrica de calidad interna del motor.",
+  "  - 'inconclusive-environment': timeout, app caída, red rota. No es culpa de la app ni del agente — es el entorno.",
+  "  - 'inconclusive': la evidencia disponible no alcanza para afirmar ningún otro veredicto con confianza. Preferible a mentir.",
+  "",
+  "REGLA 5 — 'continue' es legítimo solo ante un obstáculo RECUPERABLE con una `hint` concreta y accionable para el strategist (ej. 'hay un modal de confirmación tapando el botón; cerralo primero'). Límite estricto: máximo 2 intervenciones 'continue' del motor por el MISMO motivo dentro de un run — a la 3ra invocación por el mismo motivo, el motor fuerza un veredicto terminal sin importar tu respuesta. No insistas con 'continue' si ya diste una hint similar antes sin resultado.",
+  "",
+  "FORMATO DE RESPUESTA — SOLO un objeto JSON, sin markdown ni texto extra, con forma EXACTA:",
+  '{ "verdict": string, "confidence": "high" | "medium" | "low", "reasoning": string, "evidence": string[], "hint"?: string }',
+  "- `reasoning`: explicación citando evidencia CONCRETA del dossier (qué check, qué error, qué diff) — nunca una afirmación genérica sin respaldo.",
+  "- `evidence`: array de referencias puntuales al dossier (ej. 'deterministicChecks: victory.met=false', 'pageErrors[0]: 500 en POST /save').",
+  "- `hint`: SOLO presente cuando `verdict` es 'continue'.",
+].join("\n");
+
+/** Describe una acción reciente del dossier para el prompt de usuario del juez. */
+function describeRecentActionForPrompt(action: JudgeRecentAction, index: number): string {
+  const suffix = action.error ? ` — error: ${action.error}` : "";
+  return `  ${index + 1}. [${action.outcome}] ${action.step}${suffix}`;
+}
+
+/** Describe un error de página del dossier para el prompt de usuario del juez. */
+function describePageErrorForPrompt(error: PageError): string {
+  const detailParts: string[] = [];
+  if (error.detail?.url) detailParts.push(`url=${error.detail.url}`);
+  if (error.detail?.status !== undefined) detailParts.push(`status=${error.detail.status}`);
+  if (error.detail?.selector) detailParts.push(`selector=${error.detail.selector}`);
+  const detail = detailParts.length > 0 ? ` (${detailParts.join(", ")})` : "";
+  return `  - [${error.severity}/${error.source}] ${error.message}${detail}`;
+}
+
+/** Describe un check determinista del dossier para el prompt de usuario del juez. */
+function describeDeterministicCheckForPrompt(check: JudgeDeterministicCheck): string {
+  return `  - ${check.check}: ${check.passed ? "true (pasó)" : "false (falló)"}`;
+}
+
+function describeVictoryConditionForPrompt(victory: VictoryCondition | undefined): string {
+  if (!victory) return "Condición de victoria: (sin condición configurada)";
+  const lines = [
+    "Condición de victoria configurada:",
+    `  - textIncludes: ${JSON.stringify(victory.textIncludes ?? [])}`,
+    `  - selectorVisible: ${JSON.stringify(victory.selectorVisible ?? [])}`,
+    `  - urlIncludes: ${JSON.stringify(victory.urlIncludes ?? [])}`,
+    `  - mustAll: ${String(victory.mustAll ?? false)}`,
+  ];
+  return lines.join("\n");
+}
+
+/**
+ * Serializa el dossier del juez (spec §4.3) a un prompt de usuario en texto
+ * plano — el mismo dossier que recibe `deps.judge(dossier)` en el pipeline,
+ * ahora convertido a texto legible por el LLM. Función PURA (sin I/O, sin
+ * LLM): probada con mocks en `judge-prompt.test.ts`. Este texto es SIEMPRE
+ * autosuficiente por contrato (spec §4.3 "híbrido según provider") — nunca
+ * menciona ni depende de un screenshot; el adjunto de imagen (si el provider
+ * lo soporta) se agrega aparte, a nivel de mensaje LLM, en `createJudge`
+ * (apps/api, GHOST-30).
+ */
+/**
+ * Forma mínima de `AssistedRunResult` (pipeline.ts) que necesita el guardia
+ * de memoria — estructural a propósito para no crear una dependencia
+ * circular de tipos con `pipeline.ts` (que ya importa de `judge.ts`).
+ */
+export type MemoryGuardRunResult = {
+  ok: boolean;
+  verdict?: Exclude<JudgeVerdict["verdict"], "continue">;
+};
+
+/**
+ * Guardia de memoria (spec §6 — doble confirmación): `AssistMemory` SOLO
+ * puede persistirse cuando el desenlace es una victoria puramente
+ * determinista, NUNCA cuando el "success" viene del juez.
+ *
+ * Por construcción del pipeline (`pipeline.ts`), una victoria determinista
+ * limpia (`checkImmediateVictory`/`evaluateVictory`, sin pasar por el juez)
+ * jamás setea `result.verdict` — el campo queda `undefined`, solo
+ * `result.ok === true` la marca. El juez SÍ setea `verdict` explícitamente
+ * vía `applyTerminalJudgeVerdict`, incluso cuando devuelve `"success"` — pero
+ * el juez solo se invoca cuando la Capa 2 (checks deterministas) ya agotó lo
+ * que podía resolver gratis (spec §3, jerarquía de autoridad). Un
+ * `verdict === "success"` del juez es la ÚNICA confirmación (de un LLM), no
+ * una SEGUNDA confirmación sobre una base determinista — por eso NO
+ * habilita memoria. Esto también evita el caso peor: un LLM con un sesgo
+ * distinto al anti-falso-éxito del prompt (o un provider con salida ruidosa)
+ * envenenando la memoria de replay con pasos de un run que nunca pasó un
+ * check determinista real.
+ */
+export function qualifiesForMemoryPersistence(result: MemoryGuardRunResult): boolean {
+  if (!result.ok) return false;
+  if (result.verdict !== undefined) return false;
+  return true;
+}
+
+export function buildJudgeUserPrompt(dossier: JudgeDossier): string {
+  const recentActionsBlock = dossier.recentActions.length > 0
+    ? dossier.recentActions.map(describeRecentActionForPrompt).join("\n")
+    : "  (sin acciones recientes registradas)";
+  const pageErrorsBlock = dossier.pageErrors.length > 0
+    ? dossier.pageErrors.map(describePageErrorForPrompt).join("\n")
+    : "  (sin errores de página — ninguno capturado por la Capa 1)";
+  const deterministicChecksBlock = dossier.deterministicChecks.length > 0
+    ? dossier.deterministicChecks.map(describeDeterministicCheckForPrompt).join("\n")
+    : "  (sin checks deterministas evaluados para este trigger)";
+
+  return [
+    `Objetivo: ${dossier.goal}`,
+    `Motivo de la invocación (reason): ${dossier.reason}`,
+    "",
+    describeVictoryConditionForPrompt(dossier.victoryCondition),
+    "",
+    "Acciones recientes (orden cronológico, más reciente al final):",
+    recentActionsBlock,
+    "",
+    "Errores de página capturados (Capa 1):",
+    pageErrorsBlock,
+    "",
+    "Checks deterministas evaluados (Capa 2):",
+    deterministicChecksBlock,
+    "",
+    "Diff contra el snapshot anterior (clave para detectar 'no pasó nada'):",
+    dossier.snapshotDiff,
+    "",
+    "Snapshot actual (mapa semántico completo):",
+    dossier.currentSnapshot,
+  ].join("\n");
 }

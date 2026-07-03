@@ -34,12 +34,16 @@ export {
 } from "./assist/pipeline.js";
 export {
   buildJudgeDossier,
+  buildJudgeUserPrompt,
   createJudgeContinueCapTracker,
+  JUDGE_SYSTEM_PROMPT,
   judgeVerdictSchema,
   MAX_CONTINUE_VERDICTS_PER_REASON,
+  qualifiesForMemoryPersistence,
   validateJudgeVerdict,
   type BuildJudgeDossierInput,
   type JudgeContinueCapTracker,
+  type MemoryGuardRunResult,
 } from "./assist/judge.js";
 export type {
   AssistEvent,

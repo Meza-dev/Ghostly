@@ -1760,7 +1760,7 @@ export async function runAssistedFlow(
   const started = Date.now();
   const events: AssistEvent[] = [];
   const outcomes: StepOutcome[] = [];
-  const history: Array<{ step: Step; ok: boolean; error?: string }> = [];
+  const history: Array<{ step: Step; ok: boolean; error?: string; healed?: boolean }> = [];
   const runUniqueTag = Date.now().toString(36).slice(-6);
 
   const assist = input.assist;
@@ -2021,6 +2021,19 @@ export async function runAssistedFlow(
       stepIndex: number,
       deterministicChecks: JudgeDeterministicCheck[] = [],
     ): Promise<JudgeVerdict> => {
+      // El runner SIEMPRE captura el buffer del screenshot (best-effort, en
+      // memoria — no toca `artifactsDir` ni requiere `shouldCaptureScreenshots`,
+      // que gatean los artefactos por paso, no la evidencia del juez). Enviarlo
+      // o no al LLM es 100% decisión de la capa API según capacidad del
+      // provider (spec §4.3 "híbrido"); si falla la captura (página cerrada,
+      // navegación en curso), se degrada a "sin screenshot" en vez de romper
+      // la invocación del juez.
+      let screenshot: Buffer | undefined;
+      try {
+        screenshot = await page!.screenshot({ fullPage: true });
+      } catch {
+        screenshot = undefined;
+      }
       const dossier = buildJudgeDossier({
         goal: assist.goal,
         victoryCondition: assist.victory,
@@ -2030,6 +2043,7 @@ export async function runAssistedFlow(
         previousSnapshot: previousJudgeSnapshot,
         pageErrors: lastSnapshot!.pageErrors,
         deterministicChecks,
+        ...(screenshot ? { screenshot } : {}),
       });
       previousJudgeSnapshot = lastSnapshot;
       emit("loop_state", { state: "judge_invoked", reason, stepIndex }, stepIndex);
@@ -2069,9 +2083,18 @@ export async function runAssistedFlow(
       return outcome;
     };
 
-    /** Traduce un veredicto terminal del juez a los campos de resultado del run. */
+    /**
+     * Traduce un veredicto terminal del juez a los campos de resultado del
+     * run. `verdict: "success"` es legítimo (spec §4.3, regla 2 — el juez
+     * puede declarar éxito SI cita evidencia que lo prueba) y debe reflejarse
+     * como `runOk = true`; cualquier otro veredicto terminal es un fallo.
+     * Bug corregido en Fase 3b (GHOST-30): antes SIEMPRE forzaba `runOk =
+     * false`, contradiciendo `verdict === "success"` y rompiendo el guardia
+     * de memoria del lado API (spec §6, `run.ts`), que depende de que
+     * `ok`/`verdict` sean consistentes entre sí.
+     */
     const applyTerminalJudgeVerdict = (outcome: JudgeVerdict): void => {
-      runOk = false;
+      runOk = outcome.verdict === "success";
       verdict = outcome.verdict as Verdict;
       verdictReason = outcome.reasoning;
       stopReason = "judge-terminal-verdict";
@@ -2481,7 +2504,11 @@ export async function runAssistedFlow(
                 }
                 planProgress.push({ step: healStep, status: "pending", source: "healer", horizon });
                 await applyStep(page, input.baseUrl, healStep, input.defaultTimeoutMs);
-                history.push({ step: healStep, ok: true });
+                // W10: paso propuesto por el healer, ejecutado directamente como
+                // parte de la recuperación — igual de "healed" que el reintento
+                // del paso original más abajo (ambos solo ocurren dentro de un
+                // ciclo de heal activo).
+                history.push({ step: healStep, ok: true, healed: true });
                 const healPendingIdx = findFirstPendingPlanIndex(planProgress, healStep);
                 if (healPendingIdx >= 0) {
                   planProgress[healPendingIdx] = {
@@ -2523,7 +2550,12 @@ export async function runAssistedFlow(
                 shouldDropRedundantCalificacionesFlowNav(step, postHealSnapshot);
               if (!skipOriginalStep) {
                 await applyStep(page, input.baseUrl, step, input.defaultTimeoutMs);
-                history.push({ step, ok: true });
+                // W10: el paso original se reintenta y tiene éxito TRAS un heal —
+                // marcarlo `healed: true` para que el dossier del juez (spec §4.3,
+                // `buildJudgeDossier`/`toRecentAction`) pueda distinguirlo de un
+                // paso que nunca falló (`ok`) o de uno curado directamente por el
+                // healer (línea de arriba, `history.push({ step: healStep, ok: true })`).
+                history.push({ step, ok: true, healed: true });
                 // Si el healer desbloqueó el paso y luego se reintenta el original,
                 // preservar el orden real en finalPlan: healer (index) -> original (index + 0.5).
                 const retriedStepIndex = index + 0.5;

@@ -252,6 +252,22 @@ describe("buildJudgeDossier (spec 4.3 — el dossier, input del juez)", () => {
     expect(dossier.recentActions[1]!.error).toBe("selector not found");
   });
 
+  it("maps a history entry with healed=true to outcome='healed' (W10 — reachable via pipeline history)", () => {
+    const dossier = buildJudgeDossier({
+      goal: "goal",
+      reason: "victory-candidate",
+      history: [
+        { step: step("click"), ok: true, healed: true },
+        { step: step("click"), ok: true },
+      ],
+      currentSnapshot: snapshot(),
+      pageErrors: [],
+      deterministicChecks: [],
+    });
+    expect(dossier.recentActions[0]!.outcome).toBe("healed");
+    expect(dossier.recentActions[1]!.outcome).toBe("ok");
+  });
+
   it("computes a non-empty snapshotDiff string when the previous and current snapshots differ", () => {
     const dossier = buildJudgeDossier({
       goal: "goal",
@@ -293,7 +309,7 @@ describe("buildJudgeDossier (spec 4.3 — el dossier, input del juez)", () => {
     expect(dossier.pageErrors).toEqual(pageErrors);
   });
 
-  it("does not include a screenshot field (runner never attaches images — provider-gating is API-side/GHOST-30)", () => {
+  it("omits screenshot when the caller does not provide one (opt-in, not a default)", () => {
     const dossier: JudgeDossier = buildJudgeDossier({
       goal: "goal",
       reason: "budget-exhausted",
@@ -303,5 +319,19 @@ describe("buildJudgeDossier (spec 4.3 — el dossier, input del juez)", () => {
       deterministicChecks: [],
     });
     expect(dossier.screenshot).toBeUndefined();
+  });
+
+  it("passes the screenshot buffer through untouched when the caller provides one (W — GHOST-30 hybrid screenshot)", () => {
+    const screenshot = Buffer.from("fake-png-bytes");
+    const dossier: JudgeDossier = buildJudgeDossier({
+      goal: "goal",
+      reason: "budget-exhausted",
+      history: [],
+      currentSnapshot: snapshot(),
+      pageErrors: [],
+      deterministicChecks: [],
+      screenshot,
+    });
+    expect(dossier.screenshot).toBe(screenshot);
   });
 });
