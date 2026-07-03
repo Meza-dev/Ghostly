@@ -11,6 +11,7 @@ import {
   buildJudgeDossier,
   createJudgeContinueCapTracker,
   MAX_CONTINUE_VERDICTS_PER_REASON,
+  redactOrTruncateText,
   validateJudgeVerdict,
 } from "./judge.js";
 import type {
@@ -1752,6 +1753,30 @@ export function detectStall(consecutiveTrivialDiffs: number, threshold = 3): boo
   return consecutiveTrivialDiffs >= threshold;
 }
 
+/**
+ * Redacta `verdictReason` EN LA FUENTE, antes de que salga del pipeline hacia
+ * cualquier sink (spec §6, Kanon GHOST-31, fix C3).
+ *
+ * `verdictReason` se ensambla en varios puntos de `runAssistedFlow` a partir
+ * de texto libre derivado del juez (`outcome.reasoning`, ya redactado en
+ * `judgeEvents[]` vía `summarizeJudgeEventForPersistence`, pero NO en este
+ * campo separado) y del `goal` del usuario interpolado directamente en
+ * strings (p. ej. `el objetivo "${assist.goal}" implicaba...`). Dos leaks
+ * previos (C1, C2) cerraron el payload del evento `judge_verdict`; este
+ * campo es independiente y fluía sin redactar hacia `AssistedRunResult`,
+ * desde ahí hacia el payload del evento `run_end`, `Run.verdictReason` (DB)
+ * y `RunRecord.verdictReason` (API) — tres sinks distintos, un solo origen.
+ *
+ * Reusa el mismo contrato de redacción (`redactOrTruncateText`, spec §6)
+ * usado por `judge.ts`, aplicado UNA VEZ acá para que todo consumidor de
+ * `AssistedRunResult.verdictReason` reciba el valor ya saneado — en vez de
+ * redactar cada sink por separado (lo que dejó pasar C1 y C2).
+ */
+export function redactVerdictReason(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return redactOrTruncateText(value);
+}
+
 export async function runAssistedFlow(
   input: AssistedRunInput,
   deps: AssistedDeps,
@@ -2997,6 +3022,11 @@ export async function runAssistedFlow(
     pending: planProgressReport.filter((p) => p.status === "pending").length,
   };
 
+  // Choke point único (spec §6, fix C3): todo sink que lea `verdictReason`
+  // (evento `run_end`, `AssistedRunResult` -> DB `Run.verdictReason` ->
+  // `RunRecord` API) recibe el valor ya redactado — nunca el crudo.
+  const safeVerdictReason = redactVerdictReason(verdictReason);
+
   emit("run_end", {
     ok: runOk,
     durationMs: Date.now() - started,
@@ -3005,7 +3035,7 @@ export async function runAssistedFlow(
     planProgressSummary,
     planProgress: planProgressReport,
     finalPlan: finalPlan.map(redactStepForEvent),
-    ...(verdict ? { verdict, verdictReason } : {}),
+    ...(verdict ? { verdict, verdictReason: safeVerdictReason } : {}),
     ...(judgeEvents.length > 0 ? { judgeInvocations: judgeEvents.length } : {}),
   });
 
@@ -3021,7 +3051,7 @@ export async function runAssistedFlow(
     ...(planProgressReport.length > 0 ? { planProgress: planProgressReport } : {}),
     stopReason,
     ...(verdict ? { verdict } : {}),
-    ...(verdictReason ? { verdictReason } : {}),
+    ...(safeVerdictReason ? { verdictReason: safeVerdictReason } : {}),
     ...(verdictEvidence ? { verdictEvidence } : {}),
     ...(judgeEvents.length > 0 ? { judgeEvents } : {}),
   };

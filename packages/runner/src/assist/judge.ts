@@ -404,8 +404,14 @@ function truncateText(value: string): string {
   return `${value.slice(0, MAX_PERSISTED_TEXT_LENGTH - 1)}…`;
 }
 
-/** Redacta un campo de texto libre si contiene una palabra sensible; si no, lo trunca. */
-function redactOrTruncateText(value: string): string {
+/**
+ * Redacta un campo de texto libre si contiene una palabra sensible; si no, lo
+ * trunca. Exportada porque es el ÚNICO contrato de redacción de texto libre
+ * derivado del juez/goal del runner — reusada también por `pipeline.ts` para
+ * cerrar `verdictReason` en la fuente (spec §6, Kanon GHOST-31, fix C3) en vez
+ * de duplicar la lógica de redacción en cada sink que consume el resultado.
+ */
+export function redactOrTruncateText(value: string): string {
   if (containsSensitiveWord(value)) return "[REDACTED]";
   return truncateText(value);
 }
