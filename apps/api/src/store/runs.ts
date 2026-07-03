@@ -99,6 +99,30 @@ export async function upsertAssistMemory(params: {
 }
 
 /**
+ * Invalida (borra) una memoria de replay que no volvió a pasar la
+ * verificación de victoria (spec §6 — guardia de memoria): "un replay de
+ * memoria debe re-pasar la verificación de victoria; si no la pasa, esa
+ * memoria se invalida (se borra o marca stale) en lugar de reportar éxito."
+ * Se borra en vez de marcar stale: no hay columna de estado en el schema
+ * actual y una fila borrada simplemente vuelve a sembrarse desde cero en el
+ * próximo run exitoso — más simple que introducir un nuevo estado sin uso.
+ */
+export async function invalidateAssistMemory(params: {
+  userId: string;
+  project: string;
+  baseUrl: string;
+  goal: string;
+}): Promise<void> {
+  await prisma.$executeRaw`
+    DELETE FROM assist_memories
+    WHERE userId = ${params.userId}
+      AND project = ${params.project}
+      AND baseUrl = ${params.baseUrl}
+      AND goal = ${params.goal}
+  `;
+}
+
+/**
  * Pre-crea un registro de Run en estado "running". Usado para runs fire-and-forget
  * que se ejecutan en background y cuyo detalle el cliente puede consultar/streamear
  * antes de que la ejecución termine.

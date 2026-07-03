@@ -1,9 +1,10 @@
-import { safeParseRunInput } from "@ghostly-io/runner";
+import { buildJudgeUserPrompt, JUDGE_SYSTEM_PROMPT, safeParseRunInput, validateJudgeVerdict } from "@ghostly-io/runner";
 import type {
   HealerContext,
   HealerFn,
   HealerResult,
   CodeHints,
+  JudgeDossier,
   JudgeFn,
   ObserverSnapshot,
   PlannedChunk,
@@ -12,6 +13,8 @@ import type {
   StrategistFn,
 } from "@ghostly-io/runner";
 import { completeJson } from "../llm/client.js";
+import { providerSupportsImages } from "../llm/catalog.js";
+import { resolveLlmConfig } from "../llm/config.js";
 import { LlmError } from "../llm/errors.js";
 
 type VisibleDialogHint = { heading?: string; ariaLabel?: string };
@@ -549,6 +552,7 @@ async function callLlmJson(
   user: string,
   timeoutMs: number,
   label: string = "llm",
+  image?: { base64: string; mimeType: string },
 ): Promise<Record<string, unknown>> {
   try {
     return await completeJson(
@@ -556,7 +560,7 @@ async function callLlmJson(
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-      { timeoutMs, label },
+      { timeoutMs, label, ...(image ? { image } : {}) },
     );
   } catch (error) {
     if (error instanceof LlmError && error.status === 504) {
@@ -817,26 +821,57 @@ export function createHealer(opts: OrchestratorOptions): HealerFn {
 }
 
 /**
- * TODO(GHOST-30): reemplazar por `createJudge` real — factory con el mismo
- * patrón de inyección que `createStrategist`/`createHealer`, usando
- * `UserLlmSettings` (mismo LLM del usuario, spec §4.3 decisión de diseño) y
- * el prompt de sistema del juez (clasifica-no-actúa, sesgo anti-falso-éxito,
- * no contradice evidencia dura, taxonomía de responsables, screenshot
- * gating por capacidad del provider).
- *
- * Este placeholder SOLO existe para que `AssistDeps.judge` (campo requerido
- * desde Fase 3a, GHOST-29) compile en los call-sites de `run.ts`/`plan.ts`.
- * Nunca debe alcanzar producción: cualquier invocación real degrada a
- * `inconclusive` con una nota explícita — el mismo sesgo anti-falso-éxito
- * del contrato del juez (spec §4.3 regla 2), nunca `success` por defecto.
+ * Adjunta el screenshot del dossier (si el runner lo capturó Y el provider
+ * del usuario soporta imágenes) a la request del LLM. El dossier de texto
+ * (`buildJudgeUserPrompt`) es SIEMPRE autosuficiente — la imagen es evidencia
+ * EXTRA, nunca la única fuente (spec §4.3 "híbrido según provider"). Gating
+ * por capacidad vive acá, no en el runner: el runner nunca decide nada sobre
+ * providers/LLMs.
  */
-export function createJudgePlaceholder(): JudgeFn {
-  return async (dossier) => ({
-    verdict: "inconclusive",
-    confidence: "low",
-    reasoning:
-      "El juez real todavía no está implementado (GHOST-30) — este es un placeholder que nunca debería " +
-      `invocarse en producción. Trigger recibido: "${dossier.reason}".`,
-    evidence: [],
-  });
+function buildJudgeImageAttachment(dossier: JudgeDossier): { base64: string; mimeType: string } | undefined {
+  if (!dossier.screenshot) return undefined;
+  const config = resolveLlmConfig();
+  if (!providerSupportsImages(config.providerId)) return undefined;
+  return { base64: dossier.screenshot.toString("base64"), mimeType: "image/png" };
+}
+
+/**
+ * El juez real (spec §4.3, Fase 3b — GHOST-30): factory con el mismo patrón
+ * de inyección que `createStrategist`/`createHealer` — envuelve el LLM del
+ * usuario (`UserLlmSettings`, resuelto vía `resolveLlmConfig()`/
+ * `runWithLlmConfigAsync`, exactamente igual que strategist/healer) con el
+ * prompt de sistema del juez (`JUDGE_SYSTEM_PROMPT`, spec §4.3 reglas 1-5) y
+ * el dossier serializado a texto (`buildJudgeUserPrompt`, ambos PUROS y
+ * probados en el runner con LLM mocks — ver `judge-prompt.test.ts`).
+ *
+ * Validación de la respuesta (Zod + reintento único ante output malformado,
+ * degradando a `inconclusive`) vive en `validateJudgeVerdict` (runner,
+ * `judge.ts`) — mismo patrón que el sanitizador del healer. Esta función solo
+ * hace el wiring: arma el prompt, gatea el screenshot por capacidad del
+ * provider, llama al LLM, y delega la validación.
+ */
+export function createJudge(opts: OrchestratorOptions): JudgeFn {
+  return async (dossier: JudgeDossier) => {
+    const user = buildJudgeUserPrompt(dossier);
+    const image = buildJudgeImageAttachment(dossier);
+    debugLog("judge", {
+      stage: "context",
+      goal: dossier.goal,
+      reason: dossier.reason,
+      recentActionsCount: dossier.recentActions.length,
+      pageErrorsCount: dossier.pageErrors.length,
+      hasScreenshot: Boolean(dossier.screenshot),
+      imageAttached: Boolean(image),
+    });
+    const verdict = await validateJudgeVerdict(() =>
+      callLlmJson(JUDGE_SYSTEM_PROMPT, user, opts.llmTimeoutMs, "judge", image),
+    );
+    debugLog("judge", {
+      stage: "verdict",
+      verdict: verdict.verdict,
+      confidence: verdict.confidence,
+      evidenceCount: verdict.evidence.length,
+    });
+    return verdict;
+  };
 }

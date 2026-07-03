@@ -16,6 +16,15 @@ export type LlmProviderCatalogEntry = {
   supportsAutoModel: boolean;
   /** Si true, la UI debe pedir modelos vivos vía GET /settings/llm/models */
   supportsLiveModels?: boolean;
+  /**
+   * Si true, el proveedor acepta contenido multimodal (imágenes) en los
+   * mensajes de chat (spec §4.3 — evidencia visual "híbrido según provider").
+   * Gatea si el juez adjunta un screenshot al dossier de texto; el dossier de
+   * texto SIEMPRE debe autosuficiente, la imagen es solo evidencia extra.
+   * Providers CLI (ej. `cursor-cli`, invocados vía stdin de texto plano) NUNCA
+   * soportan esto hoy — `false`/ausente por defecto.
+   */
+  supportsImages?: boolean;
   /** Lista estática o fallback cuando no hay comando live */
   modelOptions: LlmModelOption[];
 };
@@ -53,6 +62,7 @@ export const LLM_PROVIDER_CATALOG: LlmProviderCatalogEntry[] = [
     defaultBaseUrl: "https://api.openai.com/v1/chat/completions",
     defaultModel: "gpt-4o-mini",
     supportsAutoModel: false,
+    supportsImages: true,
     modelOptions: [
       { id: "gpt-4o-mini", label: "GPT-4o mini" },
       { id: "gpt-4o", label: "GPT-4o" },
@@ -87,6 +97,7 @@ export const LLM_PROVIDER_CATALOG: LlmProviderCatalogEntry[] = [
     defaultBaseUrl: "https://openrouter.ai/api/v1/chat/completions",
     defaultModel: "anthropic/claude-sonnet-4",
     supportsAutoModel: false,
+    supportsImages: true,
     modelOptions: [
       { id: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
       { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
@@ -116,6 +127,7 @@ export const LLM_PROVIDER_CATALOG: LlmProviderCatalogEntry[] = [
     defaultBaseUrl: "https://openrouter.ai/api/v1/chat/completions",
     defaultModel: "openai/gpt-4o-mini",
     supportsAutoModel: false,
+    supportsImages: true,
     modelOptions: [
       { id: "openai/gpt-4o-mini", label: "GPT-4o mini" },
       { id: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
@@ -125,4 +137,15 @@ export const LLM_PROVIDER_CATALOG: LlmProviderCatalogEntry[] = [
 
 export function getCatalogEntry(providerId: string): LlmProviderCatalogEntry | undefined {
   return LLM_PROVIDER_CATALOG.find((p) => p.id === providerId);
+}
+
+/**
+ * Gating de capacidad de imágenes por provider (spec §4.3 — evidencia visual
+ * "híbrido según provider"). Providers desconocidos (no catalogados, ej. un
+ * CLI agent custom) se tratan como NO soportan imágenes por defecto — el
+ * mismo sesgo conservador que el resto del contrato del juez: en la duda, no
+ * asumas capacidad extra.
+ */
+export function providerSupportsImages(providerId: string): boolean {
+  return getCatalogEntry(providerId)?.supportsImages === true;
 }
