@@ -7,6 +7,7 @@
     "dev:all": "pnpm -r --parallel --filter @ghostly-io/runner --filter @ghostly-io/api --filter @ghostly-io/web run dev",
     "dev:api": "pnpm --filter @ghostly-io/api dev",
     "dev:web": "pnpm --filter @ghostly-io/web dev",
+    "playground": "pnpm --filter @ghostly-io/playground dev",
     "build": "pnpm -r run build",
     "typecheck": "pnpm --filter @ghostly-io/runner run typecheck && pnpm --filter @ghostly-io/api run typecheck && pnpm --filter @ghostly-io/mcp-server run typecheck && pnpm --filter @ghostly-io/scanner run typecheck && pnpm --filter @ghostly-io/web run typecheck",
     "start": "pnpm --filter @ghostly-io/api start",
