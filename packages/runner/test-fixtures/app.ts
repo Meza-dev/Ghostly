@@ -19,7 +19,9 @@ export type FixtureScenario =
   | "modal-blocking-button"
   | "ephemeral-toast"
   | "non-persisting-save"
-  | "app-down";
+  | "app-down"
+  | "selector-renamed"
+  | "ambiguous-duplicate-selector";
 
 export type FixtureApp = {
   baseUrl: string;
@@ -33,7 +35,8 @@ const PAGE_STYLES = `
   body { font-family: system-ui, sans-serif; margin: 2rem; }
   .error { color: #b00020; }
   .toast { position: fixed; top: 1rem; right: 1rem; background: #1b5e20; color: #fff; padding: .5rem 1rem; border-radius: 4px; }
-  dialog { border: 1px solid #ccc; border-radius: 8px; padding: 1.5rem; }
+  dialog { border: 1px solid #ccc; border-radius: 8px; padding: 1.5rem; position: relative; z-index: 2; }
+  .modal-overlay-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 1; }
   table { border-collapse: collapse; margin-top: 1rem; }
   td, th { border: 1px solid #ccc; padding: .25rem .5rem; }
 `;
@@ -65,12 +68,31 @@ function renderHomePage(
   const toastBlock = opts.toastVisible
     ? `<div class="toast" role="status" data-testid="save-toast">Nota guardada</div>`
     : "";
+  // El overlay de fondo (`.modal-overlay-backdrop`) es lo que realmente
+  // intercepta los clicks sobre el formulario mientras el modal está abierto
+  // — un `<dialog open>` (sin `showModal()`) NO bloquea pointer events por sí
+  // solo, así que sin este backdrop estático el click de "Guardar" pasaría
+  // de largo y nunca dispararía el heal (R3b). Estático, sin timers: se
+  // remueve junto con el diálogo al hacer click en "Aceptar".
   const modalBlock = opts.showModal
-    ? `<dialog open role="dialog" aria-modal="true" data-testid="confirm-dialog">
+    ? `<div class="modal-overlay-backdrop" data-testid="modal-overlay-backdrop"></div>
+      <dialog open role="dialog" aria-modal="true" data-testid="confirm-dialog">
         <p>¿Confirmás guardar la nota?</p>
-        <button type="button" data-testid="confirm-dialog-ok" onclick="this.closest('dialog').close(); this.closest('dialog').remove();">Aceptar</button>
+        <button type="button" data-testid="confirm-dialog-ok" onclick="document.querySelector('.modal-overlay-backdrop')?.remove(); this.closest('dialog').close(); this.closest('dialog').remove();">Aceptar</button>
       </dialog>`
     : "";
+  // R3a (selector-renamed): el testid del título cambió de versión (simula un
+  // refactor de UI que renombra el data-testid), pero `name="title"` y el
+  // `<label>` se mantienen intactos — el campo sigue siendo alcanzable.
+  const titleTestId = scenario === "selector-renamed" ? "note-title-input-v2" : "note-title-input";
+  // R3c (ambiguous-duplicate-selector): dos botones matchean el selector
+  // suelto `.save-btn`; solo el real carga el data-testid canónico —
+  // dispara una violación de strict-mode de Playwright si el plan usa `.save-btn`.
+  const saveButtonBlock =
+    scenario === "ambiguous-duplicate-selector"
+      ? `<button type="button" class="save-btn" style="display:none" aria-hidden="true" tabindex="-1">Guardar (decoy)</button>
+      <button type="submit" class="save-btn" data-testid="save-note-button">Guardar</button>`
+      : `<button type="submit" data-testid="save-note-button">Guardar</button>`;
   return `<!doctype html>
 <html lang="es">
 <head><meta charset="utf-8"><title>Notas — fixture Ghostly</title><style>${PAGE_STYLES}</style></head>
@@ -80,9 +102,9 @@ function renderHomePage(
   <form method="post" action="/save?scenario=${encodeURIComponent(scenario)}" data-testid="note-form">
     <label>
       Título
-      <input type="text" name="title" placeholder="Título de la nota" data-testid="note-title-input" />
+      <input type="text" name="title" placeholder="Título de la nota" data-testid="${titleTestId}" />
     </label>
-    <button type="submit" data-testid="save-note-button">Guardar</button>
+    ${saveButtonBlock}
   </form>
   ${toastBlock}
   ${renderNotesTable(notes, opts.ghostRowTitle)}
@@ -191,7 +213,8 @@ export function startFixtureApp(): Promise<FixtureApp> {
           return;
         }
 
-        // happy-path / modal-blocking-button: guardado real y persistente.
+        // happy-path / modal-blocking-button / selector-renamed / ambiguous-duplicate-selector:
+        // guardado real y persistente (mismo branch — solo cambia el markup del GET).
         if (title) notes.push({ title });
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(renderHomePage(notes, scenario, { toastVisible: true }));

@@ -230,4 +230,86 @@ export const BENCHMARK_FLOWS: BenchmarkFlow[] = [
     rationale:
       "El campo de título existe con un selector correcto y accesible ([data-testid=\"note-title-input\"]); el plan usa un selector con typo y no lo recupera. El camino existía — Ghostly no lo encontró.",
   },
+
+  // --- HEALER-1: 3 flujos con maxHealingAttemptsPerStep >= 1, prueban que
+  // testOracleHealer (benchmark-runner.ts) recupera catch->heal->retry en
+  // escenarios reales (no solo el wiring del juez). Ver spec R4/AC1-3.
+  {
+    id: "selector-renamed-healer-recovers",
+    goal: "Crear una nota con título 'Renombrado' y verificar que se guardó",
+    scenario: "selector-renamed",
+    steps: [
+      { action: "goto", url: "/" },
+      // Selector DELIBERADAMENTE viejo/stale: el fixture renderiza
+      // data-testid="note-title-input-v2" para este escenario.
+      { action: "fill", selector: '[data-testid="note-title-input"]', value: "Renombrado" },
+      { action: "click", selector: '[data-testid="save-note-button"]' },
+    ],
+    assist: {
+      ...DEFAULT_ASSIST_BASE,
+      goal: "Crear una nota con título 'Renombrado' y verificar que se guardó",
+      // `selectorVisible` apunta a una celda de la TABLA persistida, no a
+      // `textIncludes` libre: un `textIncludes` matchea también el VALOR
+      // tipeado en el textbox antes del submit (el snapshot del observer
+      // incluye el valor del input), lo que produciría un candidato a
+      // victoria prematuro justo después del heal-fill (antes del click) y
+      // dispararía el double-check de persistencia (spec §4.2b) demasiado
+      // pronto — el dato aún no se guardó. Acotar a `td:has-text(...)`
+      // (celda de `notes-table`) asegura que solo cuenta como victoria una
+      // vez que la fila fue realmente renderizada por el servidor tras el POST.
+      victory: { selectorVisible: ['[data-testid="notes-table"] td:has-text("Renombrado")'], mustAll: true },
+      maxHealingAttemptsPerStep: 1,
+    },
+    expectedVerdict: "success",
+    rationale:
+      "El testid del título fue renombrado (v2), pero el healer lo detecta en el snapshot y corrige el selector. El guardado persiste — éxito real, recuperado por heal.",
+  },
+  {
+    id: "modal-overlay-needs-heal-dismiss",
+    goal: "Crear una nota con título 'Con overlay' y verificar que se guardó",
+    scenario: "modal-blocking-button",
+    steps: [
+      { action: "goto", url: "/" },
+      // Sin paso scripteado de dismiss del modal (delta vs
+      // modal-blocking-button-needs-continue): el click de guardar queda
+      // interceptado por el overlay y dispara el heal.
+      { action: "fill", selector: '[data-testid="note-title-input"]', value: "Con overlay" },
+      { action: "click", selector: '[data-testid="save-note-button"]' },
+    ],
+    assist: {
+      ...DEFAULT_ASSIST_BASE,
+      goal: "Crear una nota con título 'Con overlay' y verificar que se guardó",
+      // Ver nota en selector-renamed-healer-recovers: `selectorVisible` acotado a
+      // la celda de la tabla persistida evita un candidato a victoria prematuro
+      // por el valor tipeado en el textbox (aún no guardado) tras el heal.
+      victory: { selectorVisible: ['[data-testid="notes-table"] td:has-text("Con overlay")'], mustAll: true },
+      maxHealingAttemptsPerStep: 1,
+    },
+    expectedVerdict: "success",
+    rationale:
+      "El modal de confirmación tapa el botón de guardar sin que el plan lo cierre explícitamente; el healer detecta el diálogo visible y antepone el dismiss antes de reintentar el guardado. Éxito real, recuperado por heal.",
+  },
+  {
+    id: "ambiguous-duplicate-selector",
+    goal: "Crear una nota con título 'Ambiguo' y verificar que se guardó",
+    scenario: "ambiguous-duplicate-selector",
+    steps: [
+      { action: "goto", url: "/" },
+      { action: "fill", selector: '[data-testid="note-title-input"]', value: "Ambiguo" },
+      // Selector suelto/ambiguo a propósito: matchea 2 botones ".save-btn".
+      { action: "click", selector: ".save-btn" },
+    ],
+    assist: {
+      ...DEFAULT_ASSIST_BASE,
+      goal: "Crear una nota con título 'Ambiguo' y verificar que se guardó",
+      // Ver nota en selector-renamed-healer-recovers: `selectorVisible` acotado a
+      // la celda de la tabla persistida evita un candidato a victoria prematuro
+      // por el valor tipeado en el textbox (aún no guardado) tras el heal.
+      victory: { selectorVisible: ['[data-testid="notes-table"] td:has-text("Ambiguo")'], mustAll: true },
+      maxHealingAttemptsPerStep: 1,
+    },
+    expectedVerdict: "success",
+    rationale:
+      "El selector `.save-btn` matchea dos botones (violación de strict-mode); el healer desambigua priorizando el data-testid canónico del botón real. Éxito real, recuperado por heal.",
+  },
 ];

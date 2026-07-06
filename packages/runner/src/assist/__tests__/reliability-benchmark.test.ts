@@ -125,6 +125,76 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
       "un strategist real que consuma StrategistContext.judgeHint, Fase 3b/GHOST-30)",
   );
 
+  describe("cobertura del healer (HEALER-1 — doble determinista testOracleHealer, safety net)", () => {
+    it(
+      "selector-renamed-healer-recovers: el healer detecta el testid renombrado y recupera el guardado " +
+        "(R2/AC1 — prueba heal_start+heal_success, no solo el veredicto final)",
+      async () => {
+        const report = await runReliabilityBenchmark(
+          BENCHMARK_FLOWS.filter((f) => f.id === "selector-renamed-healer-recovers"),
+        );
+        const [result] = report.results;
+        expect(result).toBeDefined();
+        expect(result!.observedVerdict).toBe("success");
+        expect(result!.falseSuccess).toBe(false);
+        expect(result!.healInvocations).toBeGreaterThanOrEqual(1);
+        const healSuccessEvents = result!.runResult.events.filter((e) => e.type === "heal_success");
+        expect(healSuccessEvents.length).toBeGreaterThanOrEqual(1);
+      },
+      30_000,
+    );
+
+    it(
+      "modal-overlay-needs-heal-dismiss: el healer detecta el overlay bloqueando y antepone el dismiss " +
+        "(R2/AC2 — prueba heal_start+heal_success, no solo el veredicto final)",
+      async () => {
+        const report = await runReliabilityBenchmark(
+          BENCHMARK_FLOWS.filter((f) => f.id === "modal-overlay-needs-heal-dismiss"),
+        );
+        const [result] = report.results;
+        expect(result).toBeDefined();
+        expect(result!.observedVerdict).toBe("success");
+        expect(result!.falseSuccess).toBe(false);
+        expect(result!.healInvocations).toBeGreaterThanOrEqual(1);
+        const healSuccessEvents = result!.runResult.events.filter((e) => e.type === "heal_success");
+        expect(healSuccessEvents.length).toBeGreaterThanOrEqual(1);
+      },
+      30_000,
+    );
+
+    it(
+      "ambiguous-duplicate-selector: el healer desambigua por data-testid ante una violación de strict-mode " +
+        "(R2/AC3 — prueba heal_start+heal_success, no solo el veredicto final)",
+      async () => {
+        const report = await runReliabilityBenchmark(
+          BENCHMARK_FLOWS.filter((f) => f.id === "ambiguous-duplicate-selector"),
+        );
+        const [result] = report.results;
+        expect(result).toBeDefined();
+        expect(result!.observedVerdict).toBe("success");
+        expect(result!.falseSuccess).toBe(false);
+        expect(result!.healInvocations).toBeGreaterThanOrEqual(1);
+        const healSuccessEvents = result!.runResult.events.filter((e) => e.type === "heal_success");
+        expect(healSuccessEvents.length).toBeGreaterThanOrEqual(1);
+      },
+      30_000,
+    );
+
+    it("los 10 flujos existentes nunca invocan al healer (maxHealingAttemptsPerStep=0 los mantiene inertes)", async () => {
+      const report = await runReliabilityBenchmark(BENCHMARK_FLOWS);
+      const existingResults = report.results.filter(
+        (r) =>
+          r.flow.id !== "selector-renamed-healer-recovers" &&
+          r.flow.id !== "modal-overlay-needs-heal-dismiss" &&
+          r.flow.id !== "ambiguous-duplicate-selector",
+      );
+      expect(existingResults).toHaveLength(10);
+      for (const r of existingResults) {
+        expect(r.healInvocations).toBe(0);
+      }
+    }, 120_000);
+  });
+
   it(
     "cero falsos éxitos (spec AC1/AC3 — invariante duro desde Fase 2b, se mantiene con el juez wireado)",
     async () => {
