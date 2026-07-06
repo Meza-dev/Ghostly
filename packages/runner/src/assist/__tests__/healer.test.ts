@@ -63,4 +63,36 @@ describe("sanitizeHealerSteps", () => {
     expect(result).toHaveLength(1);
     expect(result[0]!.action).toBe("click");
   });
+
+  it("reject-when-anchor-absent-and-map-present", () => {
+    const result = sanitizeHealerSteps(
+      baseUrl,
+      [{ action: "click", selector: '[data-testid="ghost-anchor"]' }],
+      30_000,
+      "some tree markdown without that testid",
+    );
+    expect(result.some((step) => step.action === "click")).toBe(false);
+  });
+
+  it("pass-when-map-empty", () => {
+    const result = sanitizeHealerSteps(
+      baseUrl,
+      [{ action: "click", selector: '[data-testid="ghost-anchor"]' }],
+      30_000,
+      "",
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]!.action).toBe("click");
+  });
+
+  it("pass-when-anchor-present", () => {
+    const result = sanitizeHealerSteps(
+      baseUrl,
+      [{ action: "click", selector: '[data-testid="save-note-button"]' }],
+      30_000,
+      'markdown blob containing data-testid="save-note-button" among other nodes',
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]!.action).toBe("click");
+  });
 });
