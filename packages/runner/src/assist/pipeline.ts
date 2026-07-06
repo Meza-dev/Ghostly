@@ -1548,11 +1548,19 @@ function isLikelyTerminalAction(step: Step): boolean {
   return false;
 }
 
-function hasTerminalLock(history: Array<{ step: Step; ok: boolean; error?: string }>): boolean {
+function hasTerminalLock(
+  history: Array<{ step: Step; ok: boolean; error?: string }>,
+  step: Step,
+): boolean {
+  // El candado solo aplica al MISMO paso terminal ya exitoso (evita re-ejecutar el mismo
+  // submit). Antes contaba CUALQUIER acción "terminal" por substring del selector, lo que
+  // saltaba por error botones distintos: p. ej. "Nuevo cliente" (cliente-crear matchea
+  // "crear") se descartaba tras el login-submit (matchea "submit").
+  const k = stepKey(step);
   let lastTerminalOk = -1;
   for (let i = 0; i < history.length; i++) {
     const h = history[i]!;
-    if (h.ok && isLikelyTerminalAction(h.step)) {
+    if (h.ok && isLikelyTerminalAction(h.step) && stepKey(h.step) === k) {
       lastTerminalOk = i;
     }
   }
@@ -2328,7 +2336,7 @@ export async function runAssistedFlow(
           );
           continue;
         }
-        if (isLikelyTerminalAction(step) && hasTerminalLock(history)) {
+        if (isLikelyTerminalAction(step) && hasTerminalLock(history, step)) {
           const pendingIdx = findFirstPendingPlanIndex(planProgress, step);
           if (pendingIdx >= 0) {
             planProgress[pendingIdx] = {
