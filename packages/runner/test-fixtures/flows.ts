@@ -289,6 +289,43 @@ export const BENCHMARK_FLOWS: BenchmarkFlow[] = [
     rationale:
       "El modal de confirmación tapa el botón de guardar sin que el plan lo cierre explícitamente; el healer detecta el diálogo visible y antepone el dismiss antes de reintentar el guardado. Éxito real, recuperado por heal.",
   },
+  // --- HEALER-2 / H1: el paso THROWS (waitForSelector agota su timeout)
+  // mientras un PageError bloqueante (network 500, disparado por un fetch
+  // asíncrono lanzado por el click previo) queda correlacionado al mismo
+  // índice — el healer debe ceder al juez sin gastar intentos (ver design
+  // HEALER-2, "Coverage design"). maxHealingAttemptsPerStep: 1 asegura que
+  // el healer está CABLEADO (probaría que el abstain lo saltea, no que
+  // nunca hubiera corrido).
+  {
+    id: "blocking-error-healer-abstains",
+    goal: "Crear una nota con título 'Abstención del healer' y verificar que se guardó",
+    scenario: "500-on-save-blocking-throw",
+    steps: [
+      { action: "goto", url: "/" },
+      { action: "fill", selector: '[data-testid="note-title-input"]', value: "Abstención del healer" },
+      { action: "click", selector: '[data-testid="save-note-button"]' },
+      {
+        action: "waitForSelector",
+        selector: '[data-testid="notes-table"] td:has-text("Abstención del healer")',
+        timeoutMs: 3_000,
+      },
+    ],
+    assist: {
+      ...DEFAULT_ASSIST_BASE,
+      goal: "Crear una nota con título 'Abstención del healer' y verificar que se guardó",
+      victory: {
+        selectorVisible: ['[data-testid="notes-table"] td:has-text("Abstención del healer")'],
+        mustAll: true,
+      },
+      maxLoopMs: 15_000,
+      maxHealingAttemptsPerStep: 1,
+    },
+    expectedVerdict: "fail-app-bug",
+    rationale:
+      "El click dispara un fetch asíncrono que responde 500 recién mientras el paso siguiente espera la fila " +
+      "persistida (que nunca llega). El healer está cableado pero cede determinísticamente ante la evidencia " +
+      "de error bloqueante (HEALER-2/H1) en vez de gastar un intento de heal — la app está rota, no el selector.",
+  },
   {
     id: "ambiguous-duplicate-selector",
     goal: "Crear una nota con título 'Ambiguo' y verificar que se guardó",

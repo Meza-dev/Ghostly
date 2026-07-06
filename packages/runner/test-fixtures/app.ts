@@ -21,7 +21,8 @@ export type FixtureScenario =
   | "non-persisting-save"
   | "app-down"
   | "selector-renamed"
-  | "ambiguous-duplicate-selector";
+  | "ambiguous-duplicate-selector"
+  | "500-on-save-blocking-throw";
 
 export type FixtureApp = {
   baseUrl: string;
@@ -93,6 +94,30 @@ function renderHomePage(
       ? `<button type="button" class="save-btn" style="display:none" aria-hidden="true" tabindex="-1">Guardar (decoy)</button>
       <button type="submit" class="save-btn" data-testid="save-note-button">Guardar</button>`
       : `<button type="submit" data-testid="save-note-button">Guardar</button>`;
+  // HEALER-2 / H1 coverage: en este escenario el click NO hace un submit de
+  // formulario (sin navegación) — dispara un `fetch` asíncrono al mismo
+  // endpoint `/save` y no actualiza el DOM al recibir el 500. Esto deja
+  // pasar el click sin error correlacionado en su propio índice (el circuit
+  // breaker no tiene nada que atrapar ahí); el 500 llega DESPUÉS, mientras el
+  // paso siguiente del flujo espera un selector que nunca aparece y por lo
+  // tanto lanza (throw) con el error de red bloqueante ya correlacionado a
+  // ESE índice — el escenario exacto que ejercita el abstain determinista
+  // del healer (ver design HEALER-2, sección "Coverage design").
+  const asyncBrokenSaveScript =
+    scenario === "500-on-save-blocking-throw"
+      ? `<script>
+        document.addEventListener("DOMContentLoaded", function () {
+          var btn = document.querySelector('[data-testid="save-note-button"]');
+          if (!btn) return;
+          btn.addEventListener("click", function (ev) {
+            ev.preventDefault();
+            var form = btn.closest("form");
+            var body = new URLSearchParams(new FormData(form));
+            fetch(form.getAttribute("action"), { method: "POST", body: body });
+          });
+        });
+      </script>`
+      : "";
   return `<!doctype html>
 <html lang="es">
 <head><meta charset="utf-8"><title>Notas — fixture Ghostly</title><style>${PAGE_STYLES}</style></head>
@@ -108,6 +133,7 @@ function renderHomePage(
   </form>
   ${toastBlock}
   ${renderNotesTable(notes, opts.ghostRowTitle)}
+  ${asyncBrokenSaveScript}
 </body>
 </html>`;
 }
@@ -183,7 +209,7 @@ export function startFixtureApp(): Promise<FixtureApp> {
         const body = await readBody(req);
         const title = parseFormTitle(body);
 
-        if (scenario === "500-on-save") {
+        if (scenario === "500-on-save" || scenario === "500-on-save-blocking-throw") {
           res.writeHead(500, { "content-type": "text/html; charset=utf-8" });
           res.end(renderServerErrorPage());
           return;
