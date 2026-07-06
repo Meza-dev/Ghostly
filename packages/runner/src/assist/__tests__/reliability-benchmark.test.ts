@@ -239,10 +239,10 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
   );
 
   it(
-    "meta objetivo del benchmark (spec AC1): 13/13 veredictos veraces (10 originales + 3 de cobertura del " +
-      "healer, HEALER-1) con el WIRING de la Capa 3 + oráculo de test determinista (Fase 3a) — esto mide " +
-      "correctitud del wiring, NO precisión de un juez LLM real, que es explícitamente Fase 3b/GHOST-30 y se " +
-      "valida contra el mismo ground truth de flows.ts",
+    "meta objetivo del benchmark (spec AC1): 14/14 veredictos veraces (10 originales + 3 de cobertura del " +
+      "healer HEALER-1 + 1 de HEALER-2) con el WIRING de la Capa 3 + oráculo de test determinista (Fase 3a) " +
+      "— esto mide correctitud del wiring, NO precisión de un juez LLM real, que es explícitamente Fase " +
+      "3b/GHOST-30 y se valida contra el mismo ground truth de flows.ts",
     async () => {
       const report = await runReliabilityBenchmark();
       // eslint-disable-next-line no-console
