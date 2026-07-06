@@ -2520,14 +2520,50 @@ export async function runAssistedFlow(
           emit("step_failure", { step: redactStepForEvent(step), error: message }, index);
 
           let recovered = false;
-          for (let attempt = 1; attempt <= healingAttempts && !recovered; attempt++) {
+          // HEALER-2 / H1: el healer es un actor de percepción, no decide
+          // desenlaces. Antes de invocarlo, capturamos el snapshot post-falla
+          // UNA sola vez (evita doble drenado de `pageErrorTracker.collectForStep`,
+          // ver observer.ts:270-272) y reutilizamos la MISMA correlación por
+          // índice que usa el circuit breaker (`detectBlockingAppError`, línea
+          // ~1976/2436) para decidir si hay evidencia dura de un bug bloqueante
+          // de la app. Si la hay, curar es inútil: cede determinísticamente al
+          // juez (`healing-exhausted`) sin gastar intentos de heal ni replan.
+          await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
+          lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+            pageErrorTracker,
+            stepIndex: index,
+          });
+          const blockingEvidenceBeforeHeal = detectBlockingAppError(lastSnapshot.pageErrors, index);
+          let healerAbstainedOnBlocking = false;
+          if (blockingEvidenceBeforeHeal) {
+            healerAbstainedOnBlocking = true;
+            emit(
+              "heal_failure",
+              {
+                reason: "blocking-error-cede-to-judge",
+                evidence: redactVerdictEvidence(blockingEvidenceBeforeHeal),
+              },
+              index,
+            );
+          }
+          for (
+            let attempt = 1;
+            attempt <= healingAttempts && !recovered && !healerAbstainedOnBlocking;
+            attempt++
+          ) {
             try {
               healerWasInvoked = true;
-              await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-              lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
-                pageErrorTracker,
-                stepIndex: index,
-              });
+              // Intento 1 reutiliza el snapshot pre-loop capturado arriba para
+              // no volver a drenar `pageErrorTracker` en el mismo `index`
+              // (invariante de un solo `collectForStep` por índice). Los
+              // reintentos posteriores sí capturan uno nuevo, como antes.
+              if (attempt > 1) {
+                await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
+                lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+                  pageErrorTracker,
+                  stepIndex: index,
+                });
+              }
               const stateBeforeHeal = snapshotStateKey(lastSnapshot);
               emit(
                 "heal_start",
@@ -2550,6 +2586,7 @@ export async function runAssistedFlow(
                 input.baseUrl,
                 recovery.steps,
                 input.defaultTimeoutMs,
+                lastSnapshot.treeMarkdown,
               );
               // `recovery.rationale` es texto libre AUTORADO POR EL HEALER (LLM) —
               // mismo riesgo que el `hint` del juez (puede citar contenido de
@@ -2800,89 +2837,96 @@ export async function runAssistedFlow(
               };
             }
             let replannedFromError = false;
+            // HEALER-2 / H1: si el healer cedió por evidencia de bug bloqueante,
+            // el replan del strategist tampoco tiene sentido (mismo argumento
+            // que el heal loop) — el motor no debe intentar "seguir adelante"
+            // ante un error determinístico; cede directo al trigger
+            // `healing-exhausted` más abajo con el dossier ya cargado.
             try {
-              await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-              lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
-                pageErrorTracker,
-                stepIndex: index,
-              });
-              const replanChunk = await deps.strategist({
-                goal: assist.goal,
-                baseUrl: input.baseUrl,
-                snapshot: lastSnapshot,
-                victory: assist.victory,
-                history,
-                planProgress,
-                maxSteps: stepsPerHorizon,
-              });
-              strategistHasMore = replanChunk.hasMore;
-              const replanned: Step[] = [];
-              const droppedReplanned: Step[] = [];
-              for (const candidate of replanChunk.steps) {
-                if (hasSuccessfulHistoryStep(history, candidate.step)) {
-                  droppedReplanned.push(candidate.step);
-                  planProgress.push({
-                    step: candidate.step,
-                    status: "dropped",
-                    source: "replan",
-                    horizon,
-                    stepIndex: index,
-                    note: "already-successful",
-                  });
-                  continue;
-                }
-                if (shouldDropPlannedStep(candidate.step, lastSnapshot, history)) {
-                  droppedReplanned.push(candidate.step);
-                  planProgress.push({
-                    step: candidate.step,
-                    status: "dropped",
-                    source: "replan",
-                    horizon,
-                    stepIndex: index,
-                    note: "context-drop",
-                  });
-                  continue;
-                }
-                replanned.push(candidate.step);
-                planProgress.push({
-                  step: candidate.step,
-                  status: "pending",
-                  source: "replan",
-                  horizon,
+              if (!healerAbstainedOnBlocking) {
+                await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
+                lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+                  pageErrorTracker,
                   stepIndex: index,
                 });
-              }
-              if (replanned.length > 0) {
-                pendingSteps.unshift(...replanned);
-                replannedFromError = true;
-                emit(
-                  "plan_chunk",
-                  {
+                const replanChunk = await deps.strategist({
+                  goal: assist.goal,
+                  baseUrl: input.baseUrl,
+                  snapshot: lastSnapshot,
+                  victory: assist.victory,
+                  history,
+                  planProgress,
+                  maxSteps: stepsPerHorizon,
+                });
+                strategistHasMore = replanChunk.hasMore;
+                const replanned: Step[] = [];
+                const droppedReplanned: Step[] = [];
+                for (const candidate of replanChunk.steps) {
+                  if (hasSuccessfulHistoryStep(history, candidate.step)) {
+                    droppedReplanned.push(candidate.step);
+                    planProgress.push({
+                      step: candidate.step,
+                      status: "dropped",
+                      source: "replan",
+                      horizon,
+                      stepIndex: index,
+                      note: "already-successful",
+                    });
+                    continue;
+                  }
+                  if (shouldDropPlannedStep(candidate.step, lastSnapshot, history)) {
+                    droppedReplanned.push(candidate.step);
+                    planProgress.push({
+                      step: candidate.step,
+                      status: "dropped",
+                      source: "replan",
+                      horizon,
+                      stepIndex: index,
+                      note: "context-drop",
+                    });
+                    continue;
+                  }
+                  replanned.push(candidate.step);
+                  planProgress.push({
+                    step: candidate.step,
+                    status: "pending",
+                    source: "replan",
                     horizon,
-                    replannedFromError: true,
-                    failedStep: redactStepForEvent(step),
-                    steps: replanned.map(redactStepForEvent),
-                    droppedSteps: droppedReplanned.map(redactStepForEvent),
-                    planProgress: planProgress.slice(-120).map((p) => ({
-                      status: p.status,
-                      source: p.source,
-                      step: redactStepForEvent(p.step),
-                      ...(p.horizon !== undefined ? { horizon: p.horizon } : {}),
-                      ...(p.stepIndex !== undefined ? { stepIndex: p.stepIndex } : {}),
-                      ...(p.note ? { note: p.note } : {}),
-                    })),
-                    hasMore: replanChunk.hasMore,
-                  },
-                );
-                emit(
-                  "step_failure",
-                  {
-                    step: redactStepForEvent(step),
-                    error: message,
-                    replannedFromError: true,
-                  },
-                  index,
-                );
+                    stepIndex: index,
+                  });
+                }
+                if (replanned.length > 0) {
+                  pendingSteps.unshift(...replanned);
+                  replannedFromError = true;
+                  emit(
+                    "plan_chunk",
+                    {
+                      horizon,
+                      replannedFromError: true,
+                      failedStep: redactStepForEvent(step),
+                      steps: replanned.map(redactStepForEvent),
+                      droppedSteps: droppedReplanned.map(redactStepForEvent),
+                      planProgress: planProgress.slice(-120).map((p) => ({
+                        status: p.status,
+                        source: p.source,
+                        step: redactStepForEvent(p.step),
+                        ...(p.horizon !== undefined ? { horizon: p.horizon } : {}),
+                        ...(p.stepIndex !== undefined ? { stepIndex: p.stepIndex } : {}),
+                        ...(p.note ? { note: p.note } : {}),
+                      })),
+                      hasMore: replanChunk.hasMore,
+                    },
+                  );
+                  emit(
+                    "step_failure",
+                    {
+                      step: redactStepForEvent(step),
+                      error: message,
+                      replannedFromError: true,
+                    },
+                    index,
+                  );
+                }
               }
             } catch (replanErr) {
               // Redacción en la fuente, mismo criterio que `message` arriba (GHOST-35).
