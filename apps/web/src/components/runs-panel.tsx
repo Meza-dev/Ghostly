@@ -238,7 +238,7 @@ export function RunsPanel() {
                       <StatusBadge status={r.status} />
                     </span>
                     <span className="px-1.5">
-                      {r.status !== "running" && <VerdictBadge verdict={r.verdict} size="sm" />}
+                      {r.status !== "running" && <VerdictBadge verdict={r.verdict} status={r.status} size="sm" />}
                     </span>
                     <span className="truncate px-1.5 text-small text-foreground">{objetivo}</span>
                     <span className="truncate px-1.5 font-mono text-small text-muted-fg">

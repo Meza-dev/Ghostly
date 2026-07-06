@@ -576,7 +576,7 @@ export function RunDetail() {
               }`}>
                 {run.status === "pass" ? "Pass" : run.status === "fail" ? "Fail" : "Run"}
               </span>
-              {run.status !== "running" && <VerdictBadge verdict={run.verdict} />}
+              {run.status !== "running" && <VerdictBadge verdict={run.verdict} status={run.status} />}
               <span className="text-caption uppercase tracking-wide text-muted-fg">{run.project ?? "sin proyecto"}</span>
             </div>
             <h1 className="text-xl font-title tracking-tight text-foreground">{objective || `Run ${run.id.slice(0, 9)}`}</h1>

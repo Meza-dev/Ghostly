@@ -85,6 +85,24 @@ export function getVerdictMeta(verdict: string | null | undefined): VerdictMeta 
   return VERDICT_META[verdict];
 }
 
+/**
+ * Meta considerando el `status` del run. Una victoria determinista limpia deja
+ * `verdict=null` pero `status="pass"` — el pipeline NO setea `verdict="success"`
+ * a propósito, porque la guardia de memoria (spec §6) usa `verdict===undefined`
+ * como señal de éxito determinista para persistir AssistMemory. Semánticamente
+ * `status="pass"` ES un éxito, así que acá lo mostramos como "success" en vez de
+ * "sin clasificar". Los runs históricos (fail/null) siguen cayendo en su meta.
+ */
+export function getEffectiveVerdictMeta(
+  verdict: string | null | undefined,
+  status?: string | null,
+): VerdictMeta {
+  if ((!verdict || !isKnownVerdict(verdict)) && status === "pass") {
+    return VERDICT_META.success;
+  }
+  return getVerdictMeta(verdict);
+}
+
 export const ALL_VERDICTS: Verdict[] = [
   "success",
   "fail-app-bug",
