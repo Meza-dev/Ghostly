@@ -1,9 +1,10 @@
 /**
  * Benchmark de fiabilidad (spec §7, Fase 0, tarea 0.3 — evoluciona con cada fase).
  *
- * Corre los 10 flujos etiquetados contra la app fixture usando el pipeline
- * asistido REAL. Capas 2a (circuit breaker) y 2b (victoria verificada +
- * double-check de persistencia + estancamiento) ya están implementadas.
+ * Corre los 13 flujos etiquetados (10 originales + 3 de cobertura del healer,
+ * HEALER-1) contra la app fixture usando el pipeline asistido REAL. Capas 2a
+ * (circuit breaker) y 2b (victoria verificada + double-check de persistencia
+ * + estancamiento) ya están implementadas.
  *
  * Capa 3 (Fase 3a, GHOST-29): el CONTRATO del juez, el dossier builder y el
  * WIRING de los 5 triggers en `pipeline.ts` ya están implementados y probados
@@ -11,10 +12,15 @@
  * determinista (`testOracleJudge` en `benchmark-runner.ts`), NO un LLM real.
  * Clasifica solo a partir de las señales que el dossier ya trae
  * (deterministicChecks + pageErrors + patrones de error de red), sin ningún
- * modelo. El 10/10 que este archivo alcanza mide que el WIRING resuelve
- * correctamente los 5 triggers hacia el veredicto esperado — NO mide
+ * modelo. El 10/10 (ahora 13/13) que este archivo alcanza mide que el WIRING
+ * resuelve correctamente los 5 triggers hacia el veredicto esperado — NO mide
  * precisión de clasificación de un juez real, que es explícitamente Fase
  * 3b/GHOST-30 (factory `createJudge` del lado API + prompt de sistema).
+ *
+ * HEALER-1 (esta fase): añade `testOracleHealer`, un doble determinista
+ * análogo que reemplaza a `noopHealer` para probar catch→heal→retry en 3
+ * escenarios reales (selector renombrado, modal/overlay bloqueando, selector
+ * ambiguo) — ver `benchmark-runner.ts` para el detalle de las reglas.
  *
  * Ejecutar: `pnpm --filter @ghostly-io/runner test reliability-benchmark`
  */
@@ -23,8 +29,8 @@ import { BENCHMARK_FLOWS } from "../../../test-fixtures/flows.js";
 import { formatBenchmarkReport, runReliabilityBenchmark } from "../../../test-fixtures/benchmark-runner.js";
 
 describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pendiente)", () => {
-  it("tiene 10 flujos etiquetados cubriendo los 6 veredictos de la taxonomía", () => {
-    expect(BENCHMARK_FLOWS).toHaveLength(10);
+  it("tiene 13 flujos etiquetados (10 originales + 3 de cobertura del healer) cubriendo los 6 veredictos de la taxonomía", () => {
+    expect(BENCHMARK_FLOWS).toHaveLength(13);
     const verdicts = new Set(BENCHMARK_FLOWS.map((f) => f.expectedVerdict));
     expect(verdicts).toEqual(
       new Set([
@@ -45,8 +51,8 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
       // eslint-disable-next-line no-console
       console.log(formatBenchmarkReport(report));
 
-      expect(report.total).toBe(10);
-      expect(report.results).toHaveLength(10);
+      expect(report.total).toBe(13);
+      expect(report.results).toHaveLength(13);
       // El reporte siempre debe producirse, incluso cuando el pipeline actual
       // clasifica mal — este test documenta el baseline, no lo esconde.
     },
@@ -209,9 +215,10 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
   );
 
   it(
-    "meta objetivo del benchmark (spec AC1): 10/10 veredictos veraces con el WIRING de la Capa 3 + oráculo de " +
-      "test determinista (Fase 3a) — esto mide correctitud del wiring, NO precisión de un juez LLM real, que " +
-      "es explícitamente Fase 3b/GHOST-30 y se valida contra el mismo ground truth de flows.ts",
+    "meta objetivo del benchmark (spec AC1): 13/13 veredictos veraces (10 originales + 3 de cobertura del " +
+      "healer, HEALER-1) con el WIRING de la Capa 3 + oráculo de test determinista (Fase 3a) — esto mide " +
+      "correctitud del wiring, NO precisión de un juez LLM real, que es explícitamente Fase 3b/GHOST-30 y se " +
+      "valida contra el mismo ground truth de flows.ts",
     async () => {
       const report = await runReliabilityBenchmark();
       // eslint-disable-next-line no-console
