@@ -1605,8 +1605,11 @@ function looksLikeSeedInputPlan(steps: Step[]): boolean {
   if (steps.length !== 1) return false;
   const [first] = steps;
   if (!first || first.action !== "goto") return false;
-  const target = first.url.trim().toLowerCase();
-  return target === "/" || target === "";
+  // Compara solo el pathname: un seed real es "ir a la raíz", con o sin query
+  // string (p. ej. un harness de test que anexa `?scenario=...` a la home).
+  const raw = first.url.trim();
+  const pathname = raw.split(/[?#]/)[0]?.toLowerCase() ?? "";
+  return pathname === "/" || pathname === "";
 }
 
 function looksLikeIncompleteLoginReplay(steps: Step[]): boolean {

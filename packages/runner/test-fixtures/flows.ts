@@ -6,7 +6,7 @@
  * esperado (ground truth, etiquetado a mano) según la taxonomía de la
  * spec §5. Cubren los 6 desenlaces posibles.
  */
-import type { AssistedRunInput } from "../src/index.js";
+import type { AssistedDeps, AssistedRunInput } from "../src/index.js";
 import type { FixtureScenario } from "./app.js";
 
 export type ExpectedVerdict =
@@ -27,6 +27,16 @@ export type BenchmarkFlow = {
   expectedVerdict: ExpectedVerdict;
   /** Por qué este es el veredicto correcto — para el humano que etiqueta/revisa. */
   rationale: string;
+  /**
+   * Strategist determinista opcional (sin LLM), usado SOLO por flujos que
+   * necesitan pasos generados dinámicamente (p. ej. el net de plan-pruning
+   * de HEALER-4: `pendingSteps` de un plan full-plan/seed nunca pasan por
+   * `shouldDropPlannedStep`, así que ese flujo necesita un seed `goto /` +
+   * expansión vía strategist para poder ejercitar el path de poda). Si está
+   * ausente, `benchmark-runner.ts` usa `noopStrategist` (comportamiento
+   * previo, sin cambios para los demás flujos).
+   */
+  strategist?: AssistedDeps["strategist"];
 };
 
 const DEFAULT_ASSIST_BASE = {
@@ -379,5 +389,65 @@ export const BENCHMARK_FLOWS: BenchmarkFlow[] = [
     expectedVerdict: "success",
     rationale:
       "El modal de confirmación tapa el control de fondo/sidebar; el click de fondo queda pointer-intercepted por el backdrop y el healer (Rule B — visibleDialogs visible) antepone el dismiss antes de reintentar. El guardado posterior es real y verificable — cobertura genérica del alcance de modal sin ningún string de dominio.",
+  },
+  // --- HEALER-4: net de plan-pruning genérico (sin strings de dominio),
+  // corrido ANTES de tocar pipeline.ts para probar que el mecanismo genérico
+  // ya existente (`shouldDropRedundantModalOpenClick` sobre
+  // `ObserverSnapshot.visibleDialogs`) cubre el caso que hoy resuelven los
+  // matchers de dominio (#12/#13) que este slice va a reemplazar/eliminar.
+  //
+  // `pendingSteps` de un plan full-plan/seed NUNCA pasan por
+  // `shouldDropPlannedStep` (pipeline.ts ~2307) — solo lo hacen los steps que
+  // vienen del strategist (~2234) o del replan (~2877). Por eso este flujo usa
+  // un seed `goto /` (dispara `looksLikeSeedInputPlan` -> expansión vía
+  // strategist) en vez de un plan scripteado completo, con un strategist
+  // ORÁCULO DE TEST determinista (no LLM) que devuelve, en un solo chunk, un
+  // click REDUNDANTE (duplica el heading del dialog ya abierto) seguido del
+  // dismiss + fill + save reales.
+  {
+    id: "redundant-reopen-dropped-while-dialog-open",
+    goal: "Cerrar la confirmación redundante y guardar una nota con título 'Poda redundante'",
+    scenario: "modal-open-redundant-reopen-dropped",
+    steps: [{ action: "goto", url: "/" }],
+    assist: {
+      ...DEFAULT_ASSIST_BASE,
+      goal: "Cerrar la confirmación redundante y guardar una nota con título 'Poda redundante'",
+      victory: { selectorVisible: ['[data-testid="notes-table"] td:has-text("Poda redundante")'], mustAll: true },
+      maxHorizons: 3,
+      stepsPerHorizon: 10,
+    },
+    expectedVerdict: "success",
+    rationale:
+      "El dialog genérico 'Confirmar guardado' ya está abierto al cargar la página; el strategist oráculo " +
+      "propone un click redundante que duplica textualmente el heading del dialog visible antes del dismiss " +
+      "real. El pipeline debe DROPPEAR ese click redundante vía el mecanismo genérico ya existente " +
+      "(`shouldDropRedundantModalOpenClick`, visibleDialogs heading match) sin ningún string de dominio — y " +
+      "el resto del plan (dismiss real + fill + save) igual llega a success.",
+    strategist: (() => {
+      // Contador de invocaciones (no `history.length`): el seed `goto /` ya
+      // deja 1 entrada en `history` ANTES de la primera llamada al
+      // strategist (horizon 1 ejecuta el seed, horizon 2 recién planea) —
+      // usar `history.length > 0` como guarda dispararía en la primera
+      // llamada real. El chunk único se sirve solo la primera vez que se
+      // invoca este strategist; llamadas subsiguientes (replan defensivo,
+      // no debería ocurrir en el camino feliz) devuelven vacío.
+      let served = false;
+      return async () => {
+        if (served) return { steps: [], hasMore: false };
+        served = true;
+        return {
+          steps: [
+            // REDUNDANTE: duplica el heading "Confirmar guardado" del dialog ya
+            // visible -> DEBE ser dropeado por shouldDropRedundantModalOpenClick.
+            { step: { action: "click", selector: "text=Confirmar guardado" } },
+            // Dismiss real del dialog.
+            { step: { action: "click", selector: '[data-testid="confirm-dialog-ok"]' } },
+            { step: { action: "fill", selector: '[data-testid="note-title-input"]', value: "Poda redundante" } },
+            { step: { action: "click", selector: '[data-testid="save-note-button"]' } },
+          ],
+          hasMore: false,
+        };
+      };
+    })(),
   },
 ];

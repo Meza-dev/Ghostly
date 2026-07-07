@@ -358,7 +358,16 @@ async function runOneFlow(baseUrl: string, flow: BenchmarkFlow): Promise<Benchma
   // testOracleHealer va SIEMPRE cableado (design D2): solo se ejecuta cuando
   // `assist.maxHealingAttemptsPerStep >= 1`, así que los 10 flujos existentes
   // (que mantienen `maxHealingAttemptsPerStep: 0`) nunca lo invocan.
-  const deps: AssistedDeps = { strategist: noopStrategist, healer: testOracleHealer, judge: testOracleJudge };
+  //
+  // `flow.strategist` (HEALER-4): opcional, usado solo por flujos que
+  // necesitan pasos generados dinámicamente vía seed + expansión del
+  // strategist (ver `BenchmarkFlow.strategist` en flows.ts). Ausente en
+  // los demás flujos -> comportamiento previo sin cambios (noopStrategist).
+  const deps: AssistedDeps = {
+    strategist: flow.strategist ?? noopStrategist,
+    healer: testOracleHealer,
+    judge: testOracleJudge,
+  };
 
   const runResult = await runAssistedFlow(
     {

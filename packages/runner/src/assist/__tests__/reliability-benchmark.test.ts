@@ -29,8 +29,8 @@ import { BENCHMARK_FLOWS } from "../../../test-fixtures/flows.js";
 import { formatBenchmarkReport, runReliabilityBenchmark } from "../../../test-fixtures/benchmark-runner.js";
 
 describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pendiente)", () => {
-  it("tiene 15 flujos etiquetados (10 originales + 3 de cobertura del healer HEALER-1 + 1 de HEALER-2 + 1 de cobertura genérica de alcance de modal) cubriendo los 6 veredictos de la taxonomía", () => {
-    expect(BENCHMARK_FLOWS).toHaveLength(15);
+  it("tiene 16 flujos etiquetados (10 originales + 3 de cobertura del healer HEALER-1 + 1 de HEALER-2 + 1 de cobertura genérica de alcance de modal + 1 de plan-pruning genérico HEALER-4) cubriendo los 6 veredictos de la taxonomía", () => {
+    expect(BENCHMARK_FLOWS).toHaveLength(16);
     const verdicts = new Set(BENCHMARK_FLOWS.map((f) => f.expectedVerdict));
     expect(verdicts).toEqual(
       new Set([
@@ -51,8 +51,8 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
       // eslint-disable-next-line no-console
       console.log(formatBenchmarkReport(report));
 
-      expect(report.total).toBe(15);
-      expect(report.results).toHaveLength(15);
+      expect(report.total).toBe(16);
+      expect(report.results).toHaveLength(16);
       // El reporte siempre debe producirse, incluso cuando el pipeline actual
       // clasifica mal — este test documenta el baseline, no lo esconde.
     },
@@ -213,7 +213,12 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
           r.flow.id !== "modal-overlay-needs-heal-dismiss" &&
           r.flow.id !== "ambiguous-duplicate-selector" &&
           r.flow.id !== "blocking-error-healer-abstains" &&
-          r.flow.id !== "modal-open-background-click-ignored",
+          r.flow.id !== "modal-open-background-click-ignored" &&
+          // HEALER-4 net: usa un strategist real (no noop) para ejercitar
+          // shouldDropPlannedStep — no es uno de los 10 flujos full-plan
+          // "inertes" que este test cubre. Excluido explícitamente en vez de
+          // subir el conteo a 11 (design §4 / spec "Full benchmark suite").
+          r.flow.id !== "redundant-reopen-dropped-while-dialog-open",
       );
       expect(existingResults).toHaveLength(10);
       for (const r of existingResults) {
@@ -245,6 +250,33 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
     );
   });
 
+  describe("plan-pruning genérico (HEALER-4 — net previo a la eliminación de matchers de dominio)", () => {
+    it(
+      "redundant-reopen-dropped-while-dialog-open: el click redundante que duplica el heading del dialog " +
+        "visible se DROPPEA vía el mecanismo genérico ya existente (shouldDropRedundantModalOpenClick), y el " +
+        "resto del plan (dismiss real + fill + save) igual llega a success — prueba que el path genérico ya " +
+        "cubre lo que los matchers de dominio #12/#13 resuelven hoy, ANTES de tocar pipeline.ts",
+      async () => {
+        const report = await runReliabilityBenchmark(
+          BENCHMARK_FLOWS.filter((f) => f.id === "redundant-reopen-dropped-while-dialog-open"),
+        );
+        const [result] = report.results;
+        expect(result).toBeDefined();
+        expect(result!.observedVerdict).toBe("success");
+        expect(result!.falseSuccess).toBe(false);
+        const dropped =
+          result!.runResult.planProgress?.filter(
+            (p) => p.status === "dropped" && p.note === "context-drop",
+          ) ?? [];
+        expect(dropped.length).toBeGreaterThanOrEqual(1);
+        expect(
+          dropped.some((p) => JSON.stringify(p.step).includes("Confirmar guardado")),
+        ).toBe(true);
+      },
+      30_000,
+    );
+  });
+
   it(
     "cero falsos éxitos (spec AC1/AC3 — invariante duro desde Fase 2b, se mantiene con el juez wireado)",
     async () => {
@@ -259,11 +291,11 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
   );
 
   it(
-    "meta objetivo del benchmark (spec AC1): 15/15 veredictos veraces (10 originales + 3 de cobertura del " +
-      "healer HEALER-1 + 1 de HEALER-2 + 1 de cobertura genérica de alcance de modal) con el WIRING de la " +
-      "Capa 3 + oráculo de test determinista (Fase 3a) — esto mide correctitud del wiring, NO precisión de " +
-      "un juez LLM real, que es explícitamente Fase 3b/GHOST-30 y se valida contra el mismo ground truth de " +
-      "flows.ts",
+    "meta objetivo del benchmark (spec AC1): 16/16 veredictos veraces (10 originales + 3 de cobertura del " +
+      "healer HEALER-1 + 1 de HEALER-2 + 1 de cobertura genérica de alcance de modal + 1 de plan-pruning " +
+      "genérico HEALER-4) con el WIRING de la Capa 3 + oráculo de test determinista (Fase 3a) — esto mide " +
+      "correctitud del wiring, NO precisión de un juez LLM real, que es explícitamente Fase 3b/GHOST-30 y se " +
+      "valida contra el mismo ground truth de flows.ts",
     async () => {
       const report = await runReliabilityBenchmark();
       // eslint-disable-next-line no-console
