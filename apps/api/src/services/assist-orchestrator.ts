@@ -535,6 +535,21 @@ function filterFalseOverlaySteps(steps: Step[], snapshotMarkdown: string): Step[
   });
 }
 
+/**
+ * H7 — único punto de entrada del filtro de pasos, compartido entre
+ * strategist y healer. Siempre aplica `filterFalseOverlaySteps`; solo aplica
+ * `filterAlreadyCompletedPlanSteps` cuando se pasa `ctx` (el healer no tiene
+ * concepto de `planProgress`).
+ */
+function applyStepFilters(
+  steps: Step[],
+  treeMarkdown: string,
+  ctx?: StrategistContextWithPlan,
+): Step[] {
+  const filtered = filterFalseOverlaySteps(steps, treeMarkdown);
+  return ctx ? filterAlreadyCompletedPlanSteps(filtered, ctx) : filtered;
+}
+
 function isDebugEnabled(): boolean {
   const raw = (process.env.ASSIST_LLM_DEBUG ?? "").trim().toLowerCase();
   if (raw === "") return process.env.NODE_ENV !== "production";
@@ -728,24 +743,9 @@ export function createStrategist(opts: OrchestratorOptions): StrategistFn {
       "strategist",
     ).catch(() => ({}) as Record<string, unknown>);
     const rawSteps = Array.isArray(raw.steps) ? raw.steps : [];
-    const steps = filterAlreadyCompletedPlanSteps(
-      filterSidebarNavWhenCalificacionModalOpen(
-        filterMisleadingCloseForCalificacionCreateFlow(
-          filterGoogleMapsWidgetMisclickSteps(
-            filterStaleCreateTripModalSteps(
-              filterFalseOverlaySteps(
-                coerceStepsArray(rawSteps).slice(0, opts.chunkSize),
-                ctx.snapshot.treeMarkdown,
-              ),
-              ctx.snapshot.treeMarkdown,
-            ),
-          ),
-          ctx.goal,
-          ctx.snapshot.treeMarkdown,
-        ),
-        ctx.goal,
-        ctx.snapshot.treeMarkdown,
-      ),
+    const steps = applyStepFilters(
+      coerceStepsArray(rawSteps).slice(0, opts.chunkSize),
+      ctx.snapshot.treeMarkdown,
       withPlan,
     );
     const hasMore =
@@ -791,23 +791,7 @@ export function createHealer(opts: OrchestratorOptions): HealerFn {
       "healer",
     ).catch(() => ({}) as Record<string, unknown>);
     const rawSteps = Array.isArray(raw.steps) ? raw.steps : [];
-    const steps = filterSidebarNavWhenCalificacionModalOpen(
-      filterMisleadingCloseForCalificacionCreateFlow(
-        filterGoogleMapsWidgetMisclickSteps(
-          filterStaleCreateTripModalSteps(
-            filterFalseOverlaySteps(
-              coerceStepsArray(rawSteps).slice(0, 3),
-              ctx.snapshot.treeMarkdown,
-            ),
-            ctx.snapshot.treeMarkdown,
-          ),
-        ),
-        ctx.goal,
-        ctx.snapshot.treeMarkdown,
-      ),
-      ctx.goal,
-      ctx.snapshot.treeMarkdown,
-    );
+    const steps = applyStepFilters(coerceStepsArray(rawSteps).slice(0, 3), ctx.snapshot.treeMarkdown);
     const rationale = typeof raw.rationale === "string" ? raw.rationale : undefined;
     const result: HealerResult = { steps, ...(rationale ? { rationale } : {}) };
     debugLog("healer", {
