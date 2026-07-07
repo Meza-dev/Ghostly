@@ -101,100 +101,6 @@ function buildModalFocusHint(snapshot: ObserverSnapshot): string {
   ].join("\n");
 }
 
-/** Alineado con el runner: título del modal + señales de formulario en el markdown del snapshot. */
-function treeShowsCreateTripModalOpen(markdown: string): boolean {
-  const t = markdown.toLowerCase();
-  if (!t.includes("crear nuevo viaje")) return false;
-  return (
-    t.includes("conductorid") ||
-    t.includes("vehiculoid") ||
-    t.includes("remito") ||
-    t.includes("react-select")
-  );
-}
-
-function goalMentionsCreatingCalificacion(goal: string): boolean {
-  const g = goal.replace(/\s+/g, " ");
-  return (
-    /(?:crear|crea)\s+(?:una\s+)?calific/i.test(g) ||
-    /calific\w*.{0,24}(?:crear|crea|nueva|nuevo)/i.test(g) ||
-    /nueva\s+calific/i.test(g)
-  );
-}
-
-/** Panel tipo POTA: «Crear grupo» + campos de calificaciones del grupo (no es un overlay ajeno). */
-function treeShowsCalificacionGroupModal(markdown: string): boolean {
-  const t = markdown.toLowerCase();
-  const hasTitle =
-    t.includes("crear grupo") ||
-    t.includes("crear grupos") ||
-    t.includes("editar grupo") ||
-    t.includes("editar grupos");
-  if (!hasTitle) return false;
-  return (
-    t.includes("calificaciones del grupo") ||
-    t.includes("valorización") ||
-    t.includes("valorizacion") ||
-    (t.includes("etiqueta") && t.includes("spinbutton"))
-  );
-}
-
-function buildCalificacionGroupModalHint(goal: string, treeMarkdown: string): string {
-  if (!goalMentionsCreatingCalificacion(goal)) return "";
-  if (!treeShowsCalificacionGroupModal(treeMarkdown)) return "";
-  return [
-    "",
-    "CONTEXTO — Formulario de creación (calificaciones / grupos):",
-    "- Si ves un panel con heading «Crear grupo» y textos como «Calificaciones del grupo», placeholders de nombre/etiqueta y botones «Guardar»/«Cancelar», ese panel ES el flujo para crear la calificación o el grupo: rellena campos y pulsa «Guardar»; no lo interpretes como un overlay que tape el botón «Crear calificación».",
-    "- Tras clic en «Crear calificación» (o equivalente), un mensaje de «sin mutación en el DOM» puede ser un falso negativo si este formulario ya está visible: prioriza `fill` y acciones dentro del modal; no propongas «Cerrar» salvo que el objetivo pida cancelar o descartar.",
-    "- Mientras este formulario esté abierto, NO planifiques clics en «Diseño», «Calificaciones» del menú ni de nuevo en «Crear calificación» (quedan detrás del modal y fallan): sigue con `fill` en nombre/etiqueta/valorización y `click` en «Guardar».",
-  ].join("\n");
-}
-
-/** Evita que el healer cierre un modal de creación cuando el objetivo es crear y el mapa ya muestra el formulario. */
-/**
- * Con el modal «Crear grupo» abierto, los clics en el menú lateral suelen hacer timeout (tapados);
- * no aportan al objetivo de rellenar y guardar.
- */
-function filterSidebarNavWhenCalificacionModalOpen(steps: Step[], goal: string, treeMarkdown: string): Step[] {
-  if (!goalMentionsCreatingCalificacion(goal)) return steps;
-  if (!treeShowsCalificacionGroupModal(treeMarkdown)) return steps;
-  return steps.filter((st) => {
-    if (st.action !== "click") return true;
-    const low = st.selector.replace(/\s+/g, " ").toLowerCase();
-    const touchesBlockedNav =
-      /has-text\(\s*["']diseño["']\s*\)/i.test(low) ||
-      /has-text\(\s*["']evaluador["']\s*\)/i.test(low) ||
-      /has-text\(\s*["']auditor[ií]a["']\s*\)/i.test(low) ||
-      /has-text\(\s*["']evaluado["']\s*\)/i.test(low) ||
-      /has-text\(\s*["']calificaciones["']\s*\)/i.test(low) ||
-      /has-text\(\s*["']crear calificaci[oó]n["']\s*\)/i.test(low) ||
-      /text\s*=\s*["']?diseño["']?$/i.test(low) ||
-      /text\s*=\s*["']?calificaciones["']?$/i.test(low);
-    return !touchesBlockedNav;
-  });
-}
-
-function filterMisleadingCloseForCalificacionCreateFlow(
-  steps: Step[],
-  goal: string,
-  treeMarkdown: string,
-): Step[] {
-  if (!goalMentionsCreatingCalificacion(goal)) return steps;
-  if (!treeShowsCalificacionGroupModal(treeMarkdown)) return steps;
-  if (/cancelar|descartar|cerrar sin guardar|no guardar|volver atr[aá]s/i.test(goal)) return steps;
-  return steps.filter((st) => {
-    if (st.action !== "click") return true;
-    const low = st.selector.replace(/\s+/g, " ").toLowerCase();
-    const targetsGenericClose =
-      /aria-label\s*=\s*["']cerrar["']/i.test(low) ||
-      /\[aria-label\s*=\s*["']cerrar["']\]/i.test(low) ||
-      /button:has-text\(\s*["']cerrar["']\s*\)/i.test(low) ||
-      (/has-text\(\s*["']cerrar["']\s*\)/i.test(low) && /button|getbyrole/i.test(low));
-    return !targetsGenericClose;
-  });
-}
-
 function filterAlreadyCompletedPlanSteps(steps: Step[], ctx: StrategistContextWithPlan): Step[] {
   const progress = ctx.planProgress ?? [];
   if (progress.length === 0) return steps;
@@ -205,49 +111,6 @@ function filterAlreadyCompletedPlanSteps(steps: Step[], ctx: StrategistContextWi
   );
   if (done.size === 0) return steps;
   return steps.filter((s) => !done.has(canonicalStepKey(s)));
-}
-
-function buildCreateTripModalSemanticHint(snapshot: ObserverSnapshot): string {
-  if (!treeShowsCreateTripModalOpen(snapshot.treeMarkdown)) return "";
-  return [
-    "",
-    "CONTEXTO — Formulario «Crear Nuevo Viaje» ya visible en el mapa (título + conductor/remitos/react-select):",
-    "- NO emitas click ni wait sobre «Agregar Datos» (suele quedar detrás del modal; el click hace timeout).",
-    '- NO uses `button` / getByRole(button) con el texto «Crear Nuevo Viaje»: en el DOM suele ser un `heading` (h3), no un botón.',
-    "- El mapa embebido en el modal es normal (zoom, «Abrir en Google Maps», Terms): NO lo trates como error salvo que el mapa muestre texto de fallo («can't load», «no puede cargar»). Solo entonces el botón «OK» del aviso.",
-    "- Si hay aviso de Google Maps con botón «OK», prioriza cerrarlo antes de rellenar o pulsar Continuar.",
-    "- Sigue con `#react-select-*`, inputs del modal, filas Remito (`div[role=button]` con texto Remito) o el botón «Continuar» según INTERACTIVOS VISIBLES.",
-  ].join("\n");
-}
-
-/** El widget de Maps incluye enlaces «Abrir en Google Maps», Terms, etc.; no son overlays bloqueantes. */
-function filterGoogleMapsWidgetMisclickSteps(steps: Step[]): Step[] {
-  return steps.filter((step) => {
-    if (step.action !== "click" && step.action !== "waitForSelector") return true;
-    const low = step.selector.toLowerCase();
-    if (low.includes("open this area in google maps")) return false;
-    if (low.includes("maps.google.com") || low.includes("google.com/maps")) return false;
-    return true;
-  });
-}
-
-function filterStaleCreateTripModalSteps(steps: Step[], snapshotMarkdown: string): Step[] {
-  if (!treeShowsCreateTripModalOpen(snapshotMarkdown)) return steps;
-  return steps.filter((step) => {
-    if (step.action !== "click" && step.action !== "waitForSelector") return true;
-    const sel = step.selector;
-    const low = sel.toLowerCase();
-    if (low.includes("agregar datos") || /aria-label\s*=\s*["']?agregar datos["']?/i.test(sel)) {
-      return false;
-    }
-    if (!low.includes("crear nuevo viaje")) return true;
-    const raw = sel.trim();
-    if (/^h[1-6]:(has-text|text)\(/i.test(raw)) return true;
-    if (low.startsWith("heading:has-text")) return true;
-    if (step.action === "click" && (low.includes("button") || low.includes("role=button"))) return false;
-    if (step.action === "waitForSelector" && low.includes("button")) return false;
-    return true;
-  });
 }
 
 const STRATEGIST_SYSTEM = [
@@ -266,8 +129,7 @@ const STRATEGIST_SYSTEM = [
   "- Si el mapa solo muestra un banner/diálogo/overlay bloqueante (ej. botones 'Aceptar'/'Cancelar'/'OK' sin otro contenido real), tu PRIMER paso debe ser cerrarlo o aceptarlo antes de continuar.",
   "- Si el mapa parece incompleto o la página está cargando (pocos nodos, sin inputs visibles aun cuando el objetivo implica un formulario), emite primero un 'snapshot' o un 'waitForSelector' sobre un elemento plausible en lugar de alucinar selectores.",
   "- Si detectas un bloque 'Controles de formulario visibles detectados por DOM', priorízalo para elegir selectores reales (id, name, placeholder) en lugar de adivinar.",
-  "- Si el mapa incluye el bloque 'Diálogos / modales aparentemente VISIBLES ahora', asume que esos modales están ABIERTOS para el usuario (no solo presentes en HTML oculto). No planifiques de nuevo clicks para abrir el mismo flujo si el título visible del modal ya corresponde al paso previo; sigue con waits sobre campos del formulario, rellenos o cierre de sub-diálogos (p. ej. OK en errores de mapas).",
-  "- Si el mapa lista a la vez «Gestión de Viajes», el heading «Crear Nuevo Viaje» y controles del formulario (#conductorId, #vehiculoId, react-select, remitos), el modal de creación YA está abierto: no planifiques click en «Agregar Datos» ni un botón llamado «Crear Nuevo Viaje» (ese texto es un heading, no role=button).",
+  "- Si el mapa incluye el bloque 'Diálogos / modales aparentemente VISIBLES ahora', asume que esos modales están ABIERTOS para el usuario (no solo presentes en HTML oculto). No planifiques de nuevo clicks para abrir el mismo flujo si el título visible del modal ya corresponde al paso previo; sigue con waits sobre campos del formulario o rellenos.",
   "- Si el mapa ya muestra navegación/sidebar y enlaces funcionales, prioriza avanzar por ese flujo y NO intentes clicks de 'Aceptar/Cancelar' a menos que esos controles estén visibles en el bloque DOM.",
   "- NO repitas pasos ya exitosos del historial reciente (fill/click/wait) salvo que exista evidencia explícita de que el flujo volvió atrás.",
   "- Si recibes condición de victoria, orienta tus próximos pasos para cumplirla cuanto antes (no reinicies login si ya hay contexto autenticado).",
@@ -275,14 +137,9 @@ const STRATEGIST_SYSTEM = [
   "- TERMINANTEMENTE PROHIBIDO usar `[ref=e123]` o cualquier selector basado en ref= del mapa: esos índices son efímeros del snapshot a11y y NO son CSS válidos en el DOM.",
   "- Si un paso falló, NO repitas el mismo selector. Si en el mapa o en «INTERACTIVOS VISIBLES» el control tiene `#id`, `[data-testid]`, `[name]` o `[aria-label]` único, está PROHIBIDO preferir `:has-text` para ese control.",
   "- Prioridad cuando el mapa lo permita: (1) `#id`, `[data-testid=...]`, `[name=...]`, `[aria-label=...]`; (2) `button:has-text(\"...\")` / `a:has-text(\"...\")` / `text=...` solo si no hay atributo estable. El runner traduce texto de botón/enlace a getByRole antes que CSS.",
-  "- Para ir a la sección «Viajes» del menú lateral, usa `a:has-text(\"Viajes\")` o enlace bajo `navigation`, no `text=Viajes` suelto: puede coincidir con el título de página «Gestión de Viajes» (substring).",
-  "- Las entradas de un submenú desplegable (bajo «Diseño», etc.) suelen ser `button` dentro de `[role=menu]` o de `nav`, no enlaces `<a>`: si el mapa muestra `button text=\"Calificaciones\"`, usa `button:has-text(\"Calificaciones\")` (no `a:has-text`).",
-  "- PROHIBIDO planificar click en «Open this area in Google Maps», Terms del mapa, «Keyboard shortcuts» del widget, o zoom del mapa salvo que el objetivo lo pida; no son el aviso de error.",
   "- Si el bloque «ATENCIÓN — fatiga de selector» aparece en el prompt de usuario, ese selector ya falló 2+ veces: OBLIGATORIO cambiar a name/id/placeholder/aria-label/clase del mapa; no emitas el mismo :has-text otra vez.",
   "- Si aparece «MODAL ABIERTO», solo planifica interacciones dentro del modal hasta cerrarlo o completar su acción.",
-    "- Si el mapa muestra «Crear grupo» con «Calificaciones del grupo»/«Guardar» y el objetivo es crear una calificación, ese panel es el flujo de creación: rellena y guarda; no lo cierres con «Cerrar» salvo cancelación explícita.",
-    "- Para inputs cuyo mapa muestre `textbox \"…\"` (placeholder accesible), usa `[placeholder=\"…\"]` o el mismo texto con `fill`; evita `text=…` suelto (suele ser etiqueta, no el input).",
-  "- El runner espera solo a que desaparezcan textos típicos de carga en modales (p. ej. «Cargando documentos», «Cargando remitos») antes de planificar y entre pasos; no dupliques ese wait salvo que necesites un timeout distinto.",
+  "- Para inputs cuyo mapa muestre `textbox \"…\"` (placeholder accesible), usa `[placeholder=\"…\"]` o el mismo texto con `fill`; evita `text=…` suelto (suele ser etiqueta, no el input).",
   "- Condición `selectorVisible` en victoria: si el usuario escribió lenguaje natural (p. ej. «toast de confirmación»), tradúcelo a `text=...`, selector CSS real (`.toast-success`), o fragmento estable del mapa; nunca dejes frases sueltas sin traducir.",
   "- REGLA CRÍTICA: antes de proponer nuevos pasos, revisa historial + estado del plan. Si la última acción relevante fue «Guardar», «Enviar», «Confirmar», «Crear» y NO hay error explícito posterior, tu prioridad es verificar victoria; está PROHIBIDO repetir «Guardar/Crear/Enviar» sin evidencia de fallo previo.",
   "- Evita `button[type=submit]` a menos que el mapa lo respalde, porque muchos `<button>` no declaran `type=submit`.",
@@ -300,10 +157,7 @@ const HEALER_SYSTEM = [
   "- 'strict mode violation' => misma lógica: desambigua con texto o atributo único.",
   "- Elemento tapado por overlay/banner => primer paso debe ser cerrar el overlay (click en su botón de cierre o 'Aceptar').",
   "- 'element not visible' con un botón en un modal activo => probablemente debes cerrar ese modal antes (salvo que el modal sea un formulario de creación alineado con el objetivo: entonces interactúa dentro o guarda).",
-  "- Error «sin mutación» o timeout tras «Crear calificación»/equivalente: si el mapa incluye «Crear grupo», «Calificaciones del grupo» y «Guardar», trabaja dentro de ese formulario (fill, Guardar); no propongas «Cerrar»/aria-label Cerrar salvo que el objetivo pida cancelar.",
   "- Si el mapa NO muestra evidencia del anchor/overlay que justificaría tu paso (p. ej. no hay overlay visible en el bloque DOM), NO inventes 'Aceptar/Cancelar' ni selectores que el mapa no respalda: propone un wait/snapshot o devuelve steps vacíos. No decides el desenlace del run: si el fallo parece un error bloqueante de la app, cede al juez.",
-  "- Si el mapa muestra el formulario del modal «Crear Nuevo Viaje» (heading + conductor/remitos/react-select) y el fallo fue click en «Agregar Datos» o elemento tapado, prioriza botón «OK» de Google Maps o react-select / Continuar; no intentes reabrir el modal.",
-  "- NUNCA propongas click en «Open this area in Google Maps» ni enlaces del chrome del mapa para «cerrar» el modal: el mapa embebido es parte del formulario. Solo «OK» si hay mensaje explícito de error de carga de Maps.",
   "Preferir selectores robustos: texto visible del mapa O aria-label/role si el mapa los muestra explícitamente; evita selectores genéricos.",
   "PROHIBIDO `[ref=e…]` en selectores; usa #id, [data-testid], [aria-label] del bloque INTERACTIVOS VISIBLES.",
   "Acciones permitidas (mismo contrato que Strategist).",
@@ -616,8 +470,6 @@ function buildStrategistUserPrompt(ctx: StrategistContextWithPlan, chunkSize: nu
   const fatigueBlock = fatigue ? `${fatigue}\n` : "";
   const planProgressHint = buildPlanProgressHint(ctx);
   const modalHint = buildModalFocusHint(ctx.snapshot);
-  const createTripHint = buildCreateTripModalSemanticHint(ctx.snapshot);
-  const calificacionModalHint = buildCalificacionGroupModalHint(ctx.goal, ctx.snapshot.treeMarkdown);
 
   return [
     `Objetivo: ${ctx.goal}`,
@@ -630,8 +482,6 @@ function buildStrategistUserPrompt(ctx: StrategistContextWithPlan, chunkSize: nu
     ctx.snapshot.treeMarkdown,
     planProgressHint,
     modalHint,
-    createTripHint,
-    calificacionModalHint,
     fatigueBlock,
     historyLine ? `Historial reciente:\n${historyLine}` : "Historial: (vacío)",
   ].join("\n");
@@ -696,8 +546,6 @@ function buildHealerUserPrompt(ctx: HealerContext): string {
     .join("\n");
   const fatigue = buildSelectorFatigueHint(history);
   const modalHint = buildModalFocusHint(ctx.snapshot);
-  const createTripHint = buildCreateTripModalSemanticHint(ctx.snapshot);
-  const calificacionModalHint = buildCalificacionGroupModalHint(ctx.goal, ctx.snapshot.treeMarkdown);
   const codeHintsBlock = buildCodeHintsBlock(ctx.codeHints);
 
   return [
@@ -710,8 +558,6 @@ function buildHealerUserPrompt(ctx: HealerContext): string {
     ...(codeHintsBlock ? ["", codeHintsBlock] : []),
     ...(fatigue ? ["", fatigue] : []),
     ...(modalHint ? ["", modalHint] : []),
-    ...(createTripHint ? ["", createTripHint] : []),
-    ...(calificacionModalHint ? ["", calificacionModalHint] : []),
     "",
     "Mapa semántico actual:",
     ctx.snapshot.treeMarkdown,
