@@ -29,8 +29,8 @@ import { BENCHMARK_FLOWS } from "../../../test-fixtures/flows.js";
 import { formatBenchmarkReport, runReliabilityBenchmark } from "../../../test-fixtures/benchmark-runner.js";
 
 describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pendiente)", () => {
-  it("tiene 14 flujos etiquetados (10 originales + 3 de cobertura del healer HEALER-1 + 1 de HEALER-2) cubriendo los 6 veredictos de la taxonomía", () => {
-    expect(BENCHMARK_FLOWS).toHaveLength(14);
+  it("tiene 15 flujos etiquetados (10 originales + 3 de cobertura del healer HEALER-1 + 1 de HEALER-2 + 1 de cobertura genérica de alcance de modal) cubriendo los 6 veredictos de la taxonomía", () => {
+    expect(BENCHMARK_FLOWS).toHaveLength(15);
     const verdicts = new Set(BENCHMARK_FLOWS.map((f) => f.expectedVerdict));
     expect(verdicts).toEqual(
       new Set([
@@ -51,8 +51,8 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
       // eslint-disable-next-line no-console
       console.log(formatBenchmarkReport(report));
 
-      expect(report.total).toBe(14);
-      expect(report.results).toHaveLength(14);
+      expect(report.total).toBe(15);
+      expect(report.results).toHaveLength(15);
       // El reporte siempre debe producirse, incluso cuando el pipeline actual
       // clasifica mal — este test documenta el baseline, no lo esconde.
     },
@@ -193,7 +193,8 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
           r.flow.id !== "selector-renamed-healer-recovers" &&
           r.flow.id !== "modal-overlay-needs-heal-dismiss" &&
           r.flow.id !== "ambiguous-duplicate-selector" &&
-          r.flow.id !== "blocking-error-healer-abstains",
+          r.flow.id !== "blocking-error-healer-abstains" &&
+          r.flow.id !== "modal-open-background-click-ignored",
       );
       expect(existingResults).toHaveLength(10);
       for (const r of existingResults) {
@@ -239,10 +240,11 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
   );
 
   it(
-    "meta objetivo del benchmark (spec AC1): 14/14 veredictos veraces (10 originales + 3 de cobertura del " +
-      "healer HEALER-1 + 1 de HEALER-2) con el WIRING de la Capa 3 + oráculo de test determinista (Fase 3a) " +
-      "— esto mide correctitud del wiring, NO precisión de un juez LLM real, que es explícitamente Fase " +
-      "3b/GHOST-30 y se valida contra el mismo ground truth de flows.ts",
+    "meta objetivo del benchmark (spec AC1): 15/15 veredictos veraces (10 originales + 3 de cobertura del " +
+      "healer HEALER-1 + 1 de HEALER-2 + 1 de cobertura genérica de alcance de modal) con el WIRING de la " +
+      "Capa 3 + oráculo de test determinista (Fase 3a) — esto mide correctitud del wiring, NO precisión de " +
+      "un juez LLM real, que es explícitamente Fase 3b/GHOST-30 y se valida contra el mismo ground truth de " +
+      "flows.ts",
     async () => {
       const report = await runReliabilityBenchmark();
       // eslint-disable-next-line no-console
