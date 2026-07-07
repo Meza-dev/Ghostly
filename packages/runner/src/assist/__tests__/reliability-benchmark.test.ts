@@ -186,6 +186,25 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
       30_000,
     );
 
+    it(
+      "modal-open-background-click-ignored: el healer detecta el diálogo visible mientras un control de fondo " +
+        "queda pointer-intercepted y antepone el dismiss antes de reintentar (cobertura genérica de alcance de " +
+        "modal, sin strings de dominio — R-cover/HEALER-3)",
+      async () => {
+        const report = await runReliabilityBenchmark(
+          BENCHMARK_FLOWS.filter((f) => f.id === "modal-open-background-click-ignored"),
+        );
+        const [result] = report.results;
+        expect(result).toBeDefined();
+        expect(result!.observedVerdict).toBe("success");
+        expect(result!.falseSuccess).toBe(false);
+        expect(result!.healInvocations).toBeGreaterThanOrEqual(1);
+        const healSuccessEvents = result!.runResult.events.filter((e) => e.type === "heal_success");
+        expect(healSuccessEvents.length).toBeGreaterThanOrEqual(1);
+      },
+      30_000,
+    );
+
     it("los 10 flujos existentes nunca invocan al healer (maxHealingAttemptsPerStep=0 los mantiene inertes)", async () => {
       const report = await runReliabilityBenchmark(BENCHMARK_FLOWS);
       const existingResults = report.results.filter(

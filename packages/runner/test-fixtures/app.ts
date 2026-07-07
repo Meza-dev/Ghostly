@@ -22,7 +22,8 @@ export type FixtureScenario =
   | "app-down"
   | "selector-renamed"
   | "ambiguous-duplicate-selector"
-  | "500-on-save-blocking-throw";
+  | "500-on-save-blocking-throw"
+  | "modal-open-background-click-ignored";
 
 export type FixtureApp = {
   baseUrl: string;
@@ -82,6 +83,17 @@ function renderHomePage(
         <button type="button" data-testid="confirm-dialog-ok" onclick="document.querySelector('.modal-overlay-backdrop')?.remove(); this.closest('dialog').close(); this.closest('dialog').remove();">Aceptar</button>
       </dialog>`
     : "";
+  // Control de fondo/sidebar genérico, ubicado detrás del backdrop (z-index
+  // menor): usado por el escenario "modal-open-background-click-ignored" para
+  // probar que un click de fondo con el modal abierto queda pointer-intercepted
+  // por el overlay — sin ningún string de dominio (spec R-cover). El click
+  // muta el DOM de forma trivial (toggle de texto) para que, tras el dismiss
+  // del healer, el reintento sea detectable como mutación real por el pipeline
+  // (evita el falso "Click sin mutación detectable en el DOM" de un botón
+  // puramente decorativo).
+  const backgroundSidebarBlock = opts.showModal
+    ? `<nav style="position:relative; z-index:0;"><button type="button" data-testid="sidebar-other-action" onclick="this.textContent = this.textContent === 'Otra acción' ? 'Otra acción (hecho)' : 'Otra acción';">Otra acción</button></nav>`
+    : "";
   // R3a (selector-renamed): el testid del título cambió de versión (simula un
   // refactor de UI que renombra el data-testid), pero `name="title"` y el
   // `<label>` se mantienen intactos — el campo sigue siendo alcanzable.
@@ -124,6 +136,7 @@ function renderHomePage(
 <body>
   <h1>Notas</h1>
   ${modalBlock}
+  ${backgroundSidebarBlock}
   <form method="post" action="/save?scenario=${encodeURIComponent(scenario)}" data-testid="note-form">
     <label>
       Título
@@ -199,7 +212,8 @@ export function startFixtureApp(): Promise<FixtureApp> {
       }
 
       if (req.method === "GET" && url.pathname === "/") {
-        const showModal = scenario === "modal-blocking-button";
+        const showModal =
+          scenario === "modal-blocking-button" || scenario === "modal-open-background-click-ignored";
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(renderHomePage(notes, scenario, { showModal }));
         return;
@@ -239,8 +253,9 @@ export function startFixtureApp(): Promise<FixtureApp> {
           return;
         }
 
-        // happy-path / modal-blocking-button / selector-renamed / ambiguous-duplicate-selector:
-        // guardado real y persistente (mismo branch — solo cambia el markup del GET).
+        // happy-path / modal-blocking-button / selector-renamed / ambiguous-duplicate-selector /
+        // modal-open-background-click-ignored: guardado real y persistente (mismo branch — solo
+        // cambia el markup del GET).
         if (title) notes.push({ title });
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(renderHomePage(notes, scenario, { toastVisible: true }));

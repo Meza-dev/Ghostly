@@ -349,4 +349,35 @@ export const BENCHMARK_FLOWS: BenchmarkFlow[] = [
     rationale:
       "El selector `.save-btn` matchea dos botones (violación de strict-mode); el healer desambigua priorizando el data-testid canónico del botón real. Éxito real, recuperado por heal.",
   },
+  // --- HEALER-3: cobertura genérica del alcance de modal (sin strings de
+  // dominio). El plan scripteado intenta clickear un control de fondo/sidebar
+  // mientras el modal de confirmación está abierto; el backdrop intercepta el
+  // click por puntero y el healer (Rule B — visibleDialogs.length>0) antepone
+  // el dismiss y reintenta. Prueba la señal estructural genérica
+  // (ObserverSnapshot.visibleDialogs), no un match de texto de dominio.
+  {
+    id: "modal-open-background-click-ignored",
+    goal: "Crear una nota con título 'Modal enfocado' y verificar que se guardó",
+    scenario: "modal-open-background-click-ignored",
+    steps: [
+      { action: "goto", url: "/" },
+      // Click de fondo/sidebar mientras el modal está abierto: queda
+      // pointer-intercepted por `.modal-overlay-backdrop` y dispara el heal.
+      { action: "click", selector: '[data-testid="sidebar-other-action"]' },
+      { action: "fill", selector: '[data-testid="note-title-input"]', value: "Modal enfocado" },
+      { action: "click", selector: '[data-testid="save-note-button"]' },
+    ],
+    assist: {
+      ...DEFAULT_ASSIST_BASE,
+      goal: "Crear una nota con título 'Modal enfocado' y verificar que se guardó",
+      // Ver nota en selector-renamed-healer-recovers: `selectorVisible` acotado a
+      // la celda de la tabla persistida evita un candidato a victoria prematuro
+      // por el valor tipeado en el textbox (aún no guardado) tras el heal.
+      victory: { selectorVisible: ['[data-testid="notes-table"] td:has-text("Modal enfocado")'], mustAll: true },
+      maxHealingAttemptsPerStep: 1,
+    },
+    expectedVerdict: "success",
+    rationale:
+      "El modal de confirmación tapa el control de fondo/sidebar; el click de fondo queda pointer-intercepted por el backdrop y el healer (Rule B — visibleDialogs visible) antepone el dismiss antes de reintentar. El guardado posterior es real y verificable — cobertura genérica del alcance de modal sin ningún string de dominio.",
+  },
 ];
