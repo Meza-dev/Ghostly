@@ -423,31 +423,32 @@ export const BENCHMARK_FLOWS: BenchmarkFlow[] = [
       "real. El pipeline debe DROPPEAR ese click redundante vía el mecanismo genérico ya existente " +
       "(`shouldDropRedundantModalOpenClick`, visibleDialogs heading match) sin ningún string de dominio — y " +
       "el resto del plan (dismiss real + fill + save) igual llega a success.",
-    strategist: (() => {
-      // Contador de invocaciones (no `history.length`): el seed `goto /` ya
-      // deja 1 entrada en `history` ANTES de la primera llamada al
-      // strategist (horizon 1 ejecuta el seed, horizon 2 recién planea) —
-      // usar `history.length > 0` como guarda dispararía en la primera
-      // llamada real. El chunk único se sirve solo la primera vez que se
-      // invoca este strategist; llamadas subsiguientes (replan defensivo,
-      // no debería ocurrir en el camino feliz) devuelven vacío.
-      let served = false;
-      return async () => {
-        if (served) return { steps: [], hasMore: false };
-        served = true;
-        return {
-          steps: [
-            // REDUNDANTE: duplica el heading "Confirmar guardado" del dialog ya
-            // visible -> DEBE ser dropeado por shouldDropRedundantModalOpenClick.
-            { step: { action: "click", selector: "text=Confirmar guardado" } },
-            // Dismiss real del dialog.
-            { step: { action: "click", selector: '[data-testid="confirm-dialog-ok"]' } },
-            { step: { action: "fill", selector: '[data-testid="note-title-input"]', value: "Poda redundante" } },
-            { step: { action: "click", selector: '[data-testid="save-note-button"]' } },
-          ],
-          hasMore: false,
-        };
+    // NOTA: NO usar un contador/flag por closure aquí (`let served`) — este
+    // strategist vive en el array module-level `BENCHMARK_FLOWS`, compartido
+    // por TODAS las corridas del benchmark dentro del mismo proceso de test
+    // (varios `it(...)` llaman a `runReliabilityBenchmark()` con el mismo
+    // objeto de flow). Una closure con estado mutable persistiría "ya
+    // servido" entre corridas independientes y rompería la segunda corrida
+    // en adelante. En cambio, se decide en base a `history` (fresco por cada
+    // `runAssistedFlow`): si ya hay un intento de guardado real en el
+    // historial, el chunk ya fue servido y ejecutado.
+    strategist: async ({ history }) => {
+      const saveAlreadyAttempted = history.some(
+        (h) => h.step.action === "click" && h.step.selector === '[data-testid="save-note-button"]',
+      );
+      if (saveAlreadyAttempted) return { steps: [], hasMore: false };
+      return {
+        steps: [
+          // REDUNDANTE: duplica el heading "Confirmar guardado" del dialog ya
+          // visible -> DEBE ser dropeado por shouldDropRedundantModalOpenClick.
+          { step: { action: "click", selector: "text=Confirmar guardado" } },
+          // Dismiss real del dialog.
+          { step: { action: "click", selector: '[data-testid="confirm-dialog-ok"]' } },
+          { step: { action: "fill", selector: '[data-testid="note-title-input"]', value: "Poda redundante" } },
+          { step: { action: "click", selector: '[data-testid="save-note-button"]' } },
+        ],
+        hasMore: false,
       };
-    })(),
+    },
   },
 ];

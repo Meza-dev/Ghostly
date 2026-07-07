@@ -254,41 +254,6 @@ async function countVisibleA11yDialogs(page: Page): Promise<number> {
   return page.locator('[role="dialog"]:visible, [role="alertdialog"]:visible').count();
 }
 
-/** Clics tipo «Crear calificación» que abren un panel cuyo HTML puede vivir fuera del slice del hash del body. */
-function clickSelectorLikelyOpensCreationSurface(selector: string): boolean {
-  const s = selector.toLowerCase();
-  const createIntent = /crear|nueva|nuevo|add\s+new|\bnew\s+/i.test(s);
-  const domain = /calific|grupo|rating|evalu|registro|item|viaje|trabajo|usuario/i.test(s);
-  return createIntent && domain;
-}
-
-/**
- * Señales de que el clic abrió un formulario de creación aunque `hashDomSlice` no cambie
- * (p. ej. portales/modales con poco impacto en los primeros 16k del innerHTML del body).
- */
-async function creationSurfaceVisibleAfterClick(page: Page): Promise<boolean> {
-  const probes: Array<Promise<boolean>> = [
-    page
-      .getByRole("heading", { name: /crear\s+(grupo|calificaci[oó]n)/i })
-      .first()
-      .isVisible({ timeout: 1_000 })
-      .catch(() => false),
-    page
-      .getByText(/calificaciones\s+del\s+grupo/i)
-      .first()
-      .isVisible({ timeout: 1_000 })
-      .catch(() => false),
-    page
-      .getByRole("dialog")
-      .filter({ has: page.getByRole("heading", { name: /crear\s+grupo/i }) })
-      .first()
-      .isVisible({ timeout: 1_000 })
-      .catch(() => false),
-  ];
-  const results = await Promise.all(probes);
-  return results.some(Boolean);
-}
-
 /** Mensajes de carga frecuentes en modales (p. ej. TMS «Cargando documentos»). */
 const MODAL_LOADER_TEXT_PATTERNS: RegExp[] = [
   /Cargando\s+documentos/i,
@@ -1164,9 +1129,7 @@ async function applyStep(
       const hashAfter = await hashDomSlice(page);
       if (hashBefore === hashAfter) {
         const dialogsAfter = await countVisibleA11yDialogs(page);
-        const creationOpened =
-          clickSelectorLikelyOpensCreationSurface(step.selector) &&
-          (dialogsAfter > dialogsBefore || (await creationSurfaceVisibleAfterClick(page)));
+        const creationOpened = dialogsAfter > dialogsBefore;
         if (creationOpened) {
           return;
         }
@@ -1422,99 +1385,6 @@ function shouldDropRedundantModalOpenClick(step: Step, snapshot: ObserverSnapsho
   return false;
 }
 
-/** Heurística TMS: modal «Crear Nuevo Viaje» ya abierto (título + formulario / remitos en el mapa). */
-function treeIndicatesCreateTripModalOpen(snapshot: ObserverSnapshot | undefined): boolean {
-  if (!snapshot) return false;
-  const t = `${snapshot.treeMarkdown}\n${snapshot.title ?? ""}`.toLowerCase();
-  if (!t.includes("crear nuevo viaje")) return false;
-  return (
-    t.includes("conductorid") ||
-    t.includes("vehiculoid") ||
-    t.includes("remito") ||
-    t.includes("react-select")
-  );
-}
-
-function treeIndicatesCalificacionGroupModalOpen(snapshot: ObserverSnapshot | undefined): boolean {
-  if (!snapshot) return false;
-  const t = `${snapshot.treeMarkdown}\n${snapshot.title ?? ""}`.toLowerCase();
-  const hasHeading =
-    t.includes("crear grupo") ||
-    t.includes("crear grupos") ||
-    t.includes("editar grupo") ||
-    t.includes("editar grupos");
-  if (!hasHeading) return false;
-  return (
-    t.includes("calificaciones del grupo") ||
-    t.includes("textbox \"ej: de malo a excelente\"") ||
-    t.includes("textbox \"etiqueta (ej: malo, regular, bueno)\"") ||
-    (t.includes("guardar") && t.includes("cancelar"))
-  );
-}
-
-function selectorTargetsAgregarDatos(selector: string): boolean {
-  const s = selector.toLowerCase();
-  return s.includes("agregar datos") || /aria-label\s*=\s*["']?agregar datos["']?/i.test(selector);
-}
-
-function selectorTargetsIllusoryCreateTripButton(step: Step, selector: string): boolean {
-  const raw = selector.trim();
-  const s = raw.toLowerCase();
-  if (!s.includes("crear nuevo viaje")) return false;
-  if (/^h[1-6]:(has-text|text)\(/i.test(raw)) return false;
-  if (s.startsWith("heading:has-text")) return false;
-  if (step.action === "click" && (s.includes("button") || s.includes("role=button"))) return true;
-  if (step.action === "waitForSelector" && s.includes("button")) return true;
-  return false;
-}
-
-/**
- * Evita reabrir el flujo cuando el mapa ya muestra el formulario del modal (p. ej. botón «Agregar Datos»
- * detrás del modal hace timeout al click; «Crear Nuevo Viaje» en pantalla es un h3, no un button).
- */
-function shouldDropStaleOpenActionWhenModalFormVisible(step: Step, snapshot: ObserverSnapshot | undefined): boolean {
-  if (!treeIndicatesCreateTripModalOpen(snapshot)) return false;
-  if (step.action !== "click" && step.action !== "waitForSelector") return false;
-  const sel = step.selector;
-  if (selectorTargetsAgregarDatos(sel)) return true;
-  if (selectorTargetsIllusoryCreateTripButton(step, sel)) return true;
-  return false;
-}
-
-/** Ya en solicitar-viajes con modal de creación: ir de nuevo a «Viajes» es redundante y suele chocar con el h1. */
-function shouldDropRedundantViajesNavWhenOnTripsFlow(step: Step, snapshot: ObserverSnapshot | undefined): boolean {
-  if (!snapshot?.url) return false;
-  const u = snapshot.url.toLowerCase();
-  if (!u.includes("solicitar-viajes")) return false;
-  if (!treeIndicatesCreateTripModalOpen(snapshot)) return false;
-  if (step.action !== "click" && step.action !== "waitForSelector") return false;
-  const low = step.selector.toLowerCase();
-  if (!low.includes("viajes")) return false;
-  if (low.includes("gestión") || low.includes("gestion")) return false;
-  return (
-    low.startsWith("text=") ||
-    low.includes("a:has-text") ||
-    low.includes("__gt:role=link") ||
-    low.includes("__gt:role=button")
-  );
-}
-
-/** Con modal de calificaciones abierto, re-navegar sidebar o reabrir modal es redundante y rompe el flujo. */
-function shouldDropRedundantCalificacionesFlowNav(step: Step, snapshot: ObserverSnapshot | undefined): boolean {
-  if (!treeIndicatesCalificacionGroupModalOpen(snapshot)) return false;
-  if (step.action !== "click" && step.action !== "waitForSelector") return false;
-  const low = step.selector.toLowerCase();
-  const targetsSidebar =
-    /has-text\(\s*["']diseño["']\s*\)/i.test(low) ||
-    /has-text\(\s*["']calificaciones["']\s*\)/i.test(low) ||
-    /text\s*=\s*["']?diseño["']?$/i.test(low) ||
-    /text\s*=\s*["']?calificaciones["']?$/i.test(low);
-  const targetsReopenCreate =
-    /has-text\(\s*["']crear calificaci[oó]n["']\s*\)/i.test(low) ||
-    /text\s*=\s*["']?crear calificaci[oó]n["']?$/i.test(low);
-  return targetsSidebar || targetsReopenCreate;
-}
-
 function stepUsesForbiddenAccessibilityRef(step: Step): boolean {
   if (step.action === "click" || step.action === "waitForSelector" || step.action === "fill") {
     return REF_SELECTOR_RE.test(step.selector);
@@ -1530,10 +1400,7 @@ function shouldDropPlannedStep(
   return (
     stepUsesForbiddenAccessibilityRef(step) ||
     shouldDropStepInCurrentContext(step, snapshot, history) ||
-    shouldDropRedundantModalOpenClick(step, snapshot) ||
-    shouldDropStaleOpenActionWhenModalFormVisible(step, snapshot) ||
-    shouldDropRedundantViajesNavWhenOnTripsFlow(step, snapshot) ||
-    shouldDropRedundantCalificacionesFlowNav(step, snapshot)
+    shouldDropRedundantModalOpenClick(step, snapshot)
   );
 }
 
@@ -2666,10 +2533,7 @@ export async function runAssistedFlow(
               const healerReplacedOriginal = hasEquivalentReplacementStep(step, sanitized);
               const skipOriginalStep = healerReplacedOriginal ||
                 shouldDropStepInCurrentContext(step, postHealSnapshot, history) ||
-                shouldDropRedundantModalOpenClick(step, postHealSnapshot) ||
-                shouldDropStaleOpenActionWhenModalFormVisible(step, postHealSnapshot) ||
-                shouldDropRedundantViajesNavWhenOnTripsFlow(step, postHealSnapshot) ||
-                shouldDropRedundantCalificacionesFlowNav(step, postHealSnapshot);
+                shouldDropRedundantModalOpenClick(step, postHealSnapshot);
               if (!skipOriginalStep) {
                 await applyStep(page, input.baseUrl, step, input.defaultTimeoutMs);
                 // W10: el paso original se reintenta y tiene éxito TRAS un heal —
