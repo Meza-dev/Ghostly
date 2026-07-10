@@ -2810,6 +2810,20 @@ export async function runAssistedFlow(
     p.note = p.note ?? "not-executed-after-stop";
   }
 
+  // Victoria determinista limpia (stopReason "victory-met", ok=true): spec §5
+  // mapea "victoria verificada limpia → success" de forma DIRECTA. Sin
+  // intervención del juez el `verdict` quedaba en `undefined` y el `run_end`
+  // omitía el campo, así que filtrar runs por verdict "success" perdía las
+  // victorias limpias. Se asigna en el único punto de finalización, respetando
+  // el invariante ok/verdict (success SIEMPRE con runOk=true, ver
+  // `applyTerminalJudgeVerdict`) y sin pisar un veredicto que el juez ya fijó.
+  if (stopReason === "victory-met" && runOk && verdict === undefined) {
+    verdict = "success";
+    verdictReason =
+      "Victoria verificada de forma determinista: la condición de victoria " +
+      "configurada se cumplió sin necesidad de invocar al juez.";
+  }
+
   const finalPlan = buildFinalGeneralPlan(planProgress, learnedFlow);
   const planProgressReport = toPlanProgressReport(planProgress);
   const planProgressSummary = {
