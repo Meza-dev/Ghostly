@@ -12,7 +12,8 @@
     "db:migrate": "prisma migrate deploy --schema prisma/schema.prisma",
     "db:migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
     "db:studio": "prisma studio --schema prisma/schema.prisma",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@ghostly-io/runner": "workspace:*",
@@ -28,6 +29,7 @@
     "@types/node": "^22.10.5",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.4"
   }
 }

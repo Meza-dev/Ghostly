@@ -172,6 +172,8 @@ function normalizeAction(value: unknown): string {
   if (v === "type") return "fill";
   if (v === "keypress") return "press";
   if (v === "a11y" || v === "ariasnapshot") return "snapshot";
+  if (v === "select" || v === "choose") return "selectOption";
+  if (v === "upload") return "setInputFiles";
   return value.trim();
 }
 
@@ -235,16 +237,29 @@ function normalizePlannerSelector(selector: string): string {
   return s;
 }
 
+function canonicalSelectOptionValue(value: string | string[]): string {
+  return Array.isArray(value) ? [...value].sort().join(",") : value;
+}
+
 function canonicalStepKey(step: Step): string {
   if (step.action === "goto") return `goto|${step.url.trim()}`;
   if (step.action === "press") return `press|${step.key.trim().toLowerCase()}`;
   if (step.action === "click") return `click|${normalizePlannerSelector(step.selector).toLowerCase()}`;
   if (step.action === "waitForSelector") return `wait|${normalizePlannerSelector(step.selector).toLowerCase()}`;
   if (step.action === "fill") return `fill|${normalizePlannerSelector(step.selector).toLowerCase()}|${step.value}`;
+  if (step.action === "check") return `check|${normalizePlannerSelector(step.selector).toLowerCase()}`;
+  if (step.action === "uncheck") return `uncheck|${normalizePlannerSelector(step.selector).toLowerCase()}`;
+  if (step.action === "hover") return `hover|${normalizePlannerSelector(step.selector).toLowerCase()}`;
+  if (step.action === "selectOption") {
+    return `selectOption|${normalizePlannerSelector(step.selector).toLowerCase()}|${canonicalSelectOptionValue(step.value)}`;
+  }
+  if (step.action === "setInputFiles") {
+    return `setInputFiles|${normalizePlannerSelector(step.selector).toLowerCase()}|${step.files.join(",")}`;
+  }
   return "snapshot";
 }
 
-function coerceStep(raw: unknown): Step | null {
+export function coerceStep(raw: unknown): Step | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
   const action = normalizeAction(obj.action ?? obj.type ?? obj.name);
@@ -283,6 +298,45 @@ function coerceStep(raw: unknown): Step | null {
     return { action: "waitForSelector", selector: normalizePlannerSelector(selector) };
   }
   if (action === "snapshot") return { action: "snapshot" };
+  if (action === "selectOption") {
+    const selector = obj.selector ?? obj.target ?? obj.locator;
+    if (typeof selector !== "string" || !selector.trim()) return null;
+    const rawValue = obj.value ?? obj.values;
+    if (Array.isArray(rawValue)) {
+      const values = rawValue.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+      if (values.length === 0) return null;
+      return { action: "selectOption", selector: normalizePlannerSelector(selector), value: values };
+    }
+    if (typeof rawValue !== "string" || !rawValue.trim()) return null;
+    return { action: "selectOption", selector: normalizePlannerSelector(selector), value: rawValue };
+  }
+  if (action === "check") {
+    const selector = obj.selector ?? obj.target ?? obj.locator;
+    if (typeof selector !== "string" || !selector.trim()) return null;
+    return { action: "check", selector: normalizePlannerSelector(selector) };
+  }
+  if (action === "uncheck") {
+    const selector = obj.selector ?? obj.target ?? obj.locator;
+    if (typeof selector !== "string" || !selector.trim()) return null;
+    return { action: "uncheck", selector: normalizePlannerSelector(selector) };
+  }
+  if (action === "setInputFiles") {
+    const selector = obj.selector ?? obj.target ?? obj.locator;
+    if (typeof selector !== "string" || !selector.trim()) return null;
+    const rawFiles = obj.files ?? obj.file;
+    const files = Array.isArray(rawFiles)
+      ? rawFiles.filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+      : typeof rawFiles === "string" && rawFiles.trim()
+        ? [rawFiles.trim()]
+        : [];
+    if (files.length === 0) return null;
+    return { action: "setInputFiles", selector: normalizePlannerSelector(selector), files };
+  }
+  if (action === "hover") {
+    const selector = obj.selector ?? obj.target ?? obj.locator;
+    if (typeof selector !== "string" || !selector.trim()) return null;
+    return { action: "hover", selector: normalizePlannerSelector(selector) };
+  }
   return null;
 }
 
@@ -330,8 +384,11 @@ function isIconOnlyTextSelector(selector: string): boolean {
 }
 
 function rejectAmbiguous(steps: Step[]): Step[] {
+  // D7: gate por presencia de `selector` (no por lista de acciones) — cubre uniformemente
+  // los 8 verbos con selector (click/fill/waitForSelector/selectOption/check/uncheck/setInputFiles/hover);
+  // goto/press/snapshot no tienen `selector` y pasan de largo.
   return steps.filter((s) => {
-    if (s.action === "click" || s.action === "fill" || s.action === "waitForSelector") {
+    if ("selector" in s) {
       if (isAmbiguousSelector(s.selector)) return false;
       if (isIconOnlyTextSelector(s.selector)) return false;
     }
