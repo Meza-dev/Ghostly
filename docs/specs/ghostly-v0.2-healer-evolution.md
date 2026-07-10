@@ -1,6 +1,6 @@
 # Diseño — Evolución del Healer hacia v0.2 "Trust Release"
 
-> **Estado:** análisis de diseño (2026-07-03). No implementado. Complementa `ghostly-v0.2-trust-release.md`.
+> **Estado:** implementado (HEALER-1…4, 2026-07). Documento de diseño de referencia; complementa `ghostly-v0.2-trust-release.md`. El plan §8 (H0–H7) quedó completo salvo dos restos hardcode menores en `pipeline.ts` (`MODAL_LOADER_TEXT_PATTERNS`, `victoryTargetVisible`), pendientes de un slice de limpieza.
 > **Principio rector heredado de v0.2:** _la IA propone, el motor verifica._ Aplicado al healer: propone correcciones de plan, pero el motor confirma que sean reales y el juez decide el desenlace cuando el healer no puede.
 
 ---
