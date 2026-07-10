@@ -11,7 +11,7 @@
  * no adelantar la implementación real del juez.
  */
 import { runAssistedFlow, type AssistedDeps, type AssistedRunResult } from "../src/index.js";
-import type { JudgeDossier, JudgeFn, JudgeVerdict } from "../src/index.js";
+import type { HealerContext, HealerFn, HealerResult, JudgeDossier, JudgeFn, JudgeVerdict, Step } from "../src/index.js";
 import { startFixtureApp, type FixtureApp } from "./app.js";
 import { BENCHMARK_FLOWS, type BenchmarkFlow, type ExpectedVerdict } from "./flows.js";
 
@@ -23,6 +23,10 @@ export type BenchmarkFlowResult = {
   truthful: boolean;
   falseSuccess: boolean;
   judgeInvocations: number;
+  /** Cantidad de eventos `heal_start` emitidos por el pipeline durante este flujo. */
+  healInvocations: number;
+  /** Cantidad de eventos `heal_success` emitidos por el pipeline durante este flujo. */
+  healSuccesses: number;
   runResult: AssistedRunResult;
 };
 
@@ -43,8 +47,154 @@ const noopStrategist: AssistedDeps["strategist"] = async () => {
   );
 };
 
-/** Healer inerte: hoy no hay reintentos automáticos en los flujos del benchmark (maxHealingAttemptsPerStep=0). */
-const noopHealer: AssistedDeps["healer"] = async () => ({ steps: [] });
+/**
+ * Healer ORÁCULO DE TEST — NO es el healer real (ese es GHOST-3x, un LLM vía
+ * `createHealer` + `HEALER_SYSTEM`, apps/api). Es un doble determinista y
+ * basado en reglas que clasifica/recupera SOLO a partir de las señales que ya
+ * trae `ctx` (snapshot del observer + failedStep + error), sin ningún LLM ni
+ * red hacia un modelo. Mismo espíritu que `testOracleJudge`: probar que el
+ * WIRING de heal_start/heal_action/heal_success llega al lugar correcto, no
+ * medir la calidad de recuperación de un healer real.
+ *
+ * Cableado SIEMPRE (ver `runOneFlow`): solo se ejecuta cuando
+ * `maxHealingAttemptsPerStep >= 1`, así que los 10 flujos existentes (que
+ * mantienen `maxHealingAttemptsPerStep: 0`) nunca lo invocan (spec R6/D2).
+ *
+ * Reglas, en orden — la primera que matchea gana:
+ *  - Rule A: selector renombrado — el testid falló pero existe una variante
+ *    con el mismo "stem" (p. ej. `note-title-input` -> `note-title-input-v2`)
+ *    en el snapshot, o cae a `name="title"` como alternativa.
+ *  - Rule B: modal/overlay bloqueando — el error indica intercepción de
+ *    puntero o hay un diálogo visible; antepone un click de dismiss SIN
+ *    reemplazar el paso original (para que se reintente después).
+ *  - Rule C: selector ambiguo — el error es una violación de strict-mode de
+ *    Playwright; desambigua priorizando data-testid sobre el selector suelto.
+ *  - Fallback: `{ steps: [] }` (igual que `noopHealer`) — deja un camino de
+ *    fallo controlado para flujos que no matchean ninguna regla.
+ */
+const POINTER_INTERCEPT_RE = /intercepts pointer events|element is not visible|element is outside of the viewport|subtree intercepts pointer events/i;
+const STRICT_MODE_VIOLATION_RE = /strict mode violation|resolved to \d+ elements/i;
+
+/** Extrae el testid de un selector `[data-testid="..."]`, si el paso lo usa. */
+function extractTestId(selector: string): string | undefined {
+  const match = /\[data-testid=["']([^"']+)["']\]/.exec(selector);
+  return match?.[1];
+}
+
+/** Extrae el "stem" de un testid quitando sufijos de versión tipo `-v2`. */
+function testIdStem(testId: string): string {
+  return testId.replace(/-v\d+$/i, "");
+}
+
+/** Busca en el treeMarkdown del snapshot un `data-testid="..."` cuyo stem coincida. */
+function findRenamedTestId(treeMarkdown: string, stem: string): string | undefined {
+  const re = /data-testid=["']([^"']+)["']/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(treeMarkdown)) !== null) {
+    const candidate = m[1]!;
+    if (candidate !== stem && testIdStem(candidate) === stem) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * Busca el `data-testid` de un candidato disambiguado a partir del bloque
+ * "INTERACTIVOS VISIBLES" (observer.ts `buildVisibleInteractivesBlock`,
+ * formato `- <tag> [data-testid="..."] ...`). Prioriza filas cuyo tag
+ * coincide con la acción fallida (p. ej. `button` para un `click`) para no
+ * disambiguar hacia un control no relacionado (p. ej. el input de título)
+ * cuando hay múltiples data-testid visibles en la página.
+ */
+function findDataTestIdCandidate(treeMarkdown: string, preferredTag?: string): string | undefined {
+  const rowRe = /^-\s+(\w+)(?:\[role=[^\]]+\])?\s+\[data-testid=["']([^"']+)["']\]/gm;
+  const candidates: Array<{ tag: string; testId: string }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = rowRe.exec(treeMarkdown)) !== null) {
+    candidates.push({ tag: m[1]!, testId: m[2]! });
+  }
+  if (preferredTag) {
+    const preferred = candidates.find((c) => c.tag === preferredTag);
+    if (preferred) return preferred.testId;
+  }
+  return candidates[0]?.testId;
+}
+
+const testOracleHealer: HealerFn = async (ctx: HealerContext): Promise<HealerResult> => {
+  const { failedStep, error, snapshot } = ctx;
+  const treeMarkdown = snapshot.treeMarkdown ?? "";
+  const visibleDialogs = snapshot.visibleDialogs ?? [];
+
+  // Rule B — modal/overlay bloqueando el click: antepone el dismiss y luego
+  // reintenta el paso original explícitamente en la MISMA respuesta.
+  //
+  // Nota: el pipeline (`hasEquivalentReplacementStep`, pipeline.ts:1574) solo
+  // compara acción+selector para decidir si un heal step "reemplaza" al
+  // original — no distingue "antepongo un paso extra" de "reemplazo el
+  // paso". Como el paso fallido y el dismiss son ambos `click` con selectores
+  // distintos, el pipeline los trataría como reemplazo y OMITIRÍA el reintento
+  // del guardado si solo devolviéramos el dismiss. Por eso Rule B devuelve
+  // [dismiss, retry-del-original]: el segundo step, al tener EXACTAMENTE el
+  // mismo selector que `failedStep`, hace que ese guardado se ejecute dentro
+  // del propio loop de heal steps (pipeline.ts:2567-2610), sin depender del
+  // branch de "reintento del original" que el pipeline saltearía.
+  const overlayBlocking =
+    POINTER_INTERCEPT_RE.test(error) || visibleDialogs.length > 0 || treeMarkdown.includes("confirm-dialog-ok");
+  if (overlayBlocking && (failedStep.action === "click" || failedStep.action === "fill")) {
+    const dismissStep: Step = { action: "click", selector: '[data-testid="confirm-dialog-ok"]' };
+    return {
+      steps: [dismissStep, failedStep],
+      rationale: "Test oracle (HEALER-1, no LLM real): overlay/modal visible bloqueando el click — cerrando antes de reintentar.",
+    };
+  }
+
+  // Rule C — violación de strict-mode (selector ambiguo, resuelve a N elementos): desambigua por data-testid.
+  if (STRICT_MODE_VIOLATION_RE.test(error) && (failedStep.action === "click" || failedStep.action === "fill")) {
+    // `fill` normalmente ambigua sobre inputs/textareas; `click` sobre botones/links.
+    const preferredTag = failedStep.action === "fill" ? "input" : "button";
+    const disambiguated = findDataTestIdCandidate(treeMarkdown, preferredTag);
+    if (disambiguated) {
+      const correctedSelector = `[data-testid="${disambiguated}"]`;
+      const correctedStep: Step =
+        failedStep.action === "fill"
+          ? { action: "fill", selector: correctedSelector, value: failedStep.value }
+          : { action: "click", selector: correctedSelector };
+      return {
+        steps: [correctedStep],
+        rationale: "Test oracle (HEALER-1, no LLM real): strict-mode violation — desambiguando por data-testid.",
+      };
+    }
+  }
+
+  // Rule A — selector renombrado (testid con sufijo de versión distinto).
+  if (failedStep.action === "click" || failedStep.action === "fill") {
+    const failedTestId = extractTestId(failedStep.selector);
+    if (failedTestId) {
+      const stem = testIdStem(failedTestId);
+      const renamed = findRenamedTestId(treeMarkdown, stem);
+      if (renamed) {
+        const correctedSelector = `[data-testid="${renamed}"]`;
+        const correctedStep: Step =
+          failedStep.action === "fill"
+            ? { action: "fill", selector: correctedSelector, value: failedStep.value }
+            : { action: "click", selector: correctedSelector };
+        return {
+          steps: [correctedStep],
+          rationale: "Test oracle (HEALER-1, no LLM real): testid renombrado detectado en el snapshot — corrigiendo selector.",
+        };
+      }
+      // Fallback: el campo de título sigue siendo alcanzable por name="title".
+      if (failedStep.action === "fill" && /name=["']title["']/.test(treeMarkdown)) {
+        return {
+          steps: [{ action: "fill", selector: 'input[name="title"]', value: failedStep.value }],
+          rationale: "Test oracle (HEALER-1, no LLM real): testid no encontrado — usando name=\"title\" como alternativa.",
+        };
+      }
+    }
+  }
+
+  // Fallback: sin regla aplicable — mismo comportamiento que noopHealer (camino de fallo controlado).
+  return { steps: [] };
+};
 
 /**
  * Juez ORÁCULO DE TEST — NO es el juez real (ese es GHOST-30, un LLM vía
@@ -183,7 +333,10 @@ async function runOneFlow(baseUrl: string, flow: BenchmarkFlow): Promise<Benchma
     index === 0 && step.action === "goto" ? { ...step, url: scenarioUrl.pathname + scenarioUrl.search } : step,
   );
 
-  const deps: AssistedDeps = { strategist: noopStrategist, healer: noopHealer, judge: testOracleJudge };
+  // testOracleHealer va SIEMPRE cableado (design D2): solo se ejecuta cuando
+  // `assist.maxHealingAttemptsPerStep >= 1`, así que los 10 flujos existentes
+  // (que mantienen `maxHealingAttemptsPerStep: 0`) nunca lo invocan.
+  const deps: AssistedDeps = { strategist: noopStrategist, healer: testOracleHealer, judge: testOracleJudge };
 
   const runResult = await runAssistedFlow(
     {
@@ -210,6 +363,8 @@ async function runOneFlow(baseUrl: string, flow: BenchmarkFlow): Promise<Benchma
     truthful,
     falseSuccess,
     judgeInvocations: runResult.judgeEvents?.length ?? 0,
+    healInvocations: runResult.events.filter((e) => e.type === "heal_start").length,
+    healSuccesses: runResult.events.filter((e) => e.type === "heal_success").length,
     runResult,
   };
 }
