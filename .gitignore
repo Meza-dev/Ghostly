@@ -24,3 +24,7 @@ Ghostly.zip
 .cursorrules
 .cursor/rules/
 .cursor/skills/logs/
+
+# Documentos sensibles — no publicar en repo público (mapa de vulnerabilidades / deployment)
+docs/security-audit-2026-07.md
+docs/docker-deployment.md
