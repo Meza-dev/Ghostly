@@ -1792,6 +1792,21 @@ export async function runAssistedFlow(
       } catch {
         screenshot = undefined;
       }
+      // El dossier del juez recibe el historial ACUMULADO de errores del run
+      // (no solo la ventana móvil del último snapshot). Un veredicto terminal
+      // invocado varios pasos después del error (p.ej. `budget-exhausted`) no
+      // puede distinguir fail-app-bug de fail-agent-lost si perdió el 5xx/422
+      // que lo probaba. Se deduplica contra los errores DOM del snapshot actual
+      // (que no pasan por el tracker de consola/red). Cada error conserva su
+      // `observedAtStep`, así el juez razona la temporalidad.
+      const judgePageErrors: PageError[] = [];
+      const seenPageErrorKeys = new Set<string>();
+      for (const err of [...pageErrorTracker.getHistory(), ...lastSnapshot!.pageErrors]) {
+        const key = pageErrorKey(err);
+        if (seenPageErrorKeys.has(key)) continue;
+        seenPageErrorKeys.add(key);
+        judgePageErrors.push(err);
+      }
       const dossier = buildJudgeDossier({
         goal: assist.goal,
         victoryCondition: assist.victory,
@@ -1799,7 +1814,7 @@ export async function runAssistedFlow(
         history,
         currentSnapshot: lastSnapshot!,
         previousSnapshot: previousJudgeSnapshot,
-        pageErrors: lastSnapshot!.pageErrors,
+        pageErrors: judgePageErrors,
         deterministicChecks,
         ...(screenshot ? { screenshot } : {}),
       });
