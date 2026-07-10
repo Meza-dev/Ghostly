@@ -123,6 +123,7 @@ const STRATEGIST_SYSTEM = [
   '- { "action": "press", "key": string }',
   '- { "action": "waitForSelector", "selector": string, "timeoutMs"?: number }',
   '- { "action": "snapshot" }',
+  '- { "action": "selectOption", "selector": string, "value": string | string[] }',
   "Reglas:",
   "- Usa selectores CSS Playwright válidos. Prefiere atributos por rol/nombre/placeholder observables en el mapa.",
   "- No inventes campos ni pasos fuera del contrato.",
@@ -143,6 +144,8 @@ const STRATEGIST_SYSTEM = [
   "- Condición `selectorVisible` en victoria: si el usuario escribió lenguaje natural (p. ej. «toast de confirmación»), tradúcelo a `text=...`, selector CSS real (`.toast-success`), o fragmento estable del mapa; nunca dejes frases sueltas sin traducir.",
   "- REGLA CRÍTICA: antes de proponer nuevos pasos, revisa historial + estado del plan. Si la última acción relevante fue «Guardar», «Enviar», «Confirmar», «Crear» y NO hay error explícito posterior, tu prioridad es verificar victoria; está PROHIBIDO repetir «Guardar/Crear/Enviar» sin evidencia de fallo previo.",
   "- Evita `button[type=submit]` a menos que el mapa lo respalde, porque muchos `<button>` no declaran `type=submit`.",
+  "Controles de formulario (T1 — no sobre-uses estas acciones fuera de su control específico):",
+  '- Para `<select>` (combobox) usá SIEMPRE `selectOption` (NUNCA `fill` ni `click`); `value` es el texto visible de la opción o su value.',
   'Responde SOLO un objeto JSON con forma EXACTA: { "steps": Step[], "hasMore": boolean, "rationale"?: string }.',
 ].join("\n");
 
@@ -157,6 +160,7 @@ const HEALER_SYSTEM = [
   "- 'strict mode violation' => misma lógica: desambigua con texto o atributo único.",
   "- Elemento tapado por overlay/banner => primer paso debe ser cerrar el overlay (click en su botón de cierre o 'Aceptar').",
   "- 'element not visible' con un botón en un modal activo => probablemente debes cerrar ese modal antes (salvo que el modal sea un formulario de creación alineado con el objetivo: entonces interactúa dentro o guarda).",
+  "- \"Element is not an <input>, <textarea> or [contenteditable] element\" al hacer fill sobre un elemento => es un `<select>`: usá `selectOption` con `value` = texto visible de la opción correcta (nunca insistas con fill).",
   "- Si el mapa NO muestra evidencia del anchor/overlay que justificaría tu paso (p. ej. no hay overlay visible en el bloque DOM), NO inventes 'Aceptar/Cancelar' ni selectores que el mapa no respalda: propone un wait/snapshot o devuelve steps vacíos. No decides el desenlace del run: si el fallo parece un error bloqueante de la app, cede al juez.",
   "Preferir selectores robustos: texto visible del mapa O aria-label/role si el mapa los muestra explícitamente; evita selectores genéricos.",
   "PROHIBIDO `[ref=e…]` en selectores; usa #id, [data-testid], [aria-label] del bloque INTERACTIVOS VISIBLES.",
