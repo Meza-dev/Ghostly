@@ -217,6 +217,15 @@ export type PageErrorTracker = {
    * asigna con el índice de paso recibido.
    */
   collectForStep: (stepIndex: number) => PageError[];
+  /**
+   * Historial ACUMULADO de todos los errores de consola/red del run, con su
+   * `observedAtStep` original — no se vacía nunca. La ventana móvil de
+   * `collectForStep` sirve para decisiones deterministas por paso (circuit
+   * breaker), pero el dossier del juez necesita el historial completo: un
+   * veredicto terminal (spec §4.3) invocado varios pasos después del error no
+   * puede clasificar app-bug vs agent-lost si perdió la evidencia que lo probaba.
+   */
+  getHistory: () => PageError[];
 };
 
 /**
@@ -226,6 +235,7 @@ export type PageErrorTracker = {
  */
 export function createPageErrorTracker(page: Page, options: PageErrorTrackerOptions): PageErrorTracker {
   const buffer: PageError[] = [];
+  const history: PageError[] = [];
 
   page.on("console", (msg) => {
     if (msg.type() !== "error") return;
@@ -270,8 +280,10 @@ export function createPageErrorTracker(page: Page, options: PageErrorTrackerOpti
     collectForStep: (stepIndex: number) => {
       const collected = buffer.map((e) => ({ ...e, observedAtStep: stepIndex }));
       buffer.length = 0;
+      history.push(...collected);
       return collected;
     },
+    getHistory: () => history.slice(),
   };
 }
 

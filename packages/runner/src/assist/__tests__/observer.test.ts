@@ -243,6 +243,26 @@ describe("createPageErrorTracker", () => {
     const errors = tracker.collectForStep(3);
     expect(errors[0]?.observedAtStep).toBe(3);
   });
+
+  it("getHistory acumula todos los errores del run aunque la ventana móvil se vacíe", () => {
+    const page = buildFakePage("- button \"x\"");
+    const tracker = createPageErrorTracker(page as unknown as Parameters<typeof createPageErrorTracker>[0], {
+      baseUrl: "https://ex.com",
+    });
+    // Paso 7: la app rechaza el guardado con 500 (evidencia crítica).
+    page.emitResponse({
+      status: () => 500,
+      url: () => "https://ex.com/api/clientes",
+      request: () => ({ method: () => "POST" }),
+    });
+    tracker.collectForStep(7);
+    // Pasos posteriores sin errores nuevos: la ventana móvil del paso 9 va vacía…
+    expect(tracker.collectForStep(9)).toHaveLength(0);
+    // …pero el historial acumulado del run conserva el 500 del paso 7 con su índice.
+    const history = tracker.getHistory();
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({ source: "network", severity: "blocking", observedAtStep: 7 });
+  });
 });
 
 // Silenciar warning si vitest tuviera hooks globales
