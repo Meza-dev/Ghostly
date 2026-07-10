@@ -62,6 +62,9 @@ export const CLI_AGENT_REGISTRY: Record<string, CliAgentDef> = {
       "ask",
       "--model",
       model,
+      // El agente chequea updates en cada arranque y su instalador (`irm | iex`)
+      // dispara la detección ClickFix de Windows Defender en cada llamada al LLM.
+      "--disable-auto-update",
     ],
     parseStdout: parseCursorAgentStdout,
     isStatusOk: (stdout) => /logged in|✓/i.test(stdout),
