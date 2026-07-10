@@ -235,6 +235,28 @@ const testOracleJudge: JudgeFn = async (dossier: JudgeDossier): Promise<JudgeVer
     };
   }
 
+  if (
+    dossier.reason === "healing-exhausted" &&
+    dossier.pageErrors.some((e) => e.severity === "blocking")
+  ) {
+    // HEALER-2 / H1: el healer cedió determinísticamente ante evidencia dura
+    // de un error bloqueante de la app (misma correlación por índice que el
+    // circuit breaker) — el paso falló, pero la causa raíz es la app, no el
+    // agente perdiéndose un camino que existía. Ground truth: fail-app-bug.
+    // Esta regla va ANTES que fail-agent-lost porque ambas comparten
+    // `healer.recovered=false`; el desempate lo hace la presencia de un
+    // pageError bloqueante.
+    return {
+      verdict: "fail-app-bug",
+      confidence: "high",
+      reasoning:
+        "Test oracle (GHOST-29 wiring, no LLM real): healing-exhausted con al menos un PageError de " +
+        "severidad 'blocking' correlacionado al paso fallido. El healer cedió al juez sin intentar curar " +
+        "(HEALER-2/H1) — la evidencia apunta a un bug de la app, no a un selector mal resuelto.",
+      evidence: [`pageErrors.some(severity==="blocking")`, `pageErrors.length=${dossier.pageErrors.length}`],
+    };
+  }
+
   if (dossier.reason === "healing-exhausted" && healerRecoveredCheck?.passed === false) {
     // El healer (y el replan del strategist) no encontraron el camino. En el
     // benchmark full-plan esto solo ocurre por un selector con typo cuyo

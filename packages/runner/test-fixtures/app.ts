@@ -21,7 +21,9 @@ export type FixtureScenario =
   | "non-persisting-save"
   | "app-down"
   | "selector-renamed"
-  | "ambiguous-duplicate-selector";
+  | "ambiguous-duplicate-selector"
+  | "500-on-save-blocking-throw"
+  | "modal-open-background-click-ignored";
 
 export type FixtureApp = {
   baseUrl: string;
@@ -81,6 +83,17 @@ function renderHomePage(
         <button type="button" data-testid="confirm-dialog-ok" onclick="document.querySelector('.modal-overlay-backdrop')?.remove(); this.closest('dialog').close(); this.closest('dialog').remove();">Aceptar</button>
       </dialog>`
     : "";
+  // Control de fondo/sidebar genérico, ubicado detrás del backdrop (z-index
+  // menor): usado por el escenario "modal-open-background-click-ignored" para
+  // probar que un click de fondo con el modal abierto queda pointer-intercepted
+  // por el overlay — sin ningún string de dominio (spec R-cover). El click
+  // muta el DOM de forma trivial (toggle de texto) para que, tras el dismiss
+  // del healer, el reintento sea detectable como mutación real por el pipeline
+  // (evita el falso "Click sin mutación detectable en el DOM" de un botón
+  // puramente decorativo).
+  const backgroundSidebarBlock = opts.showModal
+    ? `<nav style="position:relative; z-index:0;"><button type="button" data-testid="sidebar-other-action" onclick="this.textContent = this.textContent === 'Otra acción' ? 'Otra acción (hecho)' : 'Otra acción';">Otra acción</button></nav>`
+    : "";
   // R3a (selector-renamed): el testid del título cambió de versión (simula un
   // refactor de UI que renombra el data-testid), pero `name="title"` y el
   // `<label>` se mantienen intactos — el campo sigue siendo alcanzable.
@@ -93,12 +106,37 @@ function renderHomePage(
       ? `<button type="button" class="save-btn" style="display:none" aria-hidden="true" tabindex="-1">Guardar (decoy)</button>
       <button type="submit" class="save-btn" data-testid="save-note-button">Guardar</button>`
       : `<button type="submit" data-testid="save-note-button">Guardar</button>`;
+  // HEALER-2 / H1 coverage: en este escenario el click NO hace un submit de
+  // formulario (sin navegación) — dispara un `fetch` asíncrono al mismo
+  // endpoint `/save` y no actualiza el DOM al recibir el 500. Esto deja
+  // pasar el click sin error correlacionado en su propio índice (el circuit
+  // breaker no tiene nada que atrapar ahí); el 500 llega DESPUÉS, mientras el
+  // paso siguiente del flujo espera un selector que nunca aparece y por lo
+  // tanto lanza (throw) con el error de red bloqueante ya correlacionado a
+  // ESE índice — el escenario exacto que ejercita el abstain determinista
+  // del healer (ver design HEALER-2, sección "Coverage design").
+  const asyncBrokenSaveScript =
+    scenario === "500-on-save-blocking-throw"
+      ? `<script>
+        document.addEventListener("DOMContentLoaded", function () {
+          var btn = document.querySelector('[data-testid="save-note-button"]');
+          if (!btn) return;
+          btn.addEventListener("click", function (ev) {
+            ev.preventDefault();
+            var form = btn.closest("form");
+            var body = new URLSearchParams(new FormData(form));
+            fetch(form.getAttribute("action"), { method: "POST", body: body });
+          });
+        });
+      </script>`
+      : "";
   return `<!doctype html>
 <html lang="es">
 <head><meta charset="utf-8"><title>Notas — fixture Ghostly</title><style>${PAGE_STYLES}</style></head>
 <body>
   <h1>Notas</h1>
   ${modalBlock}
+  ${backgroundSidebarBlock}
   <form method="post" action="/save?scenario=${encodeURIComponent(scenario)}" data-testid="note-form">
     <label>
       Título
@@ -108,6 +146,7 @@ function renderHomePage(
   </form>
   ${toastBlock}
   ${renderNotesTable(notes, opts.ghostRowTitle)}
+  ${asyncBrokenSaveScript}
 </body>
 </html>`;
 }
@@ -173,7 +212,8 @@ export function startFixtureApp(): Promise<FixtureApp> {
       }
 
       if (req.method === "GET" && url.pathname === "/") {
-        const showModal = scenario === "modal-blocking-button";
+        const showModal =
+          scenario === "modal-blocking-button" || scenario === "modal-open-background-click-ignored";
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(renderHomePage(notes, scenario, { showModal }));
         return;
@@ -183,7 +223,7 @@ export function startFixtureApp(): Promise<FixtureApp> {
         const body = await readBody(req);
         const title = parseFormTitle(body);
 
-        if (scenario === "500-on-save") {
+        if (scenario === "500-on-save" || scenario === "500-on-save-blocking-throw") {
           res.writeHead(500, { "content-type": "text/html; charset=utf-8" });
           res.end(renderServerErrorPage());
           return;
@@ -213,8 +253,9 @@ export function startFixtureApp(): Promise<FixtureApp> {
           return;
         }
 
-        // happy-path / modal-blocking-button / selector-renamed / ambiguous-duplicate-selector:
-        // guardado real y persistente (mismo branch — solo cambia el markup del GET).
+        // happy-path / modal-blocking-button / selector-renamed / ambiguous-duplicate-selector /
+        // modal-open-background-click-ignored: guardado real y persistente (mismo branch — solo
+        // cambia el markup del GET).
         if (title) notes.push({ title });
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(renderHomePage(notes, scenario, { toastVisible: true }));

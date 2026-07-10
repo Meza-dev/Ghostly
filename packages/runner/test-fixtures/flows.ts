@@ -289,6 +289,43 @@ export const BENCHMARK_FLOWS: BenchmarkFlow[] = [
     rationale:
       "El modal de confirmación tapa el botón de guardar sin que el plan lo cierre explícitamente; el healer detecta el diálogo visible y antepone el dismiss antes de reintentar el guardado. Éxito real, recuperado por heal.",
   },
+  // --- HEALER-2 / H1: el paso THROWS (waitForSelector agota su timeout)
+  // mientras un PageError bloqueante (network 500, disparado por un fetch
+  // asíncrono lanzado por el click previo) queda correlacionado al mismo
+  // índice — el healer debe ceder al juez sin gastar intentos (ver design
+  // HEALER-2, "Coverage design"). maxHealingAttemptsPerStep: 1 asegura que
+  // el healer está CABLEADO (probaría que el abstain lo saltea, no que
+  // nunca hubiera corrido).
+  {
+    id: "blocking-error-healer-abstains",
+    goal: "Crear una nota con título 'Abstención del healer' y verificar que se guardó",
+    scenario: "500-on-save-blocking-throw",
+    steps: [
+      { action: "goto", url: "/" },
+      { action: "fill", selector: '[data-testid="note-title-input"]', value: "Abstención del healer" },
+      { action: "click", selector: '[data-testid="save-note-button"]' },
+      {
+        action: "waitForSelector",
+        selector: '[data-testid="notes-table"] td:has-text("Abstención del healer")',
+        timeoutMs: 3_000,
+      },
+    ],
+    assist: {
+      ...DEFAULT_ASSIST_BASE,
+      goal: "Crear una nota con título 'Abstención del healer' y verificar que se guardó",
+      victory: {
+        selectorVisible: ['[data-testid="notes-table"] td:has-text("Abstención del healer")'],
+        mustAll: true,
+      },
+      maxLoopMs: 15_000,
+      maxHealingAttemptsPerStep: 1,
+    },
+    expectedVerdict: "fail-app-bug",
+    rationale:
+      "El click dispara un fetch asíncrono que responde 500 recién mientras el paso siguiente espera la fila " +
+      "persistida (que nunca llega). El healer está cableado pero cede determinísticamente ante la evidencia " +
+      "de error bloqueante (HEALER-2/H1) en vez de gastar un intento de heal — la app está rota, no el selector.",
+  },
   {
     id: "ambiguous-duplicate-selector",
     goal: "Crear una nota con título 'Ambiguo' y verificar que se guardó",
@@ -311,5 +348,36 @@ export const BENCHMARK_FLOWS: BenchmarkFlow[] = [
     expectedVerdict: "success",
     rationale:
       "El selector `.save-btn` matchea dos botones (violación de strict-mode); el healer desambigua priorizando el data-testid canónico del botón real. Éxito real, recuperado por heal.",
+  },
+  // --- HEALER-3: cobertura genérica del alcance de modal (sin strings de
+  // dominio). El plan scripteado intenta clickear un control de fondo/sidebar
+  // mientras el modal de confirmación está abierto; el backdrop intercepta el
+  // click por puntero y el healer (Rule B — visibleDialogs.length>0) antepone
+  // el dismiss y reintenta. Prueba la señal estructural genérica
+  // (ObserverSnapshot.visibleDialogs), no un match de texto de dominio.
+  {
+    id: "modal-open-background-click-ignored",
+    goal: "Crear una nota con título 'Modal enfocado' y verificar que se guardó",
+    scenario: "modal-open-background-click-ignored",
+    steps: [
+      { action: "goto", url: "/" },
+      // Click de fondo/sidebar mientras el modal está abierto: queda
+      // pointer-intercepted por `.modal-overlay-backdrop` y dispara el heal.
+      { action: "click", selector: '[data-testid="sidebar-other-action"]' },
+      { action: "fill", selector: '[data-testid="note-title-input"]', value: "Modal enfocado" },
+      { action: "click", selector: '[data-testid="save-note-button"]' },
+    ],
+    assist: {
+      ...DEFAULT_ASSIST_BASE,
+      goal: "Crear una nota con título 'Modal enfocado' y verificar que se guardó",
+      // Ver nota en selector-renamed-healer-recovers: `selectorVisible` acotado a
+      // la celda de la tabla persistida evita un candidato a victoria prematuro
+      // por el valor tipeado en el textbox (aún no guardado) tras el heal.
+      victory: { selectorVisible: ['[data-testid="notes-table"] td:has-text("Modal enfocado")'], mustAll: true },
+      maxHealingAttemptsPerStep: 1,
+    },
+    expectedVerdict: "success",
+    rationale:
+      "El modal de confirmación tapa el control de fondo/sidebar; el click de fondo queda pointer-intercepted por el backdrop y el healer (Rule B — visibleDialogs visible) antepone el dismiss antes de reintentar. El guardado posterior es real y verificable — cobertura genérica del alcance de modal sin ningún string de dominio.",
   },
 ];

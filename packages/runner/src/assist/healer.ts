@@ -32,16 +32,48 @@ function isAmbiguous(selector: string): boolean {
   return AMBIGUOUS_HEALER_SELECTORS.has(norm);
 }
 
+/**
+ * Extrae tokens candidatos de ancla desde un selector, en orden de prioridad:
+ * data-testid, #id, aria-label, name, texto (:has-text/text=), y como fallback
+ * el selector literal completo. Devuelve todos los tokens encontrados (no solo el primero)
+ * para permitir un match permisivo (OR) contra el árbol observado.
+ */
+function extractAnchorTokens(selector: string): string[] {
+  const tokens: string[] = [];
+  const testIdMatch = /\[data-testid=["']?([^"'\]]+)/i.exec(selector);
+  if (testIdMatch?.[1]) tokens.push(testIdMatch[1]);
+  const idMatch = /#([A-Za-z0-9_-]+)/.exec(selector);
+  if (idMatch?.[1]) tokens.push(idMatch[1]);
+  const ariaLabelMatch = /\[aria-label=["']?([^"'\]]+)/i.exec(selector);
+  if (ariaLabelMatch?.[1]) tokens.push(ariaLabelMatch[1]);
+  const nameMatch = /\[name=["']?([^"'\]]+)/i.exec(selector);
+  if (nameMatch?.[1]) tokens.push(nameMatch[1]);
+  const textMatch = /:?has-text\(["']([^"']+)["']\)/i.exec(selector) ?? /text=["']?([^"'\]]+)/i.exec(selector);
+  if (textMatch?.[1]) tokens.push(textMatch[1]);
+  tokens.push(selector.trim());
+  return tokens;
+}
+
+/** Verifica que al menos un token de ancla del selector aparezca (case-insensitive) en el árbol observado. */
+function anchorExistsInMap(selector: string, treeMarkdown: string): boolean {
+  const haystack = treeMarkdown.toLowerCase();
+  return extractAnchorTokens(selector).some((token) => haystack.includes(token.toLowerCase()));
+}
+
 /** Sanitiza los steps propuestos por el healer: mismo origin, acciones válidas, selectores no ambiguos y máximo 3 pasos. */
 export function sanitizeHealerSteps(
   baseUrl: string,
   proposed: Step[],
   maxTimeoutMs: number,
+  observedTreeMarkdown?: string,
 ): Step[] {
+  const gateActive =
+    typeof observedTreeMarkdown === "string" && observedTreeMarkdown.trim().length > 0;
   const capped = proposed.slice(0, 3).filter((s) => {
     if (s.action === "click" || s.action === "fill" || s.action === "waitForSelector") {
       if (isAmbiguous(s.selector)) return false;
       if (/\[\s*ref\s*=\s*e\d+/i.test(s.selector)) return false;
+      if (gateActive && !anchorExistsInMap(s.selector, observedTreeMarkdown)) return false;
     }
     return true;
   });
