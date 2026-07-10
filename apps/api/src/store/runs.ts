@@ -99,6 +99,30 @@ export async function upsertAssistMemory(params: {
 }
 
 /**
+ * Invalida (borra) una memoria de replay que no volvió a pasar la
+ * verificación de victoria (spec §6 — guardia de memoria): "un replay de
+ * memoria debe re-pasar la verificación de victoria; si no la pasa, esa
+ * memoria se invalida (se borra o marca stale) en lugar de reportar éxito."
+ * Se borra en vez de marcar stale: no hay columna de estado en el schema
+ * actual y una fila borrada simplemente vuelve a sembrarse desde cero en el
+ * próximo run exitoso — más simple que introducir un nuevo estado sin uso.
+ */
+export async function invalidateAssistMemory(params: {
+  userId: string;
+  project: string;
+  baseUrl: string;
+  goal: string;
+}): Promise<void> {
+  await prisma.$executeRaw`
+    DELETE FROM assist_memories
+    WHERE userId = ${params.userId}
+      AND project = ${params.project}
+      AND baseUrl = ${params.baseUrl}
+      AND goal = ${params.goal}
+  `;
+}
+
+/**
  * Pre-crea un registro de Run en estado "running". Usado para runs fire-and-forget
  * que se ejecutan en background y cuyo detalle el cliente puede consultar/streamear
  * antes de que la ejecución termine.
@@ -154,6 +178,13 @@ export async function appendRunEvent(
 /**
  * Cierra un run pre-creado con su resultado final: status, duración, steps y videoPath.
  * Los eventos ya fueron persistidos incrementalmente.
+ *
+ * `verdict`/`verdictReason`/`stopReason` (spec §6, Kanon GHOST-31) se persisten
+ * ADEMÁS de `status` (no en su reemplazo) por compatibilidad: `status` sigue
+ * siendo "pass" | "fail" | "running" para clientes viejos, mientras que
+ * `verdict` es la fuente de verdad de la taxonomía de 6 estados (spec §5).
+ * Runs sin veredicto explícito (pipeline v1, o v2 sin judge/circuit-breaker
+ * involucrado) quedan con `verdict = null` — "sin clasificar" en el dashboard.
  */
 export async function finalizeRun(params: {
   id: string;
@@ -161,6 +192,9 @@ export async function finalizeRun(params: {
   durationMs: number;
   steps: StepOutcome[];
   videoPath?: string;
+  verdict?: string;
+  verdictReason?: string;
+  stopReason?: string;
 }): Promise<void> {
   await prisma.$transaction([
     prisma.step.deleteMany({ where: { runId: params.id } }),
@@ -181,6 +215,9 @@ export async function finalizeRun(params: {
         status: params.status,
         durationMs: params.durationMs,
         videoPath: params.videoPath ?? null,
+        verdict: params.verdict ?? null,
+        verdictReason: params.verdictReason ?? null,
+        stopReason: params.stopReason ?? null,
       },
     }),
   ]);
@@ -286,6 +323,9 @@ function toRecord(run: DbRun): RunRecordWithEvents {
   return {
     id: run.id,
     status: run.status as RunRecord["status"],
+    ...(run.verdict ? { verdict: run.verdict } : {}),
+    ...(run.verdictReason ? { verdictReason: run.verdictReason } : {}),
+    ...(run.stopReason ? { stopReason: run.stopReason } : {}),
     startedAt: run.startedAt.toISOString(),
     durationMs: run.durationMs,
     baseUrl: run.baseUrl,

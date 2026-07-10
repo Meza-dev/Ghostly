@@ -1,7 +1,35 @@
 import type { ResolvedLlmConfig } from "../config.js";
 import { LlmError } from "../errors.js";
 import { parseOpenAiAssistantContent } from "../extract-json.js";
-import type { LlmCompleteRequest, LlmCompleteResult, LlmProvider } from "../types.js";
+import type { LlmCompleteRequest, LlmCompleteResult, LlmMessage, LlmProvider } from "../types.js";
+
+type OpenAiContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+type OpenAiChatMessage = { role: LlmMessage["role"]; content: string | OpenAiContentPart[] };
+
+/**
+ * Adjunta la imagen (si viene) como un content-part `image_url` al ÚLTIMO
+ * mensaje de rol `user` (spec §4.3 — el screenshot es evidencia EXTRA sobre el
+ * dossier de texto, nunca reemplaza a `messages`). Si no hay ningún mensaje
+ * `user`, la imagen se descarta silenciosamente en vez de fallar la request.
+ */
+function buildOpenAiMessages(req: LlmCompleteRequest): OpenAiChatMessage[] {
+  if (!req.image) return req.messages;
+  const lastUserIndex = req.messages.map((m) => m.role).lastIndexOf("user");
+  if (lastUserIndex < 0) return req.messages;
+  return req.messages.map((m, i): OpenAiChatMessage => {
+    if (i !== lastUserIndex) return m;
+    return {
+      role: m.role,
+      content: [
+        { type: "text", text: m.content },
+        { type: "image_url", image_url: { url: `data:${req.image!.mimeType};base64,${req.image!.base64}` } },
+      ],
+    };
+  });
+}
 
 export class HttpOpenAiProvider implements LlmProvider {
   readonly providerId = "http";
@@ -28,7 +56,7 @@ export class HttpOpenAiProvider implements LlmProvider {
           model: req.model ?? this.config.model,
           temperature: 0,
           response_format: req.jsonMode !== false ? { type: "json_object" } : undefined,
-          messages: req.messages,
+          messages: buildOpenAiMessages(req),
         }),
         signal: controller.signal,
       });

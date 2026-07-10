@@ -12,14 +12,45 @@ export {
   type Step,
 } from "./schema.js";
 export { runFlow, type RunResult, type StepOutcome } from "./run.js";
-export { captureObserverSnapshot } from "./assist/observer.js";
+export {
+  captureObserverSnapshot,
+  createPageErrorTracker,
+  type CaptureObserverSnapshotOptions,
+  type PageErrorTracker,
+  type PageErrorTrackerOptions,
+} from "./assist/observer.js";
 export { sanitizeHealerSteps } from "./assist/healer.js";
 export { captureRecon, type ReconOptions } from "./assist/recon.js";
 export {
   runAssistedFlow,
+  detectBlockingAppError,
+  detectUnresolvedWarningSignal,
+  pageErrorKey,
+  goalImpliesPersistence,
+  shouldRevalidateVictory,
+  detectStall,
   type AssistedRunResult,
   type AssistedDeps,
 } from "./assist/pipeline.js";
+export {
+  buildJudgeDossier,
+  buildJudgeUserPrompt,
+  createJudgeContinueCapTracker,
+  JUDGE_SYSTEM_PROMPT,
+  judgeVerdictSchema,
+  MAX_CONTINUE_VERDICTS_PER_REASON,
+  qualifiesForMemoryPersistence,
+  summarizeJudgeEventForPersistence,
+  validateJudgeVerdict,
+  type BuildJudgeDossierInput,
+  type JudgeContinueCapTracker,
+  type MemoryGuardRunResult,
+} from "./assist/judge.js";
+export {
+  redactOrTruncateList,
+  redactOrTruncateText,
+  SENSITIVE_TEXT_WORDS,
+} from "./assist/redaction.js";
 export type {
   AssistEvent,
   AssistEventType,
@@ -29,7 +60,20 @@ export type {
   HealerContext,
   HealerFn,
   HealerResult,
+  JudgeConfidence,
+  JudgeDeterministicCheck,
+  JudgeDossier,
+  JudgeEvent,
+  JudgeFn,
+  JudgeRecentAction,
+  JudgeTrigger,
+  JudgeTriggerStopReason,
+  JudgeVerdict,
   ObserverSnapshot,
+  PageError,
+  PageErrorDetail,
+  PageErrorSeverity,
+  PageErrorSource,
   PlanProgressItem,
   PlanProgressReportItem,
   PlannedChunk,
@@ -37,5 +81,7 @@ export type {
   SemanticHint,
   StrategistContext,
   StrategistFn,
+  Verdict,
+  VictoryCondition,
   VisibleDialogInfo,
 } from "./assist/types.js";

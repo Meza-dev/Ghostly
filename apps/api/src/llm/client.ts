@@ -1,12 +1,14 @@
 import { resolveLlmConfig } from "./config.js";
 import { extractJsonBlock } from "./extract-json.js";
 import { createLlmProvider } from "./factory.js";
-import type { LlmMessage } from "./types.js";
+import type { LlmImageAttachment, LlmMessage } from "./types.js";
 
 export type CompleteJsonOptions = {
   timeoutMs: number;
   label?: string;
   model?: string;
+  /** Adjunta evidencia visual — el provider.complete() la ignora si no la soporta (types.ts). */
+  image?: LlmImageAttachment;
 };
 
 function isDebugEnabled(): boolean {
@@ -89,6 +91,7 @@ export async function completeJson(
     label,
     model: opts.model ?? config.model,
     jsonMode: true,
+    ...(opts.image ? { image: opts.image } : {}),
   });
 
   debugLog(label, {

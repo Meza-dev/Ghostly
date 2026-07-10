@@ -43,6 +43,7 @@ export type AssistEventType =
   | "heal_action"
   | "heal_success"
   | "heal_failure"
+  | "judge_verdict"
   | "run_end";
 
 export type AssistEvent = {
@@ -62,6 +63,12 @@ export type RunStartResponse = {
 export type RunRecord = {
   id: string;
   status: RunStatus;
+  /** Taxonomía de veredictos (spec §5). `undefined` en runs históricos ("sin clasificar"). */
+  verdict?: string;
+  /** Razonamiento del juez o descripción del check determinista que resolvió el veredicto. */
+  verdictReason?: string;
+  /** `stopReason` interno del pipeline (spec §6) — por qué terminó el loop. */
+  stopReason?: string;
   startedAt: string;
   durationMs: number;
   baseUrl: string;

@@ -112,6 +112,12 @@ export type AssistedMeta = {
 export type RunRecord = {
   id: string;
   status: RunStatus;
+  /** Taxonomía de veredictos (spec §5). `undefined` en runs históricos ("sin clasificar"). */
+  verdict?: string;
+  /** Razonamiento del juez o descripción del check determinista que resolvió el veredicto. */
+  verdictReason?: string;
+  /** `stopReason` interno del pipeline (spec §6) — por qué terminó el loop. */
+  stopReason?: string;
   startedAt: string;
   durationMs: number;
   baseUrl: string;

@@ -13,6 +13,7 @@
 | Documento | Estado | Descripción |
 |---|---|---|
 | [cursor-cli-llm-provider.md](cursor-cli-llm-provider.md) | ✅ Implementado | Diseño del módulo `llm/`: contrato `LlmProvider` con proveedores HTTP OpenAI-compatible y Cursor CLI. |
+| [redaction-boundary.md](redaction-boundary.md) | ✅ Implementado | El único choke point de redacción de texto libre (goal/juez/página) antes de persistir o exponer — evita los leaks per-sink de GHOST-31. |
 
 ## Guías
 

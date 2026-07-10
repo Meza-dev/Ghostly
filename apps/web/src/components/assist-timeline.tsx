@@ -6,6 +6,7 @@ import {
   ClipboardList,
   Eye,
   FlagTriangleRight,
+  Gavel,
   Heart,
   HeartCrack,
   Play,
@@ -13,6 +14,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useState, type ComponentType, type SVGProps } from "react";
+import { getVerdictMeta } from "../lib/verdict";
 
 export type AssistEventType =
   | "recon"
@@ -30,6 +32,7 @@ export type AssistEventType =
   | "heal_action"
   | "heal_success"
   | "heal_failure"
+  | "judge_verdict"
   | "run_end";
 
 export type AssistEvent = {
@@ -62,6 +65,7 @@ const EVENT_META: Record<AssistEventType, EventMeta> = {
   heal_action: { label: "Healer aplicando acción", tone: "warn", icon: Bot },
   heal_success: { label: "Healer recuperó", tone: "success", icon: Heart },
   heal_failure: { label: "Healer falló", tone: "error", icon: HeartCrack },
+  judge_verdict: { label: "Veredicto del juez", tone: "warn", icon: Gavel },
   run_end: { label: "Fin de ejecución", tone: "info", icon: FlagTriangleRight },
 };
 
@@ -94,12 +98,20 @@ function formatPayload(type: AssistEventType, payload: Record<string, unknown>):
     return `horizonte=${h} · pendientes=${pending}`;
   }
   if (type === "victory_check") {
+    // `objectiveLikelyCompleted`/`terminalStep` fueron eliminados del motor en
+    // GHOST-28 (spec §4.2b): la victoria ahora se decide SOLO por verificación
+    // determinista + juez, no por heurística de substring. No leer esos campos.
     const cfg = `configured=${String(payload.configured)}`;
     const met = `met=${String(payload.met)}`;
-    const obj = `objectiveLikelyCompleted=${String(payload.objectiveLikelyCompleted)}`;
     const immediate = payload.immediate === true ? "immediate=true" : "";
-    const terminal = payload.terminalStep === true ? "terminalStep=true" : "";
-    return [cfg, met, obj, immediate, terminal].filter(Boolean).join(" · ");
+    return [cfg, met, immediate].filter(Boolean).join(" · ");
+  }
+  if (type === "judge_verdict") {
+    const reason = typeof payload.reason === "string" ? payload.reason : "?";
+    const verdict = typeof payload.verdict === "string" ? payload.verdict : "?";
+    const confidence = typeof payload.confidence === "string" ? payload.confidence : "?";
+    const meta = getVerdictMeta(verdict);
+    return `motivo=${reason} · veredicto=${meta.shortLabel} · confianza=${confidence}`;
   }
   if (type === "memory_hit") {
     return `horizonte=${payload.horizon ?? "?"} · candidatos=${payload.candidates ?? "?"}`;

@@ -5,17 +5,32 @@ import { chromium, type BrowserContext, type Page, type Video } from "playwright
 import type { Locator } from "playwright";
 import type { StepOutcome, RunResult } from "../run.js";
 import type { Step } from "../schema.js";
-import { captureObserverSnapshot } from "./observer.js";
+import { captureObserverSnapshot, createPageErrorTracker } from "./observer.js";
 import { sanitizeHealerSteps } from "./healer.js";
+import {
+  buildJudgeDossier,
+  createJudgeContinueCapTracker,
+  MAX_CONTINUE_VERDICTS_PER_REASON,
+  validateJudgeVerdict,
+} from "./judge.js";
+import { redactOrTruncateText } from "./redaction.js";
 import type {
   AssistEvent,
   AssistEventType,
   AssistedRunInput,
   HealerFn,
+  JudgeDeterministicCheck,
+  JudgeEvent,
+  JudgeFn,
+  JudgeTrigger,
+  JudgeVerdict,
   ObserverSnapshot,
+  PageError,
   PlanProgressItem,
   PlanProgressReportItem,
   StrategistFn,
+  Verdict,
+  VictoryCondition,
 } from "./types.js";
 
 export type AssistedRunResult = RunResult & {
@@ -24,11 +39,27 @@ export type AssistedRunResult = RunResult & {
   learnedFlow?: Step[];
   finalPlan?: Step[];
   planProgress?: PlanProgressReportItem[];
+  /** Taxonomía de veredictos (spec §5). Ausente hasta que una fase determinista o el juez lo produzcan. */
+  verdict?: Verdict;
+  /** Explicación del veredicto — descripción del check determinista o razonamiento del juez. */
+  verdictReason?: string;
+  /** Motivo interno de corte del loop (spec §6): `blocked-by-app-error`, `victory-met`, etc. */
+  stopReason?: string;
+  /** Evidencia dura que sustenta el veredicto (p. ej. los `PageError` que dispararon el circuit breaker). */
+  verdictEvidence?: PageError[];
+  /** Secuencia de invocaciones del juez (dossier resumido + veredicto) — observabilidad (spec §4.3). */
+  judgeEvents?: JudgeEvent[];
 };
 
 export type AssistedDeps = {
   strategist: StrategistFn;
   healer: HealerFn;
+  /**
+   * El juez (Capa 3, spec §4.3) — mismo patrón de inyección que strategist/healer:
+   * el runner NUNCA importa un LLM. La implementación real vive del lado API
+   * (`createJudge`, GHOST-30); acá solo se consume vía el contrato de `judge.ts`.
+   */
+  judge: JudgeFn;
   log?: (message: string, details?: Record<string, unknown>) => void;
 };
 
@@ -97,33 +128,6 @@ function normalizeLooseText(text: string): string {
 }
 
 /**
- * Etiquetas típicas del sidebar/backoffice: `text=Viajes` no debe resolverse contra el h1
- * «Gestión de Viajes» (substring). Priorizar enlace en `nav` / role=link.
- */
-function looksLikeSidebarNavLabel(raw: string): boolean {
-  const t = raw.trim();
-  if (t.length < 2 || t.length > 48) return false;
-  return /^(home|conductores|usuarios|locaciones|veh[ií]culos|viajes|importador|clientes|documentos(\s+log[ií]sticos)?|cerrar\s+sesi[oó]n)$/i.test(
-    t,
-  );
-}
-
-async function clickOrWaitNavLinkByLabel(
-  page: Page,
-  label: string,
-  timeout: number,
-  mode: "click" | "visible",
-): Promise<void> {
-  const re = new RegExp(`^\\s*${escapeRegex(label.trim())}\\s*$`, "i");
-  const navLink = page.locator(`nav a, [role="navigation"] a`).filter({ hasText: re }).first();
-  if (mode === "visible") {
-    await navLink.waitFor({ state: "visible", timeout });
-    return;
-  }
-  await navLink.click({ timeout });
-}
-
-/**
  * Muchas apps ponen ítems de submenú como `button` bajo `[role="menu"]` o dentro de `nav` (no `<a>`).
  * Evita que `getByRole("button").first()` elija un match oculto fuera del menú desplegable.
  */
@@ -172,30 +176,6 @@ function normalizeLlmHeadingSelector(selector: string): string {
   return raw;
 }
 
-/** Aviso de Google Maps en localhost sin API key suele tapar clics; cerrar OK si está visible. */
-async function dismissGoogleMapsLoadErrorIfPresent(page: Page): Promise<void> {
-  try {
-    const banner = page
-      .getByText(
-        /can't load Google Maps|no puede cargar|load Google Maps correctly|cargar Google Maps correctamente/i,
-      )
-      .first();
-    const visible = await banner.isVisible({ timeout: 500 }).catch(() => false);
-    if (!visible) return;
-    const ok = page.getByRole("button", { name: /^OK$/i }).first();
-    if (await ok.isVisible({ timeout: 1_500 }).catch(() => false)) {
-      await ok.click({ timeout: 8_000 });
-      await page.waitForTimeout(250);
-    }
-  } catch {
-    /* no bloquear el flujo */
-  }
-}
-
-async function prepareTransientOverlaysForAutomation(page: Page): Promise<void> {
-  await dismissGoogleMapsLoadErrorIfPresent(page);
-}
-
 const REF_SELECTOR_RE = /\[\s*ref\s*=\s*e\d+\s*\]/i;
 
 /** Los ref=eN del snapshot a11y no existen en el DOM como CSS; rechazamos para forzar replan. */
@@ -223,41 +203,13 @@ async function countVisibleA11yDialogs(page: Page): Promise<number> {
   return page.locator('[role="dialog"]:visible, [role="alertdialog"]:visible').count();
 }
 
-/** Clics tipo «Crear calificación» que abren un panel cuyo HTML puede vivir fuera del slice del hash del body. */
-function clickSelectorLikelyOpensCreationSurface(selector: string): boolean {
-  const s = selector.toLowerCase();
-  const createIntent = /crear|nueva|nuevo|add\s+new|\bnew\s+/i.test(s);
-  const domain = /calific|grupo|rating|evalu|registro|item|viaje|trabajo|usuario/i.test(s);
-  return createIntent && domain;
-}
-
-/**
- * Señales de que el clic abrió un formulario de creación aunque `hashDomSlice` no cambie
- * (p. ej. portales/modales con poco impacto en los primeros 16k del innerHTML del body).
- */
-async function creationSurfaceVisibleAfterClick(page: Page): Promise<boolean> {
-  const probes: Array<Promise<boolean>> = [
-    page
-      .getByRole("heading", { name: /crear\s+(grupo|calificaci[oó]n)/i })
-      .first()
-      .isVisible({ timeout: 1_000 })
-      .catch(() => false),
-    page
-      .getByText(/calificaciones\s+del\s+grupo/i)
-      .first()
-      .isVisible({ timeout: 1_000 })
-      .catch(() => false),
-    page
-      .getByRole("dialog")
-      .filter({ has: page.getByRole("heading", { name: /crear\s+grupo/i }) })
-      .first()
-      .isVisible({ timeout: 1_000 })
-      .catch(() => false),
-  ];
-  const results = await Promise.all(probes);
-  return results.some(Boolean);
-}
-
+// HEALER-4 DEFERRED (accepted domain debt): these loader-text patterns are
+// app-specific Spanish TMS strings. They are retained because no generic
+// structural "loading/spinner visible" signal exists in observer.ts today
+// (no aria-busy / role=progressbar / generic loading detector). Removing them
+// would regress loop pacing with no replacement. Genericize in a follow-up
+// slice that adds a structural loading-indicator detector to observer.ts, then
+// route waitForKnownModalLoadersToFinish through it. Follow-up: HEALER-5.
 /** Mensajes de carga frecuentes en modales (p. ej. TMS «Cargando documentos»). */
 const MODAL_LOADER_TEXT_PATTERNS: RegExp[] = [
   /Cargando\s+documentos/i,
@@ -337,153 +289,6 @@ async function victoryTargetVisible(page: Page, raw: string): Promise<boolean> {
   }
 }
 
-function naturalLanguageVictorySatisfied(
-  snapshot: ObserverSnapshot,
-  raw: string,
-  history: Array<{ step: Step; ok: boolean; error?: string }>,
-): boolean {
-  const phrase = normalizeLooseText(raw);
-  if (!phrase) return false;
-  const hay = normalizeLooseText(`${snapshot.title}\n${snapshot.url}\n${snapshot.treeMarkdown}`);
-  if (!hay) return false;
-  if (hay.includes(phrase)) return true;
-
-  const looksNatural =
-    /[\s,;]/.test(phrase) || phrase.length > 40 || (!/[#.\[\]=:]/.test(phrase) && !/^text=/.test(phrase));
-  if (!looksNatural) return false;
-
-  const asksToast = /\b(toast|alerta|notific|mensaje)\b/.test(phrase);
-  const asksCreate = /\b(creacion|crear|creada|creado|guardad|confirm|exito)\b/.test(phrase);
-  const asksTable = /\b(tabla|listado|table|row|fila)\b/.test(phrase);
-  const asksCalif = /\bcalific/.test(phrase);
-  const asksNueva = /\bnueva\b/.test(phrase);
-
-  const hasListadoCalif = /listado de calificaciones/.test(hay);
-  const hasNuevaCalifRow = /row\s+"[^"\n]*nueva calific/.test(hay) || /cell\s+"nueva calific/.test(hay);
-
-  // Frases tipo "toast de creación y aparece en tabla nueva calificación":
-  // si la tabla ya refleja la nueva fila, consideramos victoria aunque el toast sea efímero.
-  const hasFinalize = hasAnyFinalizeAction(history);
-  // Evita falso positivo temprano: para "aparece en tabla / toast creación"
-  // exigimos que ya exista acción final de guardado/confirmación.
-  if ((asksToast || asksCreate) && asksTable && asksCalif && hasNuevaCalifRow) return hasFinalize;
-  if (asksNueva && asksCalif && hasListadoCalif && hasNuevaCalifRow) return hasFinalize;
-  if (asksTable && asksCalif && hasNuevaCalifRow) return hasFinalize;
-
-  return false;
-}
-
-function selectorLikelyNeedsFinalizeAction(raw: string): boolean {
-  const phrase = normalizeLooseText(raw);
-  if (!phrase) return false;
-  const asksToast = /\b(toast|alerta|notific|mensaje)\b/.test(phrase);
-  const asksCreate = /\b(creacion|crear|creada|creado|guardad|confirm|exito)\b/.test(phrase);
-  const asksTable = /\b(tabla|listado|table|row|fila)\b/.test(phrase);
-  const asksCalif = /\bcalific/.test(phrase);
-  return asksCalif && (asksTable || asksToast || asksCreate);
-}
-
-function goalMentionsCalificacionesCreate(goal: string): boolean {
-  const g = normalizeLooseText(goal);
-  return /calific/.test(g) && /(crear|crea|nueva|nuevo)/.test(g);
-}
-
-function makeUniqueCalificacionName(value: string, uniqueTag: string): string {
-  const base = value.trim().replace(/\s+/g, " ");
-  if (!base) return value;
-  const alreadyUnique = /gt-[a-z0-9]{4,}/i.test(base);
-  if (alreadyUnique) return value;
-  return `${base} GT-${uniqueTag}`;
-}
-
-function maybeUniquifyFillStep(step: Step, goal: string, uniqueTag: string): Step {
-  if (step.action !== "fill") return step;
-  if (!goalMentionsCalificacionesCreate(goal)) return step;
-  if (isAuthLikeFillStep(step)) return step;
-  const sel = step.selector.toLowerCase();
-  const val = normalizeLooseText(step.value);
-  const looksNameField =
-    sel.includes("de malo a excelente") ||
-    sel.includes("nombre del grupo") ||
-    sel.includes("calificaci");
-  const genericNameValue =
-    val === "nueva calificacion" ||
-    val === "nueva calificación" ||
-    val === "calificacion" ||
-    val === "calificación";
-  if (!looksNameField && !genericNameValue) return step;
-  const uniqueValue = makeUniqueCalificacionName(step.value, uniqueTag);
-  if (uniqueValue === step.value) return step;
-  return { ...step, value: uniqueValue };
-}
-
-function isAuthLikeFillStep(step: Step): boolean {
-  if (step.action !== "fill") return false;
-  const s = step.selector.toLowerCase();
-  return /user|usuario|email|login|pass|password|contrase|token|api[_-]?key|secret/i.test(s);
-}
-
-function collectRecentBusinessFillValues(history: Array<{ step: Step; ok: boolean; error?: string }>): string[] {
-  const out: string[] = [];
-  for (let i = history.length - 1; i >= 0; i--) {
-    const h = history[i]!;
-    if (!h.ok || h.step.action !== "fill" || isAuthLikeFillStep(h.step)) continue;
-    const v = h.step.value.trim();
-    if (v.length <= 1) continue;
-    if (/^\d+$/.test(v)) continue;
-    if (/^(ok|si|sí|no|n\/a)$/i.test(v)) continue;
-    if (!out.includes(v)) out.push(v);
-    if (out.length >= 8) break;
-  }
-  return out;
-}
-
-function snapshotContainsAnyValue(snapshot: ObserverSnapshot, values: string[]): boolean {
-  if (values.length === 0) return false;
-  const hay = normalizeLooseText(`${snapshot.title}\n${snapshot.url}\n${snapshot.treeMarkdown}`);
-  if (!hay) return false;
-  return values.some((v) => {
-    const n = normalizeLooseText(v);
-    return n.length >= 3 && hay.includes(n);
-  });
-}
-
-function isBusinessFillStep(step: Step): boolean {
-  return step.action === "fill" && !isAuthLikeFillStep(step);
-}
-
-function isBusinessFinalizeStep(step: Step): boolean {
-  if (step.action === "press") return /enter/i.test(step.key);
-  if (step.action !== "click") return false;
-  const s = step.selector.toLowerCase();
-  if (/ingresar|entrar|sign in|login/.test(s)) return false;
-  if (isLoginLikeStep(step)) return false;
-  return /guardar|save|confirm|confirmar|continuar|finalizar|crear calificaci[oó]n/i.test(s);
-}
-
-function hasAnyFinalizeAction(history: Array<{ step: Step; ok: boolean; error?: string }>): boolean {
-  let lastBusinessFill = -1;
-  for (let i = 0; i < history.length; i++) {
-    const h = history[i]!;
-    if (!h.ok) continue;
-    if (isBusinessFillStep(h.step)) lastBusinessFill = i;
-    if (isBusinessFinalizeStep(h.step) && lastBusinessFill >= 0 && i > lastBusinessFill) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function objectiveLikelyCompleted(
-  history: Array<{ step: Step; ok: boolean; error?: string }>,
-  snapshot: ObserverSnapshot,
-): boolean {
-  const fillValues = collectRecentBusinessFillValues(history);
-  if (fillValues.length === 0) return false;
-  if (!hasAnyFinalizeAction(history)) return false;
-  return snapshotContainsAnyValue(snapshot, fillValues);
-}
-
 function expandFillSelectors(primary: string): string[] {
   const s = primary.trim();
   const lower = s.toLowerCase();
@@ -523,27 +328,6 @@ function expandFillSelectors(primary: string): string[] {
   const name = extractSelectorName(s);
   if (name) {
     out.push(`[name="${name}"]`, `input[name="${name}"]`, `textarea[name="${name}"]`);
-  }
-
-  // En el modal de calificaciones, el LLM a veces propone "Ej: Excelente" o aria-label
-  // "Calificación" para el campo de etiqueta. Forzamos candidatos robustos del campo real.
-  const looksLikeCalificacionLabelField =
-    lower.includes("ej: excelente") ||
-    lower.includes("aria-label=\"calificación\"") ||
-    lower.includes("aria-label='calificación'") ||
-    lower.includes("aria-label=\"calificacion\"") ||
-    lower.includes("aria-label='calificacion'") ||
-    /calificaci[oó]n/.test(lower);
-  if (looksLikeCalificacionLabelField) {
-    out.push(
-      '[placeholder="Etiqueta (Ej: Malo, Regular, Bueno)"]',
-      '[placeholder*="Etiqueta"]',
-      'input[placeholder*="Etiqueta"]',
-      'textarea[placeholder*="Etiqueta"]',
-      "__gt:fill:placeholder=Etiqueta%20(Ej%3A%20Malo%2C%20Regular%2C%20Bueno)",
-      "__gt:fill:placeholderPrefix=Etiqueta",
-      "__gt:fill:textboxName=Etiqueta",
-    );
   }
 
   if (lower.includes("username") || /name\s*=\s*['"]?\s*username/i.test(s) || /name\s*=\s*['"]?\s*user/i.test(s)) {
@@ -764,12 +548,6 @@ function gtRoleFirstCandidates(s0: string): string[] {
       const c = stripLeadingDecorativeGlyphs(textOnly.replace(/^['"]|['"]$/g, ""));
       if (c) {
         const t = c.trim();
-        if (looksLikeSidebarNavLabel(t)) {
-          out.push(`__gt:role=link;name=${encodeURIComponent(t)}`);
-          const q = t.includes("'") ? '"' : "'";
-          const inner = q === "'" ? t.replace(/'/g, "\\'") : t.replace(/"/g, '\\"');
-          out.push(`a:has-text(${q}${inner}${q})`);
-        }
         out.push(`__gt:role=button;name=${encodeURIComponent(t)}`);
       }
     }
@@ -941,19 +719,6 @@ async function waitForTargetVisible(page: Page, selector: string, timeout: numbe
         .waitFor({ state: "visible", timeout });
       return;
     }
-    if (looksLikeSidebarNavLabel(name)) {
-      try {
-        await page
-          .getByRole("link", { name: new RegExp(`^\\s*${escapeRegex(name.trim())}\\s*$`, "i") })
-          .first()
-          .waitFor({ state: "visible", timeout });
-        return;
-      } catch {
-        /* continuar */
-      }
-      await clickOrWaitNavLinkByLabel(page, name, timeout, "visible");
-      return;
-    }
     await page.getByRole("link", { name: new RegExp(escapeRegex(name), "i") }).first().waitFor({ state: "visible", timeout });
     return;
   }
@@ -1029,24 +794,6 @@ async function waitForTargetVisible(page: Page, selector: string, timeout: numbe
   if (textEngine) {
     const clean = stripLeadingDecorativeGlyphs(textEngine.replace(/^['"]|['"]$/g, ""));
     if (clean) {
-      const t = clean.trim();
-      if (looksLikeSidebarNavLabel(t)) {
-        try {
-          await page
-            .getByRole("link", { name: new RegExp(`^\\s*${escapeRegex(t)}\\s*$`, "i") })
-            .first()
-            .waitFor({ state: "visible", timeout });
-          return;
-        } catch {
-          /* continuar */
-        }
-        try {
-          await clickOrWaitNavLinkByLabel(page, t, timeout, "visible");
-          return;
-        } catch {
-          /* continuar */
-        }
-      }
       try {
         await page.getByText(clean, { exact: false }).first().waitFor({ state: "visible", timeout });
         return;
@@ -1073,23 +820,6 @@ async function clickWithSmartSelector(page: Page, selector: string, timeout: num
       if (await tryMenuOrNavScopedButton(page, name, timeout, "click")) return;
       await page.getByRole("button", { name: new RegExp(escapeRegex(name), "i") }).first().click({ timeout });
       return;
-    }
-    if (looksLikeSidebarNavLabel(name)) {
-      try {
-        await page
-          .getByRole("link", { name: new RegExp(`^\\s*${escapeRegex(name.trim())}\\s*$`, "i") })
-          .first()
-          .click({ timeout });
-        return;
-      } catch {
-        /* continuar */
-      }
-      try {
-        await clickOrWaitNavLinkByLabel(page, name, timeout, "click");
-        return;
-      } catch {
-        /* continuar */
-      }
     }
     await page.getByRole("link", { name: new RegExp(escapeRegex(name), "i") }).first().click({ timeout });
     return;
@@ -1153,24 +883,6 @@ async function clickWithSmartSelector(page: Page, selector: string, timeout: num
   if (textEngine) {
     const clean = stripLeadingDecorativeGlyphs(textEngine.replace(/^['"]|['"]$/g, ""));
     if (clean) {
-      const t = clean.trim();
-      if (looksLikeSidebarNavLabel(t)) {
-        try {
-          await page
-            .getByRole("link", { name: new RegExp(`^\\s*${escapeRegex(t)}\\s*$`, "i") })
-            .first()
-            .click({ timeout });
-          return;
-        } catch {
-          /* continuar */
-        }
-        try {
-          await clickOrWaitNavLinkByLabel(page, t, timeout, "click");
-          return;
-        } catch {
-          /* continuar */
-        }
-      }
       try {
         await page.getByText(clean, { exact: false }).first().click({ timeout });
         return;
@@ -1225,7 +937,6 @@ async function applyStep(
       return;
     }
     case "click": {
-      await prepareTransientOverlaysForAutomation(page);
       const hashBefore = await hashDomSlice(page);
       const dialogsBefore = await countVisibleA11yDialogs(page);
       await tryWithSelectorFallbacks(
@@ -1240,9 +951,7 @@ async function applyStep(
       const hashAfter = await hashDomSlice(page);
       if (hashBefore === hashAfter) {
         const dialogsAfter = await countVisibleA11yDialogs(page);
-        const creationOpened =
-          clickSelectorLikelyOpensCreationSurface(step.selector) &&
-          (dialogsAfter > dialogsBefore || (await creationSurfaceVisibleAfterClick(page)));
+        const creationOpened = dialogsAfter > dialogsBefore;
         if (creationOpened) {
           return;
         }
@@ -1254,7 +963,6 @@ async function applyStep(
       return;
     }
     case "fill": {
-      await prepareTransientOverlaysForAutomation(page);
       await tryWithSelectorFallbacks(
         page,
         "fill",
@@ -1270,7 +978,6 @@ async function applyStep(
       return;
     }
     case "waitForSelector": {
-      await prepareTransientOverlaysForAutomation(page);
       const t = step.timeoutMs ?? defaultTimeoutMs;
       await tryWithSelectorFallbacks(
         page,
@@ -1480,7 +1187,7 @@ function extractTextualTargetFromStep(step: Step): string | null {
 
 /**
  * Evita click/wait redundantes para «abrir» cuando un dialog visible ya refleja la intención
- * (p. ej. wait click "Crear Viaje" + título "Crear Nuevo Viaje").
+ * (p. ej. wait click "Confirmar guardado" + título de dialog "Confirmar guardado").
  */
 function shouldDropRedundantModalOpenClick(step: Step, snapshot: ObserverSnapshot | undefined): boolean {
   if ((step.action !== "click" && step.action !== "waitForSelector") || !snapshot?.visibleDialogs?.length) {
@@ -1498,99 +1205,6 @@ function shouldDropRedundantModalOpenClick(step: Step, snapshot: ObserverSnapsho
   return false;
 }
 
-/** Heurística TMS: modal «Crear Nuevo Viaje» ya abierto (título + formulario / remitos en el mapa). */
-function treeIndicatesCreateTripModalOpen(snapshot: ObserverSnapshot | undefined): boolean {
-  if (!snapshot) return false;
-  const t = `${snapshot.treeMarkdown}\n${snapshot.title ?? ""}`.toLowerCase();
-  if (!t.includes("crear nuevo viaje")) return false;
-  return (
-    t.includes("conductorid") ||
-    t.includes("vehiculoid") ||
-    t.includes("remito") ||
-    t.includes("react-select")
-  );
-}
-
-function treeIndicatesCalificacionGroupModalOpen(snapshot: ObserverSnapshot | undefined): boolean {
-  if (!snapshot) return false;
-  const t = `${snapshot.treeMarkdown}\n${snapshot.title ?? ""}`.toLowerCase();
-  const hasHeading =
-    t.includes("crear grupo") ||
-    t.includes("crear grupos") ||
-    t.includes("editar grupo") ||
-    t.includes("editar grupos");
-  if (!hasHeading) return false;
-  return (
-    t.includes("calificaciones del grupo") ||
-    t.includes("textbox \"ej: de malo a excelente\"") ||
-    t.includes("textbox \"etiqueta (ej: malo, regular, bueno)\"") ||
-    (t.includes("guardar") && t.includes("cancelar"))
-  );
-}
-
-function selectorTargetsAgregarDatos(selector: string): boolean {
-  const s = selector.toLowerCase();
-  return s.includes("agregar datos") || /aria-label\s*=\s*["']?agregar datos["']?/i.test(selector);
-}
-
-function selectorTargetsIllusoryCreateTripButton(step: Step, selector: string): boolean {
-  const raw = selector.trim();
-  const s = raw.toLowerCase();
-  if (!s.includes("crear nuevo viaje")) return false;
-  if (/^h[1-6]:(has-text|text)\(/i.test(raw)) return false;
-  if (s.startsWith("heading:has-text")) return false;
-  if (step.action === "click" && (s.includes("button") || s.includes("role=button"))) return true;
-  if (step.action === "waitForSelector" && s.includes("button")) return true;
-  return false;
-}
-
-/**
- * Evita reabrir el flujo cuando el mapa ya muestra el formulario del modal (p. ej. botón «Agregar Datos»
- * detrás del modal hace timeout al click; «Crear Nuevo Viaje» en pantalla es un h3, no un button).
- */
-function shouldDropStaleOpenActionWhenModalFormVisible(step: Step, snapshot: ObserverSnapshot | undefined): boolean {
-  if (!treeIndicatesCreateTripModalOpen(snapshot)) return false;
-  if (step.action !== "click" && step.action !== "waitForSelector") return false;
-  const sel = step.selector;
-  if (selectorTargetsAgregarDatos(sel)) return true;
-  if (selectorTargetsIllusoryCreateTripButton(step, sel)) return true;
-  return false;
-}
-
-/** Ya en solicitar-viajes con modal de creación: ir de nuevo a «Viajes» es redundante y suele chocar con el h1. */
-function shouldDropRedundantViajesNavWhenOnTripsFlow(step: Step, snapshot: ObserverSnapshot | undefined): boolean {
-  if (!snapshot?.url) return false;
-  const u = snapshot.url.toLowerCase();
-  if (!u.includes("solicitar-viajes")) return false;
-  if (!treeIndicatesCreateTripModalOpen(snapshot)) return false;
-  if (step.action !== "click" && step.action !== "waitForSelector") return false;
-  const low = step.selector.toLowerCase();
-  if (!low.includes("viajes")) return false;
-  if (low.includes("gestión") || low.includes("gestion")) return false;
-  return (
-    low.startsWith("text=") ||
-    low.includes("a:has-text") ||
-    low.includes("__gt:role=link") ||
-    low.includes("__gt:role=button")
-  );
-}
-
-/** Con modal de calificaciones abierto, re-navegar sidebar o reabrir modal es redundante y rompe el flujo. */
-function shouldDropRedundantCalificacionesFlowNav(step: Step, snapshot: ObserverSnapshot | undefined): boolean {
-  if (!treeIndicatesCalificacionGroupModalOpen(snapshot)) return false;
-  if (step.action !== "click" && step.action !== "waitForSelector") return false;
-  const low = step.selector.toLowerCase();
-  const targetsSidebar =
-    /has-text\(\s*["']diseño["']\s*\)/i.test(low) ||
-    /has-text\(\s*["']calificaciones["']\s*\)/i.test(low) ||
-    /text\s*=\s*["']?diseño["']?$/i.test(low) ||
-    /text\s*=\s*["']?calificaciones["']?$/i.test(low);
-  const targetsReopenCreate =
-    /has-text\(\s*["']crear calificaci[oó]n["']\s*\)/i.test(low) ||
-    /text\s*=\s*["']?crear calificaci[oó]n["']?$/i.test(low);
-  return targetsSidebar || targetsReopenCreate;
-}
-
 function stepUsesForbiddenAccessibilityRef(step: Step): boolean {
   if (step.action === "click" || step.action === "waitForSelector" || step.action === "fill") {
     return REF_SELECTOR_RE.test(step.selector);
@@ -1606,10 +1220,7 @@ function shouldDropPlannedStep(
   return (
     stepUsesForbiddenAccessibilityRef(step) ||
     shouldDropStepInCurrentContext(step, snapshot, history) ||
-    shouldDropRedundantModalOpenClick(step, snapshot) ||
-    shouldDropStaleOpenActionWhenModalFormVisible(step, snapshot) ||
-    shouldDropRedundantViajesNavWhenOnTripsFlow(step, snapshot) ||
-    shouldDropRedundantCalificacionesFlowNav(step, snapshot)
+    shouldDropRedundantModalOpenClick(step, snapshot)
   );
 }
 
@@ -1624,11 +1235,19 @@ function isLikelyTerminalAction(step: Step): boolean {
   return false;
 }
 
-function hasTerminalLock(history: Array<{ step: Step; ok: boolean; error?: string }>): boolean {
+function hasTerminalLock(
+  history: Array<{ step: Step; ok: boolean; error?: string }>,
+  step: Step,
+): boolean {
+  // El candado solo aplica al MISMO paso terminal ya exitoso (evita re-ejecutar el mismo
+  // submit). Antes contaba CUALQUIER acción "terminal" por substring del selector, lo que
+  // saltaba por error botones distintos: p. ej. "Nuevo cliente" (cliente-crear matchea
+  // "crear") se descartaba tras el login-submit (matchea "submit").
+  const k = stepKey(step);
   let lastTerminalOk = -1;
   for (let i = 0; i < history.length; i++) {
     const h = history[i]!;
-    if (h.ok && isLikelyTerminalAction(h.step)) {
+    if (h.ok && isLikelyTerminalAction(h.step) && stepKey(h.step) === k) {
       lastTerminalOk = i;
     }
   }
@@ -1673,8 +1292,11 @@ function looksLikeSeedInputPlan(steps: Step[]): boolean {
   if (steps.length !== 1) return false;
   const [first] = steps;
   if (!first || first.action !== "goto") return false;
-  const target = first.url.trim().toLowerCase();
-  return target === "/" || target === "";
+  // Compara solo el pathname: un seed real es "ir a la raíz", con o sin query
+  // string (p. ej. un harness de test que anexa `?scenario=...` a la home).
+  const raw = first.url.trim();
+  const pathname = raw.split(/[?#]/)[0]?.toLowerCase() ?? "";
+  return pathname === "/" || pathname === "";
 }
 
 function looksLikeIncompleteLoginReplay(steps: Step[]): boolean {
@@ -1694,11 +1316,70 @@ function looksLikeIncompleteLoginReplay(steps: Step[]): boolean {
   return hasUserFill && hasLoginClick && !hasPasswordFill;
 }
 
+/**
+ * Circuit breaker de errores (Capa 2 — reglas duras, spec §4.2a).
+ *
+ * Correlaciona los `PageError` de severidad `blocking` con la acción recién
+ * ejecutada: solo cuentan los observados en el paso actual o el inmediato
+ * anterior (`currentStepIndex - 1`). Es una función pura y determinista —
+ * no consulta al LLM — para que el corte del loop sea siempre reproducible.
+ * Devuelve `undefined` cuando no hay evidencia correlacionada.
+ */
+export function detectBlockingAppError(
+  pageErrors: PageError[],
+  currentStepIndex: number,
+): PageError[] | undefined {
+  const correlated = pageErrors.filter(
+    (e) =>
+      e.severity === "blocking" &&
+      (e.observedAtStep === currentStepIndex || e.observedAtStep === currentStepIndex - 1),
+  );
+  return correlated.length > 0 ? correlated : undefined;
+}
+
+/** Clave estable de un `PageError` para deduplicar cuáles ya se enviaron al juez (trigger `error-signal`). */
+export function pageErrorKey(error: PageError): string {
+  return `${error.source}|${error.severity}|${error.observedAtStep}|${error.message}`;
+}
+
+/**
+ * Trigger `error-signal` (Capa 3, spec §4.3): `PageError` de severidad
+ * `warning` correlacionados con la acción recién ejecutada que la Capa 2 NO
+ * resolvió por sí sola (los `blocking` ya cortaron vía `detectBlockingAppError`
+ * antes de llegar acá). `alreadyJudged` evita re-disparar el juez por el
+ * mismo warning en cada paso subsiguiente — solo interesa el momento en que
+ * aparece por primera vez.
+ */
+export function detectUnresolvedWarningSignal(
+  pageErrors: PageError[],
+  currentStepIndex: number,
+  alreadyJudged: ReadonlySet<string>,
+): PageError[] | undefined {
+  const correlated = pageErrors.filter(
+    (e) =>
+      e.severity === "warning" &&
+      (e.observedAtStep === currentStepIndex || e.observedAtStep === currentStepIndex - 1) &&
+      !alreadyJudged.has(pageErrorKey(e)),
+  );
+  return correlated.length > 0 ? correlated : undefined;
+}
+
+/**
+ * Victoria verificada (Capa 2 — reglas duras, spec §4.2b).
+ *
+ * La victoria se declara SOLO si las condiciones configuradas (URL, texto,
+ * selector visible) pasan la verificación del motor sobre la página real
+ * (`victoryTargetVisible`, que consulta el DOM vivo vía Playwright). Ya NO
+ * hay una vía de heurística de substring sobre el snapshot estático como
+ * atajo autónomo — eso era exactamente la causa raíz #4 de la spec (falso
+ * éxito por heurística débil). Donde no hay condición configurada, el
+ * llamador (`runAssistedFlow`) enruta al trigger del juez en lugar de
+ * adivinar aquí.
+ */
 async function evaluateVictory(
   page: Page,
   snapshot: ObserverSnapshot,
   victory: NonNullable<AssistedRunInput["assist"]>["victory"] | undefined,
-  history: Array<{ step: Step; ok: boolean; error?: string }>,
 ): Promise<{ configured: boolean; met: boolean; details: Record<string, unknown> }> {
   if (!victory) {
     return { configured: false, met: false, details: { reason: "not-configured" } };
@@ -1720,16 +1401,8 @@ async function evaluateVictory(
   }
   if (victory.selectorVisible && victory.selectorVisible.length > 0) {
     const selectorResults: boolean[] = [];
-    const finalized = hasAnyFinalizeAction(history);
     for (const selector of victory.selectorVisible) {
-      const visible = await victoryTargetVisible(page, selector);
-      const sem = naturalLanguageVictorySatisfied(snapshot, selector, history);
-      const candidate = visible || sem;
-      if (candidate && selectorLikelyNeedsFinalizeAction(selector) && !finalized) {
-        selectorResults.push(false);
-        continue;
-      }
-      selectorResults.push(candidate);
+      selectorResults.push(await victoryTargetVisible(page, selector));
     }
     details.selectorVisible = selectorResults;
     checks.push(victory.mustAll ? selectorResults.every(Boolean) : selectorResults.some(Boolean));
@@ -1737,6 +1410,93 @@ async function evaluateVictory(
 
   const met = checks.length === 0 ? false : (victory.mustAll ? checks.every(Boolean) : checks.some(Boolean));
   return { configured: true, met, details };
+}
+
+/**
+ * ¿El goal en lenguaje natural implica persistir estado (crear/guardar/enviar)?
+ * Spec §4.2b: estos objetivos requieren el double-check de recarga antes de
+ * aceptar la victoria — un guardado que no persiste no debe pasar como éxito.
+ * Heurística conservadora por palabra clave en español (idioma del producto);
+ * falsos negativos (goal de persistencia no detectado) son preferibles a
+ * falsos positivos que recarguen flujos efímeros/multi-paso sin necesidad.
+ */
+export function goalImpliesPersistence(goal: string): boolean {
+  const g = normalizeLooseText(goal);
+  return /\b(crear|crea|guardar|guardo|guardó|enviar|envio|envió|confirmar|confirmo|confirmó|registrar|registro)\b/.test(
+    g,
+  );
+}
+
+/**
+ * Decide si un candidato a victoria debe pasar por el double-check de recarga
+ * (spec §4.2b). El opt-out explícito `victory.revalidate` siempre gana sobre
+ * la heurística del goal — así flujos con estado efímero/multi-paso (wizards)
+ * pueden declarar `revalidate: false` sin pelear contra la detección automática.
+ */
+export function shouldRevalidateVictory(
+  goal: string,
+  victory: VictoryCondition | undefined,
+): boolean {
+  if (victory?.revalidate !== undefined) return victory.revalidate;
+  return goalImpliesPersistence(goal);
+}
+
+/**
+ * Detector de estancamiento (Capa 2, spec §4.2c): dispara cuando el diff entre
+ * snapshots consecutivos fue vacío/trivial durante `threshold` pasos seguidos
+ * (default 3). Función pura sobre el contador que mantiene el loop — separada
+ * para poder testearla sin Playwright.
+ */
+export function detectStall(consecutiveTrivialDiffs: number, threshold = 3): boolean {
+  return consecutiveTrivialDiffs >= threshold;
+}
+
+/**
+ * Redacta `verdictReason` EN LA FUENTE, antes de que salga del pipeline hacia
+ * cualquier sink (spec §6, Kanon GHOST-31, fix C3).
+ *
+ * `verdictReason` se ensambla en varios puntos de `runAssistedFlow` a partir
+ * de texto libre derivado del juez (`outcome.reasoning`, ya redactado en
+ * `judgeEvents[]` vía `summarizeJudgeEventForPersistence`, pero NO en este
+ * campo separado) y del `goal` del usuario interpolado directamente en
+ * strings (p. ej. `el objetivo "${assist.goal}" implicaba...`). Dos leaks
+ * previos (C1, C2) cerraron el payload del evento `judge_verdict`; este
+ * campo es independiente y fluía sin redactar hacia `AssistedRunResult`,
+ * desde ahí hacia el payload del evento `run_end`, `Run.verdictReason` (DB)
+ * y `RunRecord.verdictReason` (API) — tres sinks distintos, un solo origen.
+ *
+ * Reusa el mismo contrato de redacción (`redactOrTruncateText`, spec §6)
+ * usado por `judge.ts`, aplicado UNA VEZ acá para que todo consumidor de
+ * `AssistedRunResult.verdictReason` reciba el valor ya saneado — en vez de
+ * redactar cada sink por separado (lo que dejó pasar C1 y C2).
+ */
+export function redactVerdictReason(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return redactOrTruncateText(value);
+}
+
+/**
+ * Redacta `verdictEvidence` EN LA FUENTE, antes de que salga del pipeline
+ * hacia `AssistedRunResult` (W15, forward-carry del review de GHOST-31 —
+ * Kanon GHOST-35).
+ *
+ * `verdictEvidence` es un `PageError[]` (evidencia dura del circuit breaker,
+ * spec §4.2a) cuyo campo `.message` viene de texto de consola/DOM/red de la
+ * PÁGINA BAJO PRUEBA (`observer.ts` — `truncateMessage`/`redactUrl` solo
+ * truncan/redactan query params, NO pasan por el boundary de palabras
+ * sensibles). En GHOST-31 este campo NO se persistía (`finalizeRun` no lo
+ * consume), así que no era un leak activo — pero el momento en que
+ * GHOST-32 (dashboard) lo exponga en la UI o en una respuesta de API se
+ * vuelve un sink real. Se redacta acá, en el mismo choke point que
+ * `verdictReason`, para que el campo llegue SIEMPRE seguro sin que la
+ * slice de dashboard tenga que acordarse de hacerlo.
+ */
+export function redactVerdictEvidence(evidence: PageError[] | undefined): PageError[] | undefined {
+  if (!evidence) return undefined;
+  return evidence.map((entry) => ({
+    ...entry,
+    message: redactOrTruncateText(entry.message),
+  }));
 }
 
 export async function runAssistedFlow(
@@ -1747,8 +1507,7 @@ export async function runAssistedFlow(
   const started = Date.now();
   const events: AssistEvent[] = [];
   const outcomes: StepOutcome[] = [];
-  const history: Array<{ step: Step; ok: boolean; error?: string }> = [];
-  const runUniqueTag = Date.now().toString(36).slice(-6);
+  const history: Array<{ step: Step; ok: boolean; error?: string; healed?: boolean }> = [];
 
   const assist = input.assist;
   if (!assist || assist.v2 !== true) {
@@ -1791,6 +1550,17 @@ export async function runAssistedFlow(
   let aborted = false;
   const learnedFlow: Step[] = [];
   const planProgress: PlanProgressItem[] = [];
+  let stopReason = "completed";
+  let verdict: Verdict | undefined;
+  let verdictReason: string | undefined;
+  let verdictEvidence: PageError[] | undefined;
+  const judgeEvents: JudgeEvent[] = [];
+  const judgeContinueCap = createJudgeContinueCapTracker();
+  let previousJudgeSnapshot: ObserverSnapshot | undefined;
+  /** Pista del último veredicto `continue` del juez — consumida por el próximo pedido al strategist, luego limpiada. */
+  let judgeHint: string | undefined;
+  /** `PageError` de severidad warning ya enviados al juez (trigger `error-signal`) — evita re-disparar por el mismo error en cada paso. */
+  const judgedWarningKeys = new Set<string>();
 
   try {
     throwIfAborted(opts.signal);
@@ -1805,6 +1575,9 @@ export async function runAssistedFlow(
     page = await context.newPage();
     pageVideo = page.video();
     page.setDefaultTimeout(input.defaultTimeoutMs);
+    // Listeners continuos de consola/red (Capa 1 — percepción, spec §4.1): se adjuntan una
+    // sola vez por página; los toasts/errores efímeros no sobreviven hasta el próximo snapshot.
+    const pageErrorTracker = createPageErrorTracker(page, { baseUrl: input.baseUrl });
     const onAbort = () => {
       aborted = true;
       void context?.close().catch(() => undefined);
@@ -1820,7 +1593,7 @@ export async function runAssistedFlow(
     });
 
     // Recon inicial
-    lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+    lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, { pageErrorTracker, stepIndex: -1 });
     emit("recon", {
       url: lastSnapshot.url,
       title: lastSnapshot.title,
@@ -1851,8 +1624,12 @@ export async function runAssistedFlow(
     let nextStepIndex = 0;
     let horizon = 0;
     let victoryMet = false;
-    let stopReason = "completed";
     let healerWasInvoked = false;
+    // Capa 2 — detector de estancamiento (spec §4.2c): cuenta diffs de snapshot
+    // triviales/vacíos consecutivos tras un paso ejecutado con éxito. Se resetea
+    // en cuanto el estado cambia. `detectStall` decide el umbral (default N=3).
+    let consecutiveTrivialDiffs = 0;
+    const stalledThreshold = 3;
     const runtimeMemory: Step[] = [];
     const runtimeMemoryKeys = new Set<string>();
     for (const seed of assist.seedMemorySteps ?? []) {
@@ -1877,23 +1654,75 @@ export async function runAssistedFlow(
       });
     }
 
+    // Capa 2 — circuit breaker (spec §4.2a): corte determinista por código, sin LLM.
+    // Autoridad: evidencia determinista > juez > strategist — se evalúa ANTES que la
+    // victoria en cada punto de chequeo post-paso, así un 500/crash nunca queda
+    // enmascarado por una condición de victoria que coincida por accidente.
+    const checkCircuitBreaker = (
+      snapshot: ObserverSnapshot,
+      stepIndex: number,
+    ): { tripped: boolean; evidence?: PageError[] } => {
+      const evidence = detectBlockingAppError(snapshot.pageErrors, stepIndex);
+      if (!evidence) return { tripped: false };
+      // `evidence[].message` viene de texto crudo de la página (consola/DOM/red,
+      // ver `observer.ts`) — este evento SÍ se persiste vía el log-bridge, así
+      // que pasa por el boundary de redacción antes de salir (GHOST-35, mismo
+      // gap que W15 pero en un sink ya activo, no latente).
+      emit(
+        "loop_state",
+        { state: "circuit_breaker_tripped", stepIndex, evidence: redactVerdictEvidence(evidence) },
+        stepIndex,
+      );
+      return { tripped: true, evidence };
+    };
+
+    // Capa 2 — double-check de persistencia (spec §4.2b): tras un candidato a
+    // victoria en un goal que implica persistir estado, re-navega a la vista base
+    // (GET fresco, no `page.reload()`) y re-verifica la MISMA condición
+    // configurada. Si no sobrevive, el dato nunca se persistió: es evidencia dura
+    // e inequívoca de un bug de la app (simétrico al 5xx del circuit breaker), no
+    // una victoria — y tampoco zona gris para el juez. Devuelve `undefined`
+    // cuando no aplica revalidar (goal no implica persistencia, o
+    // `revalidate: false` explícito).
+    //
+    // Nota deliberada: NO usamos `page.reload()`. Tras un submit de formulario
+    // (`method="post"`), Playwright deja `page.url()` apuntando a la URL de
+    // destino del POST (p. ej. `/save?...`); un `reload()` ahí re-ejecuta el
+    // POST y "revalida" contra su propia respuesta optimista — nunca detecta
+    // un guardado no persistente. Navegar de nuevo a `baseUrl` (GET) es la
+    // única forma de consultar el estado real del servidor.
+    const revalidateVictoryIfNeeded = async (
+      stepIndex: number,
+    ): Promise<{ survived: boolean } | undefined> => {
+      if (!shouldRevalidateVictory(assist.goal, assist.victory)) return undefined;
+      emit("loop_state", { state: "revalidating_persistence", stepIndex }, stepIndex);
+      await page!.goto(input.baseUrl, { waitUntil: "domcontentloaded", timeout: input.defaultTimeoutMs });
+      const reloadedSnapshot = await captureObserverSnapshot(page!, observerMaxNodes, {
+        pageErrorTracker,
+        stepIndex,
+      });
+      lastSnapshot = reloadedSnapshot;
+      const revalidated = await evaluateVictory(page!, reloadedSnapshot, assist.victory);
+      return { survived: revalidated.met };
+    };
+
     const checkImmediateVictory = async (
       stepIndex: number,
       horizonNo: number,
       snapshotOverride?: ObserverSnapshot,
-      executedStep?: Step,
-    ): Promise<{ decision: "continue" | "success" | "fail"; reason?: string }> => {
+    ): Promise<{ decision: "continue" | "success" | "fail"; reason?: string; verdict?: Verdict }> => {
       if (snapshotOverride) {
         lastSnapshot = snapshotOverride;
       } else {
         await waitForKnownModalLoadersToFinish(page!, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-        lastSnapshot = await captureObserverSnapshot(page!, observerMaxNodes);
+        lastSnapshot = await captureObserverSnapshot(page!, observerMaxNodes, {
+          pageErrorTracker,
+          stepIndex,
+        });
       }
       const victory = assist.victory
-        ? await evaluateVictory(page!, lastSnapshot, assist.victory, history)
+        ? await evaluateVictory(page!, lastSnapshot, assist.victory)
         : { configured: false, met: false, details: { reason: "not-configured" } };
-      const objectiveComplete = healerWasInvoked && objectiveLikelyCompleted(history, lastSnapshot);
-      const terminalStep = executedStep ? isLikelyTerminalAction(executedStep) : false;
       const pendingInput = hasPendingInputSteps(planProgress);
       const awaitingSeedExpansion = isSeedInputForFullPlan && !healerWasInvoked && !hasGeneratedPlanActivity(planProgress);
       emit(
@@ -1909,8 +1738,6 @@ export async function runAssistedFlow(
           ...victory.details,
           configured: victory.configured,
           met: victory.met,
-          objectiveLikelyCompleted: objectiveComplete,
-          terminalStep,
         },
         stepIndex,
       );
@@ -1918,17 +1745,119 @@ export async function runAssistedFlow(
         if (isFullPlan && !healerWasInvoked && (pendingInput || awaitingSeedExpansion)) {
           return { decision: "continue", reason: "victory-deferred-full-plan" };
         }
+        const revalidation = await revalidateVictoryIfNeeded(stepIndex);
+        if (revalidation && !revalidation.survived) {
+          // `assist.goal` es texto libre del usuario — este evento se
+          // persiste vía el log-bridge, así que pasa por el boundary antes
+          // de salir (GHOST-35 audit: leak no detectado por C1/C2/C3, que
+          // solo auditaron el payload de `judge_verdict` y `verdictReason`).
+          emit(
+            "loop_state",
+            { state: "persistence_check_failed", stepIndex, goal: redactOrTruncateText(assist.goal) },
+            stepIndex,
+          );
+          return {
+            decision: "fail",
+            reason: "persistence-check-failed",
+            verdict: "fail-app-bug",
+          };
+        }
         return { decision: "success", reason: "victory-met" };
       }
-      if (objectiveComplete) {
-        if (!assist.victory && terminalStep) {
-          return { decision: "success", reason: "objective-likely-complete" };
-        }
-        if (assist.victory) {
-          return { decision: "fail", reason: "victory-not-met-after-goal-complete" };
-        }
-      }
       return { decision: "continue" };
+    };
+
+    // Capa 3 — el juez (spec §4.3): invocado por eventos en los 5 triggers
+    // exhaustivos de la tabla (error-signal, victory-candidate, stalled,
+    // healing-exhausted, budget-exhausted). Autoridad: evidencia determinista
+    // > juez > strategist — este helper solo se llama en los puntos donde la
+    // Capa 2 ya agotó lo que puede decidir gratis. Construye el dossier,
+    // valida el veredicto (Zod + reintento único), aplica el cap de 2
+    // `continue` por motivo, y registra el evento para observabilidad.
+    const invokeJudge = async (
+      reason: JudgeTrigger,
+      stepIndex: number,
+      deterministicChecks: JudgeDeterministicCheck[] = [],
+    ): Promise<JudgeVerdict> => {
+      // El runner SIEMPRE captura el buffer del screenshot (best-effort, en
+      // memoria — no toca `artifactsDir` ni requiere `shouldCaptureScreenshots`,
+      // que gatean los artefactos por paso, no la evidencia del juez). Enviarlo
+      // o no al LLM es 100% decisión de la capa API según capacidad del
+      // provider (spec §4.3 "híbrido"); si falla la captura (página cerrada,
+      // navegación en curso), se degrada a "sin screenshot" en vez de romper
+      // la invocación del juez.
+      let screenshot: Buffer | undefined;
+      try {
+        screenshot = await page!.screenshot({ fullPage: true });
+      } catch {
+        screenshot = undefined;
+      }
+      const dossier = buildJudgeDossier({
+        goal: assist.goal,
+        victoryCondition: assist.victory,
+        reason,
+        history,
+        currentSnapshot: lastSnapshot!,
+        previousSnapshot: previousJudgeSnapshot,
+        pageErrors: lastSnapshot!.pageErrors,
+        deterministicChecks,
+        ...(screenshot ? { screenshot } : {}),
+      });
+      previousJudgeSnapshot = lastSnapshot;
+      emit("loop_state", { state: "judge_invoked", reason, stepIndex }, stepIndex);
+      let outcome = await validateJudgeVerdict(() => deps.judge(dossier));
+      if (outcome.verdict === "continue" && !judgeContinueCap.canContinue(reason)) {
+        // 3ra invocación por el mismo motivo (spec §4.3 regla 5): el juez ya
+        // no puede seguir pateando el problema — se fuerza un veredicto
+        // terminal en vez de propagar un `continue` que excede el cap.
+        outcome = {
+          verdict: "inconclusive",
+          confidence: "low",
+          reasoning:
+            `El juez propuso "continue" por el motivo "${reason}" por 3ra vez consecutiva; ` +
+            `el cap de ${MAX_CONTINUE_VERDICTS_PER_REASON} intervenciones por motivo (spec §4.3) ` +
+            "fuerza un veredicto terminal en vez de seguir reintentando.",
+          evidence: outcome.evidence,
+        };
+      } else if (outcome.verdict === "continue") {
+        judgeContinueCap.recordContinue(reason);
+      }
+      judgeEvents.push({
+        reason,
+        dossierSummary: {
+          goal: dossier.goal,
+          reason: dossier.reason,
+          recentActionsCount: dossier.recentActions.length,
+          pageErrorsCount: dossier.pageErrors.length,
+        },
+        verdict: outcome,
+        at: new Date().toISOString(),
+      });
+      emit(
+        "loop_state",
+        { state: "judge_verdict", reason, stepIndex, verdict: outcome.verdict, confidence: outcome.confidence },
+        stepIndex,
+      );
+      return outcome;
+    };
+
+    /**
+     * Traduce un veredicto terminal del juez a los campos de resultado del
+     * run. `verdict: "success"` es legítimo (spec §4.3, regla 2 — el juez
+     * puede declarar éxito SI cita evidencia que lo prueba) y debe reflejarse
+     * como `runOk = true`; cualquier otro veredicto terminal es un fallo.
+     * Bug corregido en Fase 3b (GHOST-30): antes SIEMPRE forzaba `runOk =
+     * false`, contradiciendo `verdict === "success"` y rompiendo el guardia
+     * de memoria del lado API (spec §6, `run.ts`), que depende de que
+     * `ok`/`verdict` sean consistentes entre sí.
+     */
+    const applyTerminalJudgeVerdict = (outcome: JudgeVerdict): void => {
+      runOk = outcome.verdict === "success";
+      verdict = outcome.verdict as Verdict;
+      verdictReason = outcome.reasoning;
+      stopReason = "judge-terminal-verdict";
+      pendingSteps.length = 0;
+      strategistHasMore = false;
     };
 
     while (runOk && (Date.now() - started) < maxLoopMs && horizon < maxHorizons) {
@@ -1941,12 +1870,31 @@ export async function runAssistedFlow(
           !healerWasInvoked &&
           !hasGeneratedPlanActivity(planProgress);
         if (isFullPlan && !awaitingSeedExpansion) {
+          let judgeAllowedContinue = false;
+          if (!assist.victory) {
+            // Sin condición de victoria configurada, el desenlace SIEMPRE lo
+            // decide el juez (spec §4.2b) — nunca "plan consumido" implícito.
+            const stopIndex = nextStepIndex - 1;
+            const outcome = await invokeJudge("victory-candidate", stopIndex, [
+              { check: "victory.configured", passed: false },
+            ]);
+            if (outcome.verdict === "continue") {
+              judgeHint = outcome.hint;
+              judgeAllowedContinue = true;
+            } else {
+              applyTerminalJudgeVerdict(outcome);
+              break;
+            }
+          }
           stopReason = "full-plan-consumed";
-          break;
+          if (!judgeAllowedContinue) break;
         }
         emit("loop_state", { state: "planning", horizon });
         await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-        lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+        lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+          pageErrorTracker,
+          stepIndex: nextStepIndex,
+        });
         const chunk = await deps.strategist({
           goal: assist.goal,
           baseUrl: input.baseUrl,
@@ -1955,7 +1903,9 @@ export async function runAssistedFlow(
           history,
           planProgress,
           maxSteps: stepsPerHorizon,
+          ...(judgeHint ? { judgeHint } : {}),
         });
+        judgeHint = undefined;
         strategistHasMore = chunk.hasMore;
         const dropped: Step[] = [];
         for (const ps of chunk.steps) {
@@ -2019,9 +1969,25 @@ export async function runAssistedFlow(
             }
           } else {
             emit("memory_miss", { horizon });
-            stopReason = "no-steps-generated";
-            if (assist.victory) runOk = false;
-            break;
+            if (!assist.victory) {
+              // Sin condición de victoria configurada, el desenlace SIEMPRE lo
+              // decide el juez (spec §4.2b) — nunca "sin más pasos" implícito.
+              const outcome = await invokeJudge("victory-candidate", nextStepIndex - 1, [
+                { check: "victory.configured", passed: false },
+              ]);
+              if (outcome.verdict === "continue") {
+                judgeHint = outcome.hint;
+                // Sin pasos pendientes ni memoria: el próximo horizonte vuelve
+                // a pedir plan al strategist con el hint del juez como contexto.
+              } else {
+                applyTerminalJudgeVerdict(outcome);
+                break;
+              }
+            } else {
+              stopReason = "no-steps-generated";
+              runOk = false;
+              break;
+            }
           }
         }
       }
@@ -2031,12 +1997,6 @@ export async function runAssistedFlow(
       for (const step of horizonSteps) {
         throwIfAborted(opts.signal);
         const index = nextStepIndex++;
-        if (step.action === "fill") {
-          const uniq = maybeUniquifyFillStep(step, assist.goal, runUniqueTag);
-          if (uniq.action === "fill" && uniq.value !== step.value) {
-            step.value = uniq.value;
-          }
-        }
         emit("step_start", { step: redactStepForEvent(step) }, index);
         if (hasSuccessfulHistoryStep(history, step)) {
           const pendingIdx = findFirstPendingPlanIndex(planProgress, step);
@@ -2059,7 +2019,7 @@ export async function runAssistedFlow(
           );
           continue;
         }
-        if (isLikelyTerminalAction(step) && hasTerminalLock(history)) {
+        if (isLikelyTerminalAction(step) && hasTerminalLock(history, step)) {
           const pendingIdx = findFirstPendingPlanIndex(planProgress, step);
           if (pendingIdx >= 0) {
             planProgress[pendingIdx] = {
@@ -2130,7 +2090,10 @@ export async function runAssistedFlow(
             index,
           );
           await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-          lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+          lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+            pageErrorTracker,
+            stepIndex: index,
+          });
           const stateAfter = snapshotStateKey(lastSnapshot);
           const stateChanged = stateBefore !== undefined && stateAfter !== undefined
             ? stateBefore !== stateAfter
@@ -2146,7 +2109,32 @@ export async function runAssistedFlow(
               ...(stateChanged !== undefined ? { stateChanged } : {}),
             };
           }
-          const immediateVictory = await checkImmediateVictory(index, horizon, lastSnapshot, step);
+          // Estancamiento (spec §4.2c): un paso "snapshot" es intencionalmente
+          // pasivo (no muta la página) y no debe contar como estancamiento.
+          if (stateChanged === false && step.action !== "snapshot") {
+            consecutiveTrivialDiffs += 1;
+          } else if (stateChanged === true) {
+            consecutiveTrivialDiffs = 0;
+          }
+          const circuitBreaker = checkCircuitBreaker(lastSnapshot, index);
+          if (circuitBreaker.tripped) {
+            runOk = false;
+            stopReason = "blocked-by-app-error";
+            verdict = "fail-app-bug";
+            verdictReason = `Error bloqueante de la app tras la acción (paso ${index}): ${circuitBreaker.evidence![0]!.message}`;
+            verdictEvidence = circuitBreaker.evidence;
+            pendingSteps.length = 0;
+            strategistHasMore = false;
+            break;
+          }
+          // Autoridad: evidencia determinista > juez > strategist (spec §3). La
+          // victoria verificada se evalúa ANTES que los triggers `error-signal`/
+          // `stalled` del juez — un `PageError` warning correlacionado (p. ej. un
+          // `role="alert"` de validación) puede ser EXACTAMENTE la condición de
+          // victoria configurada (caso `validation-reject-is-app-bug-not-agent-fault`
+          // del benchmark); si el motor ya puede resolverlo determinísticamente,
+          // el juez ni se invoca.
+          const immediateVictory = await checkImmediateVictory(index, horizon, lastSnapshot);
           if (immediateVictory.decision === "success") {
             victoryMet = true;
             stopReason = immediateVictory.reason ?? "victory-met";
@@ -2157,9 +2145,39 @@ export async function runAssistedFlow(
           if (immediateVictory.decision === "fail") {
             runOk = false;
             stopReason = immediateVictory.reason ?? "victory-not-met-after-goal-complete";
+            if (immediateVictory.verdict) {
+              verdict = immediateVictory.verdict;
+              verdictReason = `Double-check de persistencia falló tras recargar (paso ${index}): el objetivo "${assist.goal}" implicaba persistir estado y el dato no sobrevivió la recarga.`;
+            }
             pendingSteps.length = 0;
             strategistHasMore = false;
             break;
+          }
+          const unresolvedWarning = detectUnresolvedWarningSignal(lastSnapshot.pageErrors, index, judgedWarningKeys);
+          if (unresolvedWarning) {
+            for (const e of unresolvedWarning) judgedWarningKeys.add(pageErrorKey(e));
+            const outcome = await invokeJudge("error-signal", index, [
+              { check: "pageErrors.warning.correlated", passed: false },
+            ]);
+            if (outcome.verdict === "continue") {
+              judgeHint = outcome.hint;
+            } else {
+              applyTerminalJudgeVerdict(outcome);
+              break;
+            }
+          }
+          if (detectStall(consecutiveTrivialDiffs, stalledThreshold)) {
+            emit("loop_state", { state: "stalled", stepIndex: index, consecutiveTrivialDiffs }, index);
+            const outcome = await invokeJudge("stalled", index, [
+              { check: `consecutiveTrivialDiffs < ${stalledThreshold}`, passed: false },
+            ]);
+            if (outcome.verdict === "continue") {
+              judgeHint = outcome.hint;
+              consecutiveTrivialDiffs = 0;
+            } else {
+              applyTerminalJudgeVerdict(outcome);
+              break;
+            }
           }
         } catch (error) {
           if (aborted || isAbortLikeError(error)) {
@@ -2173,15 +2191,62 @@ export async function runAssistedFlow(
             stopReason = "cancelled";
             break;
           }
-          const message = stripAnsi(error instanceof Error ? error.message : String(error));
+          // `error.message` es texto de excepción de Playwright/JS — puede
+          // ecoar contenido de página/selector observado por el motor. Se
+          // redacta EN LA FUENTE (mismo patrón que `verdictReason`, C3) así
+          // los 4 sinks que consumen `message` (este emit, `history.push`,
+          // el reintento de heal, y los `outcomes.push` más abajo) heredan
+          // el valor ya seguro sin redactar cada uno por separado (GHOST-35).
+          const message = redactOrTruncateText(
+            stripAnsi(error instanceof Error ? error.message : String(error)),
+          );
           emit("step_failure", { step: redactStepForEvent(step), error: message }, index);
 
           let recovered = false;
-          for (let attempt = 1; attempt <= healingAttempts && !recovered; attempt++) {
+          // HEALER-2 / H1: el healer es un actor de percepción, no decide
+          // desenlaces. Antes de invocarlo, capturamos el snapshot post-falla
+          // UNA sola vez (evita doble drenado de `pageErrorTracker.collectForStep`,
+          // ver observer.ts:270-272) y reutilizamos la MISMA correlación por
+          // índice que usa el circuit breaker (`detectBlockingAppError`, línea
+          // ~1976/2436) para decidir si hay evidencia dura de un bug bloqueante
+          // de la app. Si la hay, curar es inútil: cede determinísticamente al
+          // juez (`healing-exhausted`) sin gastar intentos de heal ni replan.
+          await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
+          lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+            pageErrorTracker,
+            stepIndex: index,
+          });
+          const blockingEvidenceBeforeHeal = detectBlockingAppError(lastSnapshot.pageErrors, index);
+          let healerAbstainedOnBlocking = false;
+          if (blockingEvidenceBeforeHeal) {
+            healerAbstainedOnBlocking = true;
+            emit(
+              "heal_failure",
+              {
+                reason: "blocking-error-cede-to-judge",
+                evidence: redactVerdictEvidence(blockingEvidenceBeforeHeal),
+              },
+              index,
+            );
+          }
+          for (
+            let attempt = 1;
+            attempt <= healingAttempts && !recovered && !healerAbstainedOnBlocking;
+            attempt++
+          ) {
             try {
               healerWasInvoked = true;
-              await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-              lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+              // Intento 1 reutiliza el snapshot pre-loop capturado arriba para
+              // no volver a drenar `pageErrorTracker` en el mismo `index`
+              // (invariante de un solo `collectForStep` por índice). Los
+              // reintentos posteriores sí capturan uno nuevo, como antes.
+              if (attempt > 1) {
+                await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
+                lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+                  pageErrorTracker,
+                  stepIndex: index,
+                });
+              }
               const stateBeforeHeal = snapshotStateKey(lastSnapshot);
               emit(
                 "heal_start",
@@ -2204,11 +2269,17 @@ export async function runAssistedFlow(
                 input.baseUrl,
                 recovery.steps,
                 input.defaultTimeoutMs,
+                lastSnapshot.treeMarkdown,
               );
+              // `recovery.rationale` es texto libre AUTORADO POR EL HEALER (LLM) —
+              // mismo riesgo que el `hint` del juez (puede citar contenido de
+              // página/DOM observado). Pasa por el boundary de redacción antes
+              // de salir en `heal_failure`/`heal_action` (GHOST-35).
+              const safeRationale = recovery.rationale ? redactOrTruncateText(recovery.rationale) : null;
               if (sanitized.length === 0) {
                 emit(
                   "heal_failure",
-                  { reason: "no-valid-steps", rationale: recovery.rationale ?? null },
+                  { reason: "no-valid-steps", rationale: safeRationale },
                   index,
                 );
                 break;
@@ -2218,7 +2289,7 @@ export async function runAssistedFlow(
                   "heal_action",
                   {
                     step: redactStepForEvent(healStep),
-                    rationale: recovery.rationale ?? null,
+                    rationale: safeRationale,
                   },
                   index,
                 );
@@ -2235,7 +2306,11 @@ export async function runAssistedFlow(
                 }
                 planProgress.push({ step: healStep, status: "pending", source: "healer", horizon });
                 await applyStep(page, input.baseUrl, healStep, input.defaultTimeoutMs);
-                history.push({ step: healStep, ok: true });
+                // W10: paso propuesto por el healer, ejecutado directamente como
+                // parte de la recuperación — igual de "healed" que el reintento
+                // del paso original más abajo (ambos solo ocurren dentro de un
+                // ciclo de heal activo).
+                history.push({ step: healStep, ok: true, healed: true });
                 const healPendingIdx = findFirstPendingPlanIndex(planProgress, healStep);
                 if (healPendingIdx >= 0) {
                   planProgress[healPendingIdx] = {
@@ -2254,22 +2329,32 @@ export async function runAssistedFlow(
                 }
               }
               await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-              const postHealSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+              const postHealSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+                pageErrorTracker,
+                stepIndex: index,
+              });
               const stateAfterHeal = snapshotStateKey(postHealSnapshot);
               const stateChangedByHeal =
                 stateBeforeHeal !== undefined && stateAfterHeal !== undefined
                   ? stateBeforeHeal !== stateAfterHeal
                   : undefined;
+              if (stateChangedByHeal === false) {
+                consecutiveTrivialDiffs += 1;
+              } else if (stateChangedByHeal === true) {
+                consecutiveTrivialDiffs = 0;
+              }
               const healerReplacedOriginal = hasEquivalentReplacementStep(step, sanitized);
               const skipOriginalStep = healerReplacedOriginal ||
                 shouldDropStepInCurrentContext(step, postHealSnapshot, history) ||
-                shouldDropRedundantModalOpenClick(step, postHealSnapshot) ||
-                shouldDropStaleOpenActionWhenModalFormVisible(step, postHealSnapshot) ||
-                shouldDropRedundantViajesNavWhenOnTripsFlow(step, postHealSnapshot) ||
-                shouldDropRedundantCalificacionesFlowNav(step, postHealSnapshot);
+                shouldDropRedundantModalOpenClick(step, postHealSnapshot);
               if (!skipOriginalStep) {
                 await applyStep(page, input.baseUrl, step, input.defaultTimeoutMs);
-                history.push({ step, ok: true });
+                // W10: el paso original se reintenta y tiene éxito TRAS un heal —
+                // marcarlo `healed: true` para que el dossier del juez (spec §4.3,
+                // `buildJudgeDossier`/`toRecentAction`) pueda distinguirlo de un
+                // paso que nunca falló (`ok`) o de uno curado directamente por el
+                // healer (línea de arriba, `history.push({ step: healStep, ok: true })`).
+                history.push({ step, ok: true, healed: true });
                 // Si el healer desbloqueó el paso y luego se reintenta el original,
                 // preservar el orden real en finalPlan: healer (index) -> original (index + 0.5).
                 const retriedStepIndex = index + 0.5;
@@ -2352,27 +2437,69 @@ export async function runAssistedFlow(
                 index,
               );
               lastSnapshot = postHealSnapshot;
-              const immediateVictoryAfterHeal = await checkImmediateVictory(
-                index,
-                horizon,
-                lastSnapshot,
-                step,
-              );
-              if (immediateVictoryAfterHeal.decision === "success") {
-                victoryMet = true;
-                stopReason = immediateVictoryAfterHeal.reason ?? "victory-met";
-                pendingSteps.length = 0;
-                strategistHasMore = false;
-              } else if (immediateVictoryAfterHeal.decision === "fail") {
+              const circuitBreakerAfterHeal = checkCircuitBreaker(lastSnapshot, index);
+              if (circuitBreakerAfterHeal.tripped) {
                 runOk = false;
-                stopReason = immediateVictoryAfterHeal.reason ?? "victory-not-met-after-goal-complete";
+                stopReason = "blocked-by-app-error";
+                verdict = "fail-app-bug";
+                verdictReason = `Error bloqueante de la app tras la acción curada (paso ${index}): ${circuitBreakerAfterHeal.evidence![0]!.message}`;
+                verdictEvidence = circuitBreakerAfterHeal.evidence;
                 pendingSteps.length = 0;
                 strategistHasMore = false;
+              } else {
+                // Autoridad: evidencia determinista > juez > strategist (spec §3) —
+                // misma prioridad que en el camino normal: victoria verificada
+                // primero, luego los triggers del juez sobre lo que quede sin resolver.
+                const immediateVictoryAfterHeal = await checkImmediateVictory(index, horizon, lastSnapshot);
+                if (immediateVictoryAfterHeal.decision === "success") {
+                  victoryMet = true;
+                  stopReason = immediateVictoryAfterHeal.reason ?? "victory-met";
+                  pendingSteps.length = 0;
+                  strategistHasMore = false;
+                } else if (immediateVictoryAfterHeal.decision === "fail") {
+                  runOk = false;
+                  stopReason = immediateVictoryAfterHeal.reason ?? "victory-not-met-after-goal-complete";
+                  if (immediateVictoryAfterHeal.verdict) {
+                    verdict = immediateVictoryAfterHeal.verdict;
+                    verdictReason = `Double-check de persistencia falló tras recargar (paso ${index}, post-heal): el objetivo "${assist.goal}" implicaba persistir estado y el dato no sobrevivió la recarga.`;
+                  }
+                  pendingSteps.length = 0;
+                  strategistHasMore = false;
+                } else {
+                  const unresolvedWarningAfterHeal = detectUnresolvedWarningSignal(
+                    lastSnapshot.pageErrors,
+                    index,
+                    judgedWarningKeys,
+                  );
+                  if (unresolvedWarningAfterHeal) {
+                    for (const e of unresolvedWarningAfterHeal) judgedWarningKeys.add(pageErrorKey(e));
+                    const errorSignalOutcome = await invokeJudge("error-signal", index, [
+                      { check: "pageErrors.warning.correlated", passed: false },
+                    ]);
+                    if (errorSignalOutcome.verdict === "continue") {
+                      judgeHint = errorSignalOutcome.hint;
+                    } else {
+                      applyTerminalJudgeVerdict(errorSignalOutcome);
+                    }
+                  } else if (detectStall(consecutiveTrivialDiffs, stalledThreshold)) {
+                    emit("loop_state", { state: "stalled", stepIndex: index, consecutiveTrivialDiffs }, index);
+                    const stalledOutcome = await invokeJudge("stalled", index, [
+                      { check: `consecutiveTrivialDiffs < ${stalledThreshold}`, passed: false },
+                    ]);
+                    if (stalledOutcome.verdict === "continue") {
+                      judgeHint = stalledOutcome.hint;
+                      consecutiveTrivialDiffs = 0;
+                    } else {
+                      applyTerminalJudgeVerdict(stalledOutcome);
+                    }
+                  }
+                }
               }
               if (victoryMet || !runOk) break;
             } catch (healErr) {
-              const healMessage = stripAnsi(
-                healErr instanceof Error ? healErr.message : String(healErr),
+              // Redacción en la fuente, mismo criterio que `message` arriba (GHOST-35).
+              const healMessage = redactOrTruncateText(
+                stripAnsi(healErr instanceof Error ? healErr.message : String(healErr)),
               );
               emit("heal_failure", { error: healMessage }, index);
             }
@@ -2390,90 +2517,101 @@ export async function runAssistedFlow(
               };
             }
             let replannedFromError = false;
+            // HEALER-2 / H1: si el healer cedió por evidencia de bug bloqueante,
+            // el replan del strategist tampoco tiene sentido (mismo argumento
+            // que el heal loop) — el motor no debe intentar "seguir adelante"
+            // ante un error determinístico; cede directo al trigger
+            // `healing-exhausted` más abajo con el dossier ya cargado.
             try {
-              await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-              lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
-              const replanChunk = await deps.strategist({
-                goal: assist.goal,
-                baseUrl: input.baseUrl,
-                snapshot: lastSnapshot,
-                victory: assist.victory,
-                history,
-                planProgress,
-                maxSteps: stepsPerHorizon,
-              });
-              strategistHasMore = replanChunk.hasMore;
-              const replanned: Step[] = [];
-              const droppedReplanned: Step[] = [];
-              for (const candidate of replanChunk.steps) {
-                if (hasSuccessfulHistoryStep(history, candidate.step)) {
-                  droppedReplanned.push(candidate.step);
-                  planProgress.push({
-                    step: candidate.step,
-                    status: "dropped",
-                    source: "replan",
-                    horizon,
-                    stepIndex: index,
-                    note: "already-successful",
-                  });
-                  continue;
-                }
-                if (shouldDropPlannedStep(candidate.step, lastSnapshot, history)) {
-                  droppedReplanned.push(candidate.step);
-                  planProgress.push({
-                    step: candidate.step,
-                    status: "dropped",
-                    source: "replan",
-                    horizon,
-                    stepIndex: index,
-                    note: "context-drop",
-                  });
-                  continue;
-                }
-                replanned.push(candidate.step);
-                planProgress.push({
-                  step: candidate.step,
-                  status: "pending",
-                  source: "replan",
-                  horizon,
+              if (!healerAbstainedOnBlocking) {
+                await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
+                lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+                  pageErrorTracker,
                   stepIndex: index,
                 });
-              }
-              if (replanned.length > 0) {
-                pendingSteps.unshift(...replanned);
-                replannedFromError = true;
-                emit(
-                  "plan_chunk",
-                  {
+                const replanChunk = await deps.strategist({
+                  goal: assist.goal,
+                  baseUrl: input.baseUrl,
+                  snapshot: lastSnapshot,
+                  victory: assist.victory,
+                  history,
+                  planProgress,
+                  maxSteps: stepsPerHorizon,
+                });
+                strategistHasMore = replanChunk.hasMore;
+                const replanned: Step[] = [];
+                const droppedReplanned: Step[] = [];
+                for (const candidate of replanChunk.steps) {
+                  if (hasSuccessfulHistoryStep(history, candidate.step)) {
+                    droppedReplanned.push(candidate.step);
+                    planProgress.push({
+                      step: candidate.step,
+                      status: "dropped",
+                      source: "replan",
+                      horizon,
+                      stepIndex: index,
+                      note: "already-successful",
+                    });
+                    continue;
+                  }
+                  if (shouldDropPlannedStep(candidate.step, lastSnapshot, history)) {
+                    droppedReplanned.push(candidate.step);
+                    planProgress.push({
+                      step: candidate.step,
+                      status: "dropped",
+                      source: "replan",
+                      horizon,
+                      stepIndex: index,
+                      note: "context-drop",
+                    });
+                    continue;
+                  }
+                  replanned.push(candidate.step);
+                  planProgress.push({
+                    step: candidate.step,
+                    status: "pending",
+                    source: "replan",
                     horizon,
-                    replannedFromError: true,
-                    failedStep: redactStepForEvent(step),
-                    steps: replanned.map(redactStepForEvent),
-                    droppedSteps: droppedReplanned.map(redactStepForEvent),
-                    planProgress: planProgress.slice(-120).map((p) => ({
-                      status: p.status,
-                      source: p.source,
-                      step: redactStepForEvent(p.step),
-                      ...(p.horizon !== undefined ? { horizon: p.horizon } : {}),
-                      ...(p.stepIndex !== undefined ? { stepIndex: p.stepIndex } : {}),
-                      ...(p.note ? { note: p.note } : {}),
-                    })),
-                    hasMore: replanChunk.hasMore,
-                  },
-                );
-                emit(
-                  "step_failure",
-                  {
-                    step: redactStepForEvent(step),
-                    error: message,
-                    replannedFromError: true,
-                  },
-                  index,
-                );
+                    stepIndex: index,
+                  });
+                }
+                if (replanned.length > 0) {
+                  pendingSteps.unshift(...replanned);
+                  replannedFromError = true;
+                  emit(
+                    "plan_chunk",
+                    {
+                      horizon,
+                      replannedFromError: true,
+                      failedStep: redactStepForEvent(step),
+                      steps: replanned.map(redactStepForEvent),
+                      droppedSteps: droppedReplanned.map(redactStepForEvent),
+                      planProgress: planProgress.slice(-120).map((p) => ({
+                        status: p.status,
+                        source: p.source,
+                        step: redactStepForEvent(p.step),
+                        ...(p.horizon !== undefined ? { horizon: p.horizon } : {}),
+                        ...(p.stepIndex !== undefined ? { stepIndex: p.stepIndex } : {}),
+                        ...(p.note ? { note: p.note } : {}),
+                      })),
+                      hasMore: replanChunk.hasMore,
+                    },
+                  );
+                  emit(
+                    "step_failure",
+                    {
+                      step: redactStepForEvent(step),
+                      error: message,
+                      replannedFromError: true,
+                    },
+                    index,
+                  );
+                }
               }
             } catch (replanErr) {
-              const replanMessage = stripAnsi(
-                replanErr instanceof Error ? replanErr.message : String(replanErr),
+              // Redacción en la fuente, mismo criterio que `message` arriba (GHOST-35).
+              const replanMessage = redactOrTruncateText(
+                stripAnsi(replanErr instanceof Error ? replanErr.message : String(replanErr)),
               );
               emit("heal_failure", { replanError: replanMessage }, index);
             }
@@ -2507,8 +2645,22 @@ export async function runAssistedFlow(
               },
               index,
             );
-            runOk = false;
-            stopReason = "step-failed";
+            // Healer agotó sus intentos (o no había ninguno configurado) Y el
+            // replan del strategist tampoco produjo pasos usables: zona gris
+            // clásica del trigger `healing-exhausted` (spec §4.3) — ¿el
+            // selector estaba mal (test-broken), Ghostly se perdió con un
+            // camino que existía (agent-lost), o la app realmente no ofrece
+            // ese control (app-bug)? Solo el juez puede distinguirlos con el
+            // dossier completo; el motor no adivina.
+            const outcome = await invokeJudge("healing-exhausted", index, [
+              { check: "healer.recovered", passed: false },
+              { check: "strategist.replanProducedSteps", passed: false },
+            ]);
+            if (outcome.verdict === "continue") {
+              judgeHint = outcome.hint;
+            } else {
+              applyTerminalJudgeVerdict(outcome);
+            }
             break;
           }
         }
@@ -2516,17 +2668,17 @@ export async function runAssistedFlow(
 
       if (!runOk || victoryMet) break;
       await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
-      lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes);
+      lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
+        pageErrorTracker,
+        stepIndex: nextStepIndex,
+      });
       emit("horizon_end", {
         horizon,
         pendingSteps: pendingSteps.length,
         hasMore: strategistHasMore,
       });
 
-      const victory = await evaluateVictory(page, lastSnapshot, assist.victory, history);
-      const completed = assist.victory && healerWasInvoked
-        ? objectiveLikelyCompleted(history, lastSnapshot)
-        : false;
+      const victory = await evaluateVictory(page, lastSnapshot, assist.victory);
       emit("victory_check", {
         horizon,
         isFullPlan,
@@ -2539,7 +2691,6 @@ export async function runAssistedFlow(
         ...victory.details,
         configured: victory.configured,
         met: victory.met,
-        objectiveLikelyCompleted: completed,
       });
       if (victory.met) {
         const awaitingSeedExpansion = isSeedInputForFullPlan &&
@@ -2548,27 +2699,37 @@ export async function runAssistedFlow(
         if (isFullPlan && !healerWasInvoked && (hasPendingInputSteps(planProgress) || awaitingSeedExpansion)) {
           // Seguir con el plan de entrada completo antes de aceptar victory.
         } else {
+          const revalidation = await revalidateVictoryIfNeeded(nextStepIndex);
+          if (revalidation && !revalidation.survived) {
+            runOk = false;
+            stopReason = "persistence-check-failed";
+            verdict = "fail-app-bug";
+            verdictReason = `Double-check de persistencia falló tras recargar (horizonte ${horizon}): el objetivo "${assist.goal}" implicaba persistir estado y el dato no sobrevivió la recarga.`;
+            break;
+          }
           victoryMet = true;
           stopReason = "victory-met";
           break;
         }
       }
-      if (assist.victory && completed) {
-        runOk = false;
-        stopReason = "victory-not-met-after-goal-complete";
-        break;
-      }
       const awaitingSeedExpansion = isSeedInputForFullPlan &&
         !healerWasInvoked &&
         !hasGeneratedPlanActivity(planProgress);
       if (isFullPlan && pendingSteps.length === 0 && !strategistHasMore && !awaitingSeedExpansion) {
-        if (assist.victory && !victory.met) {
-          runOk = false;
-          stopReason = "victory-not-met-after-full-plan";
+        // Plan agotado sin victoria clara resuelta por el motor: zona gris —
+        // el desenlace (¿test mal armado? ¿agente perdido? ¿condición ambigua?)
+        // lo decide el juez, nunca una heurística (spec §4.2b/§4.3).
+        const reason: JudgeTrigger = "victory-candidate";
+        const outcome = await invokeJudge(reason, nextStepIndex - 1, [
+          { check: "victory.configured", passed: Boolean(assist.victory) },
+          ...(assist.victory ? [{ check: "victory.met", passed: victory.met }] : []),
+        ]);
+        if (outcome.verdict === "continue") {
+          judgeHint = outcome.hint;
         } else {
-          stopReason = "steps-completed";
+          applyTerminalJudgeVerdict(outcome);
+          break;
         }
-        break;
       }
       if (!assist.victory && pendingSteps.length === 0 && !strategistHasMore) {
         if (assist.replayFromMemory) {
@@ -2576,18 +2737,44 @@ export async function runAssistedFlow(
           // para no asumir que la memoria parcial representa el flujo completo.
           continue;
         }
-        stopReason = "steps-completed";
-        break;
+        // Sin condición de victoria configurada, el desenlace SIEMPRE lo decide
+        // el juez (spec §4.2b) — nunca se asume éxito por haber consumido pasos.
+        const outcome = await invokeJudge("victory-candidate", nextStepIndex - 1, [
+          { check: "victory.configured", passed: false },
+        ]);
+        if (outcome.verdict === "continue") {
+          judgeHint = outcome.hint;
+        } else {
+          applyTerminalJudgeVerdict(outcome);
+          break;
+        }
       }
       // Si hay victory configurada y ya no quedan pasos, NO fallar todavía:
       // en el siguiente horizonte pedimos otro chunk al strategist.
     }
 
     if (runOk && assist.victory && !victoryMet) {
+      const budgetExhausted = (Date.now() - started) >= maxLoopMs || horizon >= maxHorizons;
+      const reason: JudgeTrigger = budgetExhausted ? "budget-exhausted" : "victory-candidate";
+      // El `while` ya terminó acá (se agotó el presupuesto o no hubo más horizontes/plan):
+      // no hay a dónde "continuar" aunque el juez proponga `continue` — spec §4.2d exige
+      // que el desenlace SIEMPRE lo clasifique el juez en este punto, así que igual se
+      // invoca, pero un `continue` se degrada a `inconclusive` (no hay presupuesto para
+      // actuar sobre un hint que ya no puede ejecutarse).
+      const outcome = await invokeJudge(reason, nextStepIndex - 1, [
+        { check: "victory.met", passed: false },
+        { check: budgetExhausted ? "budget.exhausted" : "budget.remaining", passed: !budgetExhausted },
+      ]);
       runOk = false;
-      if ((Date.now() - started) >= maxLoopMs) stopReason = "max-loop-ms";
-      else if (horizon >= maxHorizons) stopReason = "max-horizons";
-      else if (stopReason === "completed") stopReason = "victory-not-met";
+      if (outcome.verdict === "continue") {
+        verdict = "inconclusive";
+        verdictReason =
+          "El juez propuso continuar, pero el presupuesto del run (maxLoopMs/maxHorizons) ya se agotó — " +
+          `no hay más horizontes disponibles para actuar sobre el hint. Motivo original: ${outcome.reasoning}`;
+        stopReason = "judge-terminal-verdict";
+      } else {
+        applyTerminalJudgeVerdict(outcome);
+      }
     }
     emit("loop_state", { state: "stopped", reason: stopReason, horizons: horizon });
   } finally {
@@ -2618,6 +2805,16 @@ export async function runAssistedFlow(
     pending: planProgressReport.filter((p) => p.status === "pending").length,
   };
 
+  // Choke point único (spec §6, fix C3): todo sink que lea `verdictReason`
+  // (evento `run_end`, `AssistedRunResult` -> DB `Run.verdictReason` ->
+  // `RunRecord` API) recibe el valor ya redactado — nunca el crudo.
+  const safeVerdictReason = redactVerdictReason(verdictReason);
+  // Choke point único (W15, Kanon GHOST-35): `verdictEvidence` sale del
+  // pipeline ya con `.message` redactado, para que cualquier consumidor
+  // futuro (dashboard GHOST-32, API response) reciba el valor seguro sin
+  // tener que acordarse de redactarlo en el sink de destino.
+  const safeVerdictEvidence = redactVerdictEvidence(verdictEvidence);
+
   emit("run_end", {
     ok: runOk,
     durationMs: Date.now() - started,
@@ -2626,6 +2823,8 @@ export async function runAssistedFlow(
     planProgressSummary,
     planProgress: planProgressReport,
     finalPlan: finalPlan.map(redactStepForEvent),
+    ...(verdict ? { verdict, verdictReason: safeVerdictReason } : {}),
+    ...(judgeEvents.length > 0 ? { judgeInvocations: judgeEvents.length } : {}),
   });
 
   return {
@@ -2638,5 +2837,10 @@ export async function runAssistedFlow(
     ...(finalPlan.length > 0 ? { learnedFlow: finalPlan } : {}),
     ...(finalPlan.length > 0 ? { finalPlan } : {}),
     ...(planProgressReport.length > 0 ? { planProgress: planProgressReport } : {}),
+    stopReason,
+    ...(verdict ? { verdict } : {}),
+    ...(safeVerdictReason ? { verdictReason: safeVerdictReason } : {}),
+    ...(safeVerdictEvidence ? { verdictEvidence: safeVerdictEvidence } : {}),
+    ...(judgeEvents.length > 0 ? { judgeEvents } : {}),
   };
 }

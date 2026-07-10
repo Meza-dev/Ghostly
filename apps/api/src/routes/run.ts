@@ -1,5 +1,12 @@
-import { runAssistedFlow, runFlow, safeParseRunInput } from "@ghostly-io/runner";
+import {
+  qualifiesForMemoryPersistence,
+  runAssistedFlow,
+  runFlow,
+  safeParseRunInput,
+  summarizeJudgeEventForPersistence,
+} from "@ghostly-io/runner";
 import type {
+  AssistedRunResult,
   AssistEvent,
   AssistedMeta,
   AssistedRunInput,
@@ -12,7 +19,7 @@ import { Hono } from "hono";
 import { loadConfig } from "../config.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { redactAssistedMeta } from "../lib/redact-assist.js";
-import { createHealer, createStrategist } from "../services/assist-orchestrator.js";
+import { createHealer, createJudge, createStrategist } from "../services/assist-orchestrator.js";
 import { runControlRegistry } from "../services/run-control.js";
 import { runEventBus } from "../services/run-event-bus.js";
 import { projectExistsForUser } from "../store/projects.js";
@@ -23,6 +30,7 @@ import {
   getAssistMemory,
   getAllRuns,
   getRun,
+  invalidateAssistMemory,
   upsertAssistMemory,
 } from "../store/runs.js";
 
@@ -48,6 +56,7 @@ const assistV2Schema = z.object({
       selectorVisible: z.array(z.string().min(1)).max(10).optional(),
       urlIncludes: z.array(z.string().min(1)).max(10).optional(),
       mustAll: z.boolean().optional(),
+      revalidate: z.boolean().optional(),
     })
     .optional(),
   maxHorizons: z.number().int().min(1).max(50).optional(),
@@ -432,6 +441,8 @@ runRouter.post("/run", async (c) => {
 
       let result;
       let memoryCandidateSteps: Step[] = [];
+      let replayedFromMemory = false;
+      let assistedResultForMemoryGuard: AssistedRunResult | undefined;
       if (assistV2) {
         const strategist = createStrategist({
           llmTimeoutMs: appConfig.assist.llmTimeoutMs,
@@ -441,6 +452,10 @@ runRouter.post("/run", async (c) => {
           llmTimeoutMs: appConfig.assist.llmTimeoutMs,
           chunkSize: appConfig.assistV2.chunkSize,
           codeHints,
+        });
+        const judge = createJudge({
+          llmTimeoutMs: appConfig.assist.llmTimeoutMs,
+          chunkSize: appConfig.assistV2.chunkSize,
         });
         let seedMemorySteps: Step[] = [];
         if ((assistV2.memoryMode ?? appConfig.assistV2.memoryMode) === "adaptive") {
@@ -459,6 +474,7 @@ runRouter.post("/run", async (c) => {
           }
         }
         const replayFromMemory = seedMemorySteps.length > 0;
+        replayedFromMemory = replayFromMemory;
         const assistedInput: AssistedRunInput = {
           ...parsed.data,
           steps: parsed.data.steps,
@@ -484,6 +500,7 @@ runRouter.post("/run", async (c) => {
         const assistedResult = await runAssistedFlow(assistedInput, {
           strategist,
           healer,
+          judge,
           log: (message: string, details?: Record<string, unknown>) => {
             // eslint-disable-next-line no-console
             console.log(`[assist-run v2] ${message}`, details ?? {});
@@ -500,9 +517,22 @@ runRouter.post("/run", async (c) => {
           },
         }, { signal: controller.signal });
         result = assistedResult;
+        assistedResultForMemoryGuard = assistedResult;
         memoryCandidateSteps = assistedResult.learnedFlow && assistedResult.learnedFlow.length > 0
           ? assistedResult.learnedFlow
           : parseMemoryStepsFromEvents(assistedResult.events);
+
+        // Persiste cada invocación del juez como su propio RunEvent (spec §4.3
+        // "Observabilidad" + spec §6, GHOST-31): el dashboard los mostrará en
+        // la línea de tiempo del run (GHOST-32). `summarizeJudgeEventForPersistence`
+        // ya sanea (redacta secretos, trunca texto libre) antes de que el
+        // payload salga del runner — ver judge.ts.
+        for (const judgeEvent of assistedResult.judgeEvents ?? []) {
+          publishAssistEvent({
+            type: "judge_verdict",
+            payload: summarizeJudgeEventForPersistence(judgeEvent),
+          });
+        }
       } else {
         result = await runFlow(parsed.data, {
           signal: controller.signal,
@@ -542,25 +572,53 @@ runRouter.post("/run", async (c) => {
       }
 
       const status: "pass" | "fail" = result.ok ? "pass" : "fail";
+      const assistedResultForVerdict = assistV2 ? (result as AssistedRunResult) : undefined;
       await finalizeRun({
         id,
         status,
         durationMs: result.durationMs,
         steps: result.steps,
         ...(result.videoPath !== undefined ? { videoPath: result.videoPath } : {}),
+        ...(assistedResultForVerdict?.verdict ? { verdict: assistedResultForVerdict.verdict } : {}),
+        ...(assistedResultForVerdict?.verdictReason
+          ? { verdictReason: assistedResultForVerdict.verdictReason }
+          : {}),
+        ...(assistedResultForVerdict?.stopReason
+          ? { stopReason: assistedResultForVerdict.stopReason }
+          : {}),
       });
 
-      if (assistV2 && memoryCandidateSteps.length > 0) {
+      if (assistV2) {
         const memMode = assistV2.memoryMode ?? appConfig.assistV2.memoryMode;
         if (memMode !== "off") {
-          const shouldPersist = status === "pass";
-          if (shouldPersist) {
+          // Guardia de memoria (spec §6): SOLO se persiste con doble
+          // confirmación — victoria puramente determinista (ok=true y NINGÚN
+          // verdict explícito). Un `verdict === "success"` del juez es la
+          // ÚNICA confirmación (viene de un LLM, no de un check duro) y NUNCA
+          // habilita memoria — ver `qualifiesForMemoryPersistence` (runner,
+          // judge.ts) para el razonamiento completo.
+          const qualifies = memoryCandidateSteps.length > 0 &&
+            assistedResultForMemoryGuard !== undefined &&
+            qualifiesForMemoryPersistence(assistedResultForMemoryGuard);
+          if (qualifies) {
             await upsertAssistMemory({
               userId: user.id,
               project,
               baseUrl: parsed.data.baseUrl,
               goal: assistV2.goal,
               steps: memoryCandidateSteps,
+            }).catch(() => undefined);
+          } else if (replayedFromMemory) {
+            // Replay de una memoria existente que NO volvió a pasar la
+            // doble confirmación (p. ej. el dato ya no persiste, o el run
+            // solo llegó a "success" vía el juez, no determinísticamente):
+            // invalidarla en vez de reportar éxito silencioso sobre una
+            // memoria envenenada (spec §6).
+            await invalidateAssistMemory({
+              userId: user.id,
+              project,
+              baseUrl: parsed.data.baseUrl,
+              goal: assistV2.goal,
             }).catch(() => undefined);
           }
         }
