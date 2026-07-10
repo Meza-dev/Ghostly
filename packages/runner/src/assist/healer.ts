@@ -69,8 +69,10 @@ export function sanitizeHealerSteps(
 ): Step[] {
   const gateActive =
     typeof observedTreeMarkdown === "string" && observedTreeMarkdown.trim().length > 0;
+  // D7: gate por presencia de `selector` (no por lista de acciones) — cubre uniformemente
+  // los 8 verbos con selector; goto/press/snapshot no tienen `selector` y pasan de largo.
   const capped = proposed.slice(0, 3).filter((s) => {
-    if (s.action === "click" || s.action === "fill" || s.action === "waitForSelector") {
+    if ("selector" in s) {
       if (isAmbiguous(s.selector)) return false;
       if (/\[\s*ref\s*=\s*e\d+/i.test(s.selector)) return false;
       if (gateActive && !anchorExistsInMap(s.selector, observedTreeMarkdown)) return false;

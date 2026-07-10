@@ -135,6 +135,16 @@ function describeStep(step: Step): string {
       return `waitForSelector ${step.selector}`;
     case "snapshot":
       return "snapshot";
+    case "selectOption":
+      return `selectOption ${step.selector} = ${Array.isArray(step.value) ? step.value.join(", ") : step.value}`;
+    case "check":
+      return `check ${step.selector}`;
+    case "uncheck":
+      return `uncheck ${step.selector}`;
+    case "setInputFiles":
+      return `setInputFiles ${step.selector} (${step.files.join(", ")})`;
+    case "hover":
+      return `hover ${step.selector}`;
     default: {
       const exhaustive: never = step;
       throw new Error(`Step action desconocido: ${JSON.stringify(exhaustive)}`);

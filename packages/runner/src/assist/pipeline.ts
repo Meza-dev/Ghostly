@@ -992,6 +992,28 @@ async function applyStep(
     case "snapshot": {
       return;
     }
+    // T0 — molde sin comportamiento: cada verbo nuevo pasa el schema/coerceStep/dedup
+    // pero aún NO ejecuta nada real. Stubs explícitos (nunca no-op silencioso) hasta
+    // que cada fase lo implemente (T1 selectOption, T2 check/uncheck, T3 setInputFiles, T4 hover).
+    case "selectOption": {
+      throw new Error(`Acción "selectOption" aún no implementada (T1).`);
+    }
+    case "check": {
+      throw new Error(`Acción "check" aún no implementada (T2).`);
+    }
+    case "uncheck": {
+      throw new Error(`Acción "uncheck" aún no implementada (T2).`);
+    }
+    case "setInputFiles": {
+      throw new Error(`Acción "setInputFiles" aún no implementada (T3).`);
+    }
+    case "hover": {
+      throw new Error(`Acción "hover" aún no implementada (T4).`);
+    }
+    default: {
+      const exhaustive: never = step;
+      throw new Error(`acción no soportada: ${JSON.stringify(exhaustive)}`);
+    }
   }
 }
 
@@ -1007,24 +1029,39 @@ function redactStepForEvent(step: Step): Record<string, unknown> {
   return { ...step } as Record<string, unknown>;
 }
 
-function stepKey(step: Step): string {
-  if (step.action === "goto") return `goto|${step.url.trim().toLowerCase()}`;
-  if (step.action === "press") return `press|${step.key.trim().toLowerCase()}`;
-  if (step.action === "snapshot") return "snapshot";
-  if (step.action === "click" || step.action === "waitForSelector") {
-    const selector = step.selector
-      .trim()
-      .replace(/\s+/g, " ")
-      .replace(/^textbox(\[[^\]]+\])$/i, "$1")
-      .toLowerCase();
-    return `${step.action}|${selector}`;
-  }
-  const fillSelector = step.selector
+function normalizeSelectorForKey(selector: string): string {
+  return selector
     .trim()
     .replace(/\s+/g, " ")
     .replace(/^textbox(\[[^\]]+\])$/i, "$1")
     .toLowerCase();
-  return `fill|${fillSelector}|${step.value}`;
+}
+
+/** D4: normaliza `value` para la dedup key — array multi-select se ordena y une para no depender del orden del LLM. */
+function normalizeSelectOptionValue(value: string | string[]): string {
+  return Array.isArray(value) ? [...value].sort().join(",") : value;
+}
+
+function stepKey(step: Step): string {
+  if (step.action === "goto") return `goto|${step.url.trim().toLowerCase()}`;
+  if (step.action === "press") return `press|${step.key.trim().toLowerCase()}`;
+  if (step.action === "snapshot") return "snapshot";
+  if (
+    step.action === "click" ||
+    step.action === "waitForSelector" ||
+    step.action === "check" ||
+    step.action === "uncheck" ||
+    step.action === "hover"
+  ) {
+    return `${step.action}|${normalizeSelectorForKey(step.selector)}`;
+  }
+  if (step.action === "selectOption") {
+    return `selectOption|${normalizeSelectorForKey(step.selector)}|${normalizeSelectOptionValue(step.value)}`;
+  }
+  if (step.action === "setInputFiles") {
+    return `setInputFiles|${normalizeSelectorForKey(step.selector)}|${step.files.join(",")}`;
+  }
+  return `fill|${normalizeSelectorForKey(step.selector)}|${step.value}`;
 }
 
 function flowDedupKey(step: Step): string {
@@ -1033,6 +1070,13 @@ function flowDedupKey(step: Step): string {
   if (step.action === "snapshot") return "snapshot";
   if (step.action === "fill") {
     return `fill|${step.selector.trim().replace(/\s+/g, " ").toLowerCase()}`;
+  }
+  if (step.action === "selectOption") {
+    // D4: dos selectOption con distinto value sobre el mismo select son pasos distintos, no deben deduplicarse.
+    return `selectOption|${step.selector.trim().replace(/\s+/g, " ").toLowerCase()}|${normalizeSelectOptionValue(step.value)}`;
+  }
+  if (step.action === "setInputFiles") {
+    return `setInputFiles|${step.selector.trim().replace(/\s+/g, " ").toLowerCase()}|${step.files.join(",")}`;
   }
   return `${step.action}|${step.selector.trim().replace(/\s+/g, " ").toLowerCase()}`;
 }
