@@ -32,7 +32,7 @@ export type FixtureApp = {
 };
 
 /** Estado en memoria: notas "persistidas" (simula una base de datos real). */
-type Note = { title: string };
+type Note = { title: string; category?: string };
 
 const PAGE_STYLES = `
   body { font-family: system-ui, sans-serif; margin: 2rem; }
@@ -54,13 +54,17 @@ function escapeHtml(value: string): string {
 
 function renderNotesTable(notes: Note[], ghostRowTitle?: string): string {
   if (notes.length === 0 && !ghostRowTitle) return "<p data-testid=\"notes-empty\">Sin notas guardadas.</p>";
-  const rows = notes.map((n) => `<tr><td>${escapeHtml(n.title)}</td></tr>`);
+  // Segunda celda: categoría persistida (T1 — selectOption, F1). Vacía por
+  // default para las filas fantasma/scenarios que no la setean.
+  const rows = notes.map(
+    (n) => `<tr><td>${escapeHtml(n.title)}</td><td data-testid="note-category-cell">${escapeHtml(n.category ?? "")}</td></tr>`,
+  );
   if (ghostRowTitle) {
     // Fila "fantasma": aparece solo en la respuesta inmediata del POST, nunca sobrevive un reload
     // (simula un guardado que PARECE exitoso pero no se persiste — spec causa raíz #4).
-    rows.push(`<tr><td>${escapeHtml(ghostRowTitle)}</td></tr>`);
+    rows.push(`<tr><td>${escapeHtml(ghostRowTitle)}</td><td data-testid="note-category-cell"></td></tr>`);
   }
-  return `<table data-testid="notes-table"><thead><tr><th>Título</th></tr></thead><tbody>${rows.join("\n")}</tbody></table>`;
+  return `<table data-testid="notes-table"><thead><tr><th>Título</th><th>Categoría</th></tr></thead><tbody>${rows.join("\n")}</tbody></table>`;
 }
 
 function renderHomePage(
@@ -157,6 +161,13 @@ function renderHomePage(
       Título
       <input type="text" name="title" placeholder="Título de la nota" data-testid="${titleTestId}" />
     </label>
+    <label>
+      Categoría
+      <select name="category" data-testid="note-category">
+        <option value="Trabajo">Trabajo</option>
+        <option value="Personal">Personal</option>
+      </select>
+    </label>
     ${saveButtonBlock}
   </form>
   ${toastBlock}
@@ -207,6 +218,12 @@ function parseFormTitle(body: string): string {
   return (params.get("title") ?? "").trim();
 }
 
+/** T1 — selectOption (F1): categoría elegida en el `<select data-testid="note-category">`. */
+function parseFormCategory(body: string): string {
+  const params = new URLSearchParams(body);
+  return (params.get("category") ?? "").trim();
+}
+
 /**
  * Levanta la app fixture en un puerto libre local.
  * `notesPersist: false` (default true) simula guardado no persistente:
@@ -239,6 +256,7 @@ export function startFixtureApp(): Promise<FixtureApp> {
       if (req.method === "POST" && url.pathname === "/save") {
         const body = await readBody(req);
         const title = parseFormTitle(body);
+        const category = parseFormCategory(body);
 
         if (scenario === "500-on-save" || scenario === "500-on-save-blocking-throw") {
           res.writeHead(500, { "content-type": "text/html; charset=utf-8" });
@@ -274,7 +292,7 @@ export function startFixtureApp(): Promise<FixtureApp> {
         // modal-open-background-click-ignored / modal-open-redundant-reopen-dropped: guardado real
         // y persistente (mismo branch — solo
         // cambia el markup del GET).
-        if (title) notes.push({ title });
+        if (title) notes.push({ title, category: category || undefined });
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(renderHomePage(notes, scenario, { toastVisible: true }));
         return;

@@ -61,6 +61,9 @@ const noopStrategist: AssistedDeps["strategist"] = async () => {
  * mantienen `maxHealingAttemptsPerStep: 0`) nunca lo invocan (spec R6/D2).
  *
  * Reglas, en orden — la primera que matchea gana:
+ *  - Rule D (T1/F1): `fill` rechazado por Playwright sobre un `<select>` —
+ *    convierte el paso a `selectOption` con el mismo valor (mismo diagnóstico
+ *    que el healer real hizo en el incidente F1, obs #426).
  *  - Rule A: selector renombrado — el testid falló pero existe una variante
  *    con el mismo "stem" (p. ej. `note-title-input` -> `note-title-input-v2`)
  *    en el snapshot, o cae a `name="title"` como alternativa.
@@ -74,6 +77,8 @@ const noopStrategist: AssistedDeps["strategist"] = async () => {
  */
 const POINTER_INTERCEPT_RE = /intercepts pointer events|element is not visible|element is outside of the viewport|subtree intercepts pointer events/i;
 const STRICT_MODE_VIOLATION_RE = /strict mode violation|resolved to \d+ elements/i;
+/** T1 (F1, obs #426): Playwright rechaza un `fill` sobre un `<select>` con este mensaje exacto. */
+const FILL_ON_SELECT_RE = /is not an <input>, <textarea> or \[contenteditable\]/i;
 
 /** Extrae el testid de un selector `[data-testid="..."]`, si el paso lo usa. */
 function extractTestId(selector: string): string | undefined {
@@ -123,6 +128,20 @@ const testOracleHealer: HealerFn = async (ctx: HealerContext): Promise<HealerRes
   const { failedStep, error, snapshot } = ctx;
   const treeMarkdown = snapshot.treeMarkdown ?? "";
   const visibleDialogs = snapshot.visibleDialogs ?? [];
+
+  // Rule D (T1/F1) — fill intentado sobre un <select>: Playwright lo rechaza
+  // explícitamente ("Element is not an <input>, <textarea> or
+  // [contenteditable] element"). El healer real diagnosticó esto en el
+  // incidente F1 (obs #426) y propuso selectOption con el mismo valor; el
+  // oráculo de test reproduce esa conversión 1:1.
+  if (failedStep.action === "fill" && FILL_ON_SELECT_RE.test(error)) {
+    return {
+      steps: [{ action: "selectOption", selector: failedStep.selector, value: failedStep.value }],
+      rationale:
+        "Test oracle (T1/F1, no LLM real): fill sobre <select> rechazado por Playwright — convirtiendo a " +
+        "selectOption con el mismo valor.",
+    };
+  }
 
   // Rule B — modal/overlay bloqueando el click: antepone el dismiss y luego
   // reintenta el paso original explícitamente en la MISMA respuesta.

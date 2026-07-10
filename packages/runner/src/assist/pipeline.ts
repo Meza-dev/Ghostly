@@ -495,6 +495,23 @@ async function fillWithSmartSelector(page: Page, selector: string, value: string
   await page.fill(s, value, { timeout });
 }
 
+/**
+ * T1 (selectOption) — sin mapeo "smart" a selectores sintéticos `__gt:...`:
+ * `expandControlSelectors` (D6) solo genera CSS real, así que un locator
+ * directo alcanza. Playwright ya valida que el target sea un `<select>`
+ * (lanza "Element is not a <select> element" si no lo es — spec "Elemento no
+ * es un <select>") y matchea `value` por `option.value` O `option.label`
+ * (D1: cubre el caso F1, donde el healer propone el LABEL visible).
+ */
+async function selectOptionWithSmartSelector(
+  page: Page,
+  selector: string,
+  value: string | string[],
+  timeout: number,
+): Promise<void> {
+  await page.locator(selector).first().selectOption(value, { timeout });
+}
+
 function expandWaitSelectors(primary: string): string[] {
   const s = primary.trim();
   const lower = s.toLowerCase();
@@ -628,6 +645,23 @@ function expandClickSelectors(primary: string): string[] {
   return uniqSelectors(out);
 }
 
+/**
+ * D6 (expand-runner-action-vocabulary/design): expansión de fallback tag-agnóstica
+ * para `selectOption`/`check`/`uncheck`/`setInputFiles` — a diferencia de
+ * `expandClickSelectors`/`expandFillSelectors`, NO asume `button`/`input` porque
+ * mezclar tags rompería (p. ej. un `#id` de `<select>` no debería probarse como `input#id`).
+ * Solo variantes CSS reales: selector base + `#id` + `[id="..."]` + `[name="..."]`.
+ */
+function expandControlSelectors(primary: string): string[] {
+  const s = primary.trim();
+  const out: string[] = [s];
+  const id = extractSelectorId(s);
+  if (id) out.push(`#${id}`, `[id="${id}"]`);
+  const name = extractSelectorName(s);
+  if (name) out.push(`[name="${name}"]`);
+  return uniqSelectors(out);
+}
+
 function selectorAttemptLabel(sel: string): string {
   const fillPh = sel.match(/^__gt:fill:placeholder=(.+)$/i);
   if (fillPh?.[1]) {
@@ -665,7 +699,10 @@ function selectorAttemptLabel(sel: string): string {
 
 async function tryWithSelectorFallbacks(
   page: Page,
-  label: "fill" | "click" | "waitForSelector",
+  // D6: `string` en vez de la unión cerrada — cada verbo nuevo con selector
+  // (selectOption/check/uncheck/setInputFiles/hover) reusa esta función solo
+  // para logging, sin ensanchar una unión que ya no aporta chequeo útil.
+  label: string,
   primarySelector: string,
   defaultTimeoutMs: number,
   expand: (sel: string) => string[],
@@ -992,12 +1029,20 @@ async function applyStep(
     case "snapshot": {
       return;
     }
+    case "selectOption": {
+      await tryWithSelectorFallbacks(
+        page,
+        "selectOption",
+        step.selector,
+        defaultTimeoutMs,
+        expandControlSelectors,
+        (p, sel, t) => selectOptionWithSmartSelector(p, sel, step.value, t),
+      );
+      return;
+    }
     // T0 — molde sin comportamiento: cada verbo nuevo pasa el schema/coerceStep/dedup
     // pero aún NO ejecuta nada real. Stubs explícitos (nunca no-op silencioso) hasta
-    // que cada fase lo implemente (T1 selectOption, T2 check/uncheck, T3 setInputFiles, T4 hover).
-    case "selectOption": {
-      throw new Error(`Acción "selectOption" aún no implementada (T1).`);
-    }
+    // que cada fase lo implemente (T2 check/uncheck, T3 setInputFiles, T4 hover).
     case "check": {
       throw new Error(`Acción "check" aún no implementada (T2).`);
     }
@@ -1304,21 +1349,32 @@ function hasTerminalLock(
 
 function hasEquivalentReplacementStep(failedStep: Step, healSteps: Step[]): boolean {
   return healSteps.some((healStep) => {
-    if (healStep.action !== failedStep.action) return false;
-    if (failedStep.action === "click" && healStep.action === "click") {
-      return healStep.selector !== failedStep.selector;
+    if (healStep.action === failedStep.action) {
+      if (failedStep.action === "click" && healStep.action === "click") {
+        return healStep.selector !== failedStep.selector;
+      }
+      if (failedStep.action === "fill" && healStep.action === "fill") {
+        return healStep.selector !== failedStep.selector;
+      }
+      if (failedStep.action === "waitForSelector" && healStep.action === "waitForSelector") {
+        return healStep.selector !== failedStep.selector;
+      }
+      if (failedStep.action === "goto" && healStep.action === "goto") {
+        return healStep.url !== failedStep.url;
+      }
+      if (failedStep.action === "press" && healStep.action === "press") {
+        return healStep.key !== failedStep.key;
+      }
+      return false;
     }
-    if (failedStep.action === "fill" && healStep.action === "fill") {
-      return healStep.selector !== failedStep.selector;
-    }
-    if (failedStep.action === "waitForSelector" && healStep.action === "waitForSelector") {
-      return healStep.selector !== failedStep.selector;
-    }
-    if (failedStep.action === "goto" && healStep.action === "goto") {
-      return healStep.url !== failedStep.url;
-    }
-    if (failedStep.action === "press" && healStep.action === "press") {
-      return healStep.key !== failedStep.key;
+    // T1 gap encontrado al cerrar F1 (obs #426): el healer puede proponer un
+    // VERBO DISTINTO sobre el MISMO anchor (p. ej. fill -> selectOption sobre
+    // un <select>: fill NUNCA puede tener éxito ahí, así que sin esta rama el
+    // paso original se reintentaría ciegamente tras un heal ya exitoso y
+    // fallaría de nuevo). Mismo selector = mismo control observado: cuenta
+    // como reemplazo igual que un heal same-action con selector distinto.
+    if ("selector" in failedStep && "selector" in healStep) {
+      return healStep.selector === failedStep.selector;
     }
     return false;
   });
