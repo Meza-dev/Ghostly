@@ -111,10 +111,11 @@ function normalizeAction(value: unknown): string {
   if (v === "type") return "fill";
   if (v === "keypress") return "press";
   if (v === "a11y" || v === "ariaSnapshot") return "snapshot";
+  if (v === "select" || v === "choose") return "selectOption";
   return value.trim();
 }
 
-function coerceStep(step: unknown): Record<string, unknown> | null {
+export function coerceStep(step: unknown): Record<string, unknown> | null {
   if (!step || typeof step !== "object") return null;
   const raw = step as Record<string, unknown>;
   const action = normalizeAction(raw.action ?? raw.type ?? raw.name);
@@ -155,6 +156,23 @@ function coerceStep(step: unknown): Record<string, unknown> | null {
   }
   if (action === "snapshot") {
     return { action: "snapshot" };
+  }
+  if (action === "selectOption") {
+    // Gate T0/T1 (expand-runner-action-vocabulary, obs #429): este coerceStep
+    // es el propio del path de plan de una sola pasada (/v1/plan), separado
+    // del `coerceStep` del orchestrator (assist-orchestrator.ts) usado en el
+    // loop live strategist/healer — sin este caso el verbo se descartaba en
+    // silencio también acá. Mismo contrato: value string|string[] (D1).
+    const selector = raw.selector ?? raw.target ?? raw.locator;
+    if (typeof selector !== "string" || !selector.trim()) return null;
+    const rawValue = raw.value ?? raw.values;
+    if (Array.isArray(rawValue)) {
+      const values = rawValue.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+      if (values.length === 0) return null;
+      return { action: "selectOption", selector: selector.trim(), value: values };
+    }
+    if (typeof rawValue !== "string" || !rawValue.trim()) return null;
+    return { action: "selectOption", selector: selector.trim(), value: rawValue };
   }
   return null;
 }
