@@ -23,7 +23,8 @@ export type FixtureScenario =
   | "selector-renamed"
   | "ambiguous-duplicate-selector"
   | "500-on-save-blocking-throw"
-  | "modal-open-background-click-ignored";
+  | "modal-open-background-click-ignored"
+  | "modal-open-redundant-reopen-dropped";
 
 export type FixtureApp = {
   baseUrl: string;
@@ -76,13 +77,27 @@ function renderHomePage(
   // solo, así que sin este backdrop estático el click de "Guardar" pasaría
   // de largo y nunca dispararía el heal (R3b). Estático, sin timers: se
   // remueve junto con el diálogo al hacer click en "Aceptar".
-  const modalBlock = opts.showModal
-    ? `<div class="modal-overlay-backdrop" data-testid="modal-overlay-backdrop"></div>
+  // Escenario "modal-open-redundant-reopen-dropped" (plan-pruning net, ver
+  // benchmark-runner.ts / flows.ts): el dialog necesita un HEADING (`<h2>`)
+  // para que `ObserverSnapshot.visibleDialogs[].heading` quede poblado — el
+  // dialog genérico de arriba solo tiene `<p>`, así que el match textual
+  // genérico (`shouldDropRedundantModalOpenClick`) no podría ejercitarse.
+  // "Confirmar guardado" es vocabulario neutro de UI, sin dominio de app.
+  const modalBlock =
+    scenario === "modal-open-redundant-reopen-dropped"
+      ? `<div class="modal-overlay-backdrop" data-testid="modal-overlay-backdrop"></div>
+      <dialog open role="dialog" aria-modal="true" data-testid="confirm-dialog">
+        <h2>Confirmar guardado</h2>
+        <p>¿Confirmás guardar la nota?</p>
+        <button type="button" data-testid="confirm-dialog-ok" onclick="document.querySelector('.modal-overlay-backdrop')?.remove(); this.closest('dialog').close(); this.closest('dialog').remove();">Aceptar</button>
+      </dialog>`
+      : opts.showModal
+        ? `<div class="modal-overlay-backdrop" data-testid="modal-overlay-backdrop"></div>
       <dialog open role="dialog" aria-modal="true" data-testid="confirm-dialog">
         <p>¿Confirmás guardar la nota?</p>
         <button type="button" data-testid="confirm-dialog-ok" onclick="document.querySelector('.modal-overlay-backdrop')?.remove(); this.closest('dialog').close(); this.closest('dialog').remove();">Aceptar</button>
       </dialog>`
-    : "";
+        : "";
   // Control de fondo/sidebar genérico, ubicado detrás del backdrop (z-index
   // menor): usado por el escenario "modal-open-background-click-ignored" para
   // probar que un click de fondo con el modal abierto queda pointer-intercepted
@@ -213,7 +228,9 @@ export function startFixtureApp(): Promise<FixtureApp> {
 
       if (req.method === "GET" && url.pathname === "/") {
         const showModal =
-          scenario === "modal-blocking-button" || scenario === "modal-open-background-click-ignored";
+          scenario === "modal-blocking-button" ||
+          scenario === "modal-open-background-click-ignored" ||
+          scenario === "modal-open-redundant-reopen-dropped";
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(renderHomePage(notes, scenario, { showModal }));
         return;
@@ -254,7 +271,8 @@ export function startFixtureApp(): Promise<FixtureApp> {
         }
 
         // happy-path / modal-blocking-button / selector-renamed / ambiguous-duplicate-selector /
-        // modal-open-background-click-ignored: guardado real y persistente (mismo branch — solo
+        // modal-open-background-click-ignored / modal-open-redundant-reopen-dropped: guardado real
+        // y persistente (mismo branch — solo
         // cambia el markup del GET).
         if (title) notes.push({ title });
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });

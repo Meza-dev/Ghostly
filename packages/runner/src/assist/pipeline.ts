@@ -128,33 +128,6 @@ function normalizeLooseText(text: string): string {
 }
 
 /**
- * Etiquetas típicas del sidebar/backoffice: `text=Viajes` no debe resolverse contra el h1
- * «Gestión de Viajes» (substring). Priorizar enlace en `nav` / role=link.
- */
-function looksLikeSidebarNavLabel(raw: string): boolean {
-  const t = raw.trim();
-  if (t.length < 2 || t.length > 48) return false;
-  return /^(home|conductores|usuarios|locaciones|veh[ií]culos|viajes|importador|clientes|documentos(\s+log[ií]sticos)?|cerrar\s+sesi[oó]n)$/i.test(
-    t,
-  );
-}
-
-async function clickOrWaitNavLinkByLabel(
-  page: Page,
-  label: string,
-  timeout: number,
-  mode: "click" | "visible",
-): Promise<void> {
-  const re = new RegExp(`^\\s*${escapeRegex(label.trim())}\\s*$`, "i");
-  const navLink = page.locator(`nav a, [role="navigation"] a`).filter({ hasText: re }).first();
-  if (mode === "visible") {
-    await navLink.waitFor({ state: "visible", timeout });
-    return;
-  }
-  await navLink.click({ timeout });
-}
-
-/**
  * Muchas apps ponen ítems de submenú como `button` bajo `[role="menu"]` o dentro de `nav` (no `<a>`).
  * Evita que `getByRole("button").first()` elija un match oculto fuera del menú desplegable.
  */
@@ -203,30 +176,6 @@ function normalizeLlmHeadingSelector(selector: string): string {
   return raw;
 }
 
-/** Aviso de Google Maps en localhost sin API key suele tapar clics; cerrar OK si está visible. */
-async function dismissGoogleMapsLoadErrorIfPresent(page: Page): Promise<void> {
-  try {
-    const banner = page
-      .getByText(
-        /can't load Google Maps|no puede cargar|load Google Maps correctly|cargar Google Maps correctamente/i,
-      )
-      .first();
-    const visible = await banner.isVisible({ timeout: 500 }).catch(() => false);
-    if (!visible) return;
-    const ok = page.getByRole("button", { name: /^OK$/i }).first();
-    if (await ok.isVisible({ timeout: 1_500 }).catch(() => false)) {
-      await ok.click({ timeout: 8_000 });
-      await page.waitForTimeout(250);
-    }
-  } catch {
-    /* no bloquear el flujo */
-  }
-}
-
-async function prepareTransientOverlaysForAutomation(page: Page): Promise<void> {
-  await dismissGoogleMapsLoadErrorIfPresent(page);
-}
-
 const REF_SELECTOR_RE = /\[\s*ref\s*=\s*e\d+\s*\]/i;
 
 /** Los ref=eN del snapshot a11y no existen en el DOM como CSS; rechazamos para forzar replan. */
@@ -254,41 +203,13 @@ async function countVisibleA11yDialogs(page: Page): Promise<number> {
   return page.locator('[role="dialog"]:visible, [role="alertdialog"]:visible').count();
 }
 
-/** Clics tipo «Crear calificación» que abren un panel cuyo HTML puede vivir fuera del slice del hash del body. */
-function clickSelectorLikelyOpensCreationSurface(selector: string): boolean {
-  const s = selector.toLowerCase();
-  const createIntent = /crear|nueva|nuevo|add\s+new|\bnew\s+/i.test(s);
-  const domain = /calific|grupo|rating|evalu|registro|item|viaje|trabajo|usuario/i.test(s);
-  return createIntent && domain;
-}
-
-/**
- * Señales de que el clic abrió un formulario de creación aunque `hashDomSlice` no cambie
- * (p. ej. portales/modales con poco impacto en los primeros 16k del innerHTML del body).
- */
-async function creationSurfaceVisibleAfterClick(page: Page): Promise<boolean> {
-  const probes: Array<Promise<boolean>> = [
-    page
-      .getByRole("heading", { name: /crear\s+(grupo|calificaci[oó]n)/i })
-      .first()
-      .isVisible({ timeout: 1_000 })
-      .catch(() => false),
-    page
-      .getByText(/calificaciones\s+del\s+grupo/i)
-      .first()
-      .isVisible({ timeout: 1_000 })
-      .catch(() => false),
-    page
-      .getByRole("dialog")
-      .filter({ has: page.getByRole("heading", { name: /crear\s+grupo/i }) })
-      .first()
-      .isVisible({ timeout: 1_000 })
-      .catch(() => false),
-  ];
-  const results = await Promise.all(probes);
-  return results.some(Boolean);
-}
-
+// HEALER-4 DEFERRED (accepted domain debt): these loader-text patterns are
+// app-specific Spanish TMS strings. They are retained because no generic
+// structural "loading/spinner visible" signal exists in observer.ts today
+// (no aria-busy / role=progressbar / generic loading detector). Removing them
+// would regress loop pacing with no replacement. Genericize in a follow-up
+// slice that adds a structural loading-indicator detector to observer.ts, then
+// route waitForKnownModalLoadersToFinish through it. Follow-up: HEALER-5.
 /** Mensajes de carga frecuentes en modales (p. ej. TMS «Cargando documentos»). */
 const MODAL_LOADER_TEXT_PATTERNS: RegExp[] = [
   /Cargando\s+documentos/i,
@@ -368,46 +289,6 @@ async function victoryTargetVisible(page: Page, raw: string): Promise<boolean> {
   }
 }
 
-function goalMentionsCalificacionesCreate(goal: string): boolean {
-  const g = normalizeLooseText(goal);
-  return /calific/.test(g) && /(crear|crea|nueva|nuevo)/.test(g);
-}
-
-function makeUniqueCalificacionName(value: string, uniqueTag: string): string {
-  const base = value.trim().replace(/\s+/g, " ");
-  if (!base) return value;
-  const alreadyUnique = /gt-[a-z0-9]{4,}/i.test(base);
-  if (alreadyUnique) return value;
-  return `${base} GT-${uniqueTag}`;
-}
-
-function maybeUniquifyFillStep(step: Step, goal: string, uniqueTag: string): Step {
-  if (step.action !== "fill") return step;
-  if (!goalMentionsCalificacionesCreate(goal)) return step;
-  if (isAuthLikeFillStep(step)) return step;
-  const sel = step.selector.toLowerCase();
-  const val = normalizeLooseText(step.value);
-  const looksNameField =
-    sel.includes("de malo a excelente") ||
-    sel.includes("nombre del grupo") ||
-    sel.includes("calificaci");
-  const genericNameValue =
-    val === "nueva calificacion" ||
-    val === "nueva calificación" ||
-    val === "calificacion" ||
-    val === "calificación";
-  if (!looksNameField && !genericNameValue) return step;
-  const uniqueValue = makeUniqueCalificacionName(step.value, uniqueTag);
-  if (uniqueValue === step.value) return step;
-  return { ...step, value: uniqueValue };
-}
-
-function isAuthLikeFillStep(step: Step): boolean {
-  if (step.action !== "fill") return false;
-  const s = step.selector.toLowerCase();
-  return /user|usuario|email|login|pass|password|contrase|token|api[_-]?key|secret/i.test(s);
-}
-
 function expandFillSelectors(primary: string): string[] {
   const s = primary.trim();
   const lower = s.toLowerCase();
@@ -447,27 +328,6 @@ function expandFillSelectors(primary: string): string[] {
   const name = extractSelectorName(s);
   if (name) {
     out.push(`[name="${name}"]`, `input[name="${name}"]`, `textarea[name="${name}"]`);
-  }
-
-  // En el modal de calificaciones, el LLM a veces propone "Ej: Excelente" o aria-label
-  // "Calificación" para el campo de etiqueta. Forzamos candidatos robustos del campo real.
-  const looksLikeCalificacionLabelField =
-    lower.includes("ej: excelente") ||
-    lower.includes("aria-label=\"calificación\"") ||
-    lower.includes("aria-label='calificación'") ||
-    lower.includes("aria-label=\"calificacion\"") ||
-    lower.includes("aria-label='calificacion'") ||
-    /calificaci[oó]n/.test(lower);
-  if (looksLikeCalificacionLabelField) {
-    out.push(
-      '[placeholder="Etiqueta (Ej: Malo, Regular, Bueno)"]',
-      '[placeholder*="Etiqueta"]',
-      'input[placeholder*="Etiqueta"]',
-      'textarea[placeholder*="Etiqueta"]',
-      "__gt:fill:placeholder=Etiqueta%20(Ej%3A%20Malo%2C%20Regular%2C%20Bueno)",
-      "__gt:fill:placeholderPrefix=Etiqueta",
-      "__gt:fill:textboxName=Etiqueta",
-    );
   }
 
   if (lower.includes("username") || /name\s*=\s*['"]?\s*username/i.test(s) || /name\s*=\s*['"]?\s*user/i.test(s)) {
@@ -688,12 +548,6 @@ function gtRoleFirstCandidates(s0: string): string[] {
       const c = stripLeadingDecorativeGlyphs(textOnly.replace(/^['"]|['"]$/g, ""));
       if (c) {
         const t = c.trim();
-        if (looksLikeSidebarNavLabel(t)) {
-          out.push(`__gt:role=link;name=${encodeURIComponent(t)}`);
-          const q = t.includes("'") ? '"' : "'";
-          const inner = q === "'" ? t.replace(/'/g, "\\'") : t.replace(/"/g, '\\"');
-          out.push(`a:has-text(${q}${inner}${q})`);
-        }
         out.push(`__gt:role=button;name=${encodeURIComponent(t)}`);
       }
     }
@@ -865,19 +719,6 @@ async function waitForTargetVisible(page: Page, selector: string, timeout: numbe
         .waitFor({ state: "visible", timeout });
       return;
     }
-    if (looksLikeSidebarNavLabel(name)) {
-      try {
-        await page
-          .getByRole("link", { name: new RegExp(`^\\s*${escapeRegex(name.trim())}\\s*$`, "i") })
-          .first()
-          .waitFor({ state: "visible", timeout });
-        return;
-      } catch {
-        /* continuar */
-      }
-      await clickOrWaitNavLinkByLabel(page, name, timeout, "visible");
-      return;
-    }
     await page.getByRole("link", { name: new RegExp(escapeRegex(name), "i") }).first().waitFor({ state: "visible", timeout });
     return;
   }
@@ -953,24 +794,6 @@ async function waitForTargetVisible(page: Page, selector: string, timeout: numbe
   if (textEngine) {
     const clean = stripLeadingDecorativeGlyphs(textEngine.replace(/^['"]|['"]$/g, ""));
     if (clean) {
-      const t = clean.trim();
-      if (looksLikeSidebarNavLabel(t)) {
-        try {
-          await page
-            .getByRole("link", { name: new RegExp(`^\\s*${escapeRegex(t)}\\s*$`, "i") })
-            .first()
-            .waitFor({ state: "visible", timeout });
-          return;
-        } catch {
-          /* continuar */
-        }
-        try {
-          await clickOrWaitNavLinkByLabel(page, t, timeout, "visible");
-          return;
-        } catch {
-          /* continuar */
-        }
-      }
       try {
         await page.getByText(clean, { exact: false }).first().waitFor({ state: "visible", timeout });
         return;
@@ -997,23 +820,6 @@ async function clickWithSmartSelector(page: Page, selector: string, timeout: num
       if (await tryMenuOrNavScopedButton(page, name, timeout, "click")) return;
       await page.getByRole("button", { name: new RegExp(escapeRegex(name), "i") }).first().click({ timeout });
       return;
-    }
-    if (looksLikeSidebarNavLabel(name)) {
-      try {
-        await page
-          .getByRole("link", { name: new RegExp(`^\\s*${escapeRegex(name.trim())}\\s*$`, "i") })
-          .first()
-          .click({ timeout });
-        return;
-      } catch {
-        /* continuar */
-      }
-      try {
-        await clickOrWaitNavLinkByLabel(page, name, timeout, "click");
-        return;
-      } catch {
-        /* continuar */
-      }
     }
     await page.getByRole("link", { name: new RegExp(escapeRegex(name), "i") }).first().click({ timeout });
     return;
@@ -1077,24 +883,6 @@ async function clickWithSmartSelector(page: Page, selector: string, timeout: num
   if (textEngine) {
     const clean = stripLeadingDecorativeGlyphs(textEngine.replace(/^['"]|['"]$/g, ""));
     if (clean) {
-      const t = clean.trim();
-      if (looksLikeSidebarNavLabel(t)) {
-        try {
-          await page
-            .getByRole("link", { name: new RegExp(`^\\s*${escapeRegex(t)}\\s*$`, "i") })
-            .first()
-            .click({ timeout });
-          return;
-        } catch {
-          /* continuar */
-        }
-        try {
-          await clickOrWaitNavLinkByLabel(page, t, timeout, "click");
-          return;
-        } catch {
-          /* continuar */
-        }
-      }
       try {
         await page.getByText(clean, { exact: false }).first().click({ timeout });
         return;
@@ -1149,7 +937,6 @@ async function applyStep(
       return;
     }
     case "click": {
-      await prepareTransientOverlaysForAutomation(page);
       const hashBefore = await hashDomSlice(page);
       const dialogsBefore = await countVisibleA11yDialogs(page);
       await tryWithSelectorFallbacks(
@@ -1164,9 +951,7 @@ async function applyStep(
       const hashAfter = await hashDomSlice(page);
       if (hashBefore === hashAfter) {
         const dialogsAfter = await countVisibleA11yDialogs(page);
-        const creationOpened =
-          clickSelectorLikelyOpensCreationSurface(step.selector) &&
-          (dialogsAfter > dialogsBefore || (await creationSurfaceVisibleAfterClick(page)));
+        const creationOpened = dialogsAfter > dialogsBefore;
         if (creationOpened) {
           return;
         }
@@ -1178,7 +963,6 @@ async function applyStep(
       return;
     }
     case "fill": {
-      await prepareTransientOverlaysForAutomation(page);
       await tryWithSelectorFallbacks(
         page,
         "fill",
@@ -1194,7 +978,6 @@ async function applyStep(
       return;
     }
     case "waitForSelector": {
-      await prepareTransientOverlaysForAutomation(page);
       const t = step.timeoutMs ?? defaultTimeoutMs;
       await tryWithSelectorFallbacks(
         page,
@@ -1404,7 +1187,7 @@ function extractTextualTargetFromStep(step: Step): string | null {
 
 /**
  * Evita click/wait redundantes para «abrir» cuando un dialog visible ya refleja la intención
- * (p. ej. wait click "Crear Viaje" + título "Crear Nuevo Viaje").
+ * (p. ej. wait click "Confirmar guardado" + título de dialog "Confirmar guardado").
  */
 function shouldDropRedundantModalOpenClick(step: Step, snapshot: ObserverSnapshot | undefined): boolean {
   if ((step.action !== "click" && step.action !== "waitForSelector") || !snapshot?.visibleDialogs?.length) {
@@ -1422,99 +1205,6 @@ function shouldDropRedundantModalOpenClick(step: Step, snapshot: ObserverSnapsho
   return false;
 }
 
-/** Heurística TMS: modal «Crear Nuevo Viaje» ya abierto (título + formulario / remitos en el mapa). */
-function treeIndicatesCreateTripModalOpen(snapshot: ObserverSnapshot | undefined): boolean {
-  if (!snapshot) return false;
-  const t = `${snapshot.treeMarkdown}\n${snapshot.title ?? ""}`.toLowerCase();
-  if (!t.includes("crear nuevo viaje")) return false;
-  return (
-    t.includes("conductorid") ||
-    t.includes("vehiculoid") ||
-    t.includes("remito") ||
-    t.includes("react-select")
-  );
-}
-
-function treeIndicatesCalificacionGroupModalOpen(snapshot: ObserverSnapshot | undefined): boolean {
-  if (!snapshot) return false;
-  const t = `${snapshot.treeMarkdown}\n${snapshot.title ?? ""}`.toLowerCase();
-  const hasHeading =
-    t.includes("crear grupo") ||
-    t.includes("crear grupos") ||
-    t.includes("editar grupo") ||
-    t.includes("editar grupos");
-  if (!hasHeading) return false;
-  return (
-    t.includes("calificaciones del grupo") ||
-    t.includes("textbox \"ej: de malo a excelente\"") ||
-    t.includes("textbox \"etiqueta (ej: malo, regular, bueno)\"") ||
-    (t.includes("guardar") && t.includes("cancelar"))
-  );
-}
-
-function selectorTargetsAgregarDatos(selector: string): boolean {
-  const s = selector.toLowerCase();
-  return s.includes("agregar datos") || /aria-label\s*=\s*["']?agregar datos["']?/i.test(selector);
-}
-
-function selectorTargetsIllusoryCreateTripButton(step: Step, selector: string): boolean {
-  const raw = selector.trim();
-  const s = raw.toLowerCase();
-  if (!s.includes("crear nuevo viaje")) return false;
-  if (/^h[1-6]:(has-text|text)\(/i.test(raw)) return false;
-  if (s.startsWith("heading:has-text")) return false;
-  if (step.action === "click" && (s.includes("button") || s.includes("role=button"))) return true;
-  if (step.action === "waitForSelector" && s.includes("button")) return true;
-  return false;
-}
-
-/**
- * Evita reabrir el flujo cuando el mapa ya muestra el formulario del modal (p. ej. botón «Agregar Datos»
- * detrás del modal hace timeout al click; «Crear Nuevo Viaje» en pantalla es un h3, no un button).
- */
-function shouldDropStaleOpenActionWhenModalFormVisible(step: Step, snapshot: ObserverSnapshot | undefined): boolean {
-  if (!treeIndicatesCreateTripModalOpen(snapshot)) return false;
-  if (step.action !== "click" && step.action !== "waitForSelector") return false;
-  const sel = step.selector;
-  if (selectorTargetsAgregarDatos(sel)) return true;
-  if (selectorTargetsIllusoryCreateTripButton(step, sel)) return true;
-  return false;
-}
-
-/** Ya en solicitar-viajes con modal de creación: ir de nuevo a «Viajes» es redundante y suele chocar con el h1. */
-function shouldDropRedundantViajesNavWhenOnTripsFlow(step: Step, snapshot: ObserverSnapshot | undefined): boolean {
-  if (!snapshot?.url) return false;
-  const u = snapshot.url.toLowerCase();
-  if (!u.includes("solicitar-viajes")) return false;
-  if (!treeIndicatesCreateTripModalOpen(snapshot)) return false;
-  if (step.action !== "click" && step.action !== "waitForSelector") return false;
-  const low = step.selector.toLowerCase();
-  if (!low.includes("viajes")) return false;
-  if (low.includes("gestión") || low.includes("gestion")) return false;
-  return (
-    low.startsWith("text=") ||
-    low.includes("a:has-text") ||
-    low.includes("__gt:role=link") ||
-    low.includes("__gt:role=button")
-  );
-}
-
-/** Con modal de calificaciones abierto, re-navegar sidebar o reabrir modal es redundante y rompe el flujo. */
-function shouldDropRedundantCalificacionesFlowNav(step: Step, snapshot: ObserverSnapshot | undefined): boolean {
-  if (!treeIndicatesCalificacionGroupModalOpen(snapshot)) return false;
-  if (step.action !== "click" && step.action !== "waitForSelector") return false;
-  const low = step.selector.toLowerCase();
-  const targetsSidebar =
-    /has-text\(\s*["']diseño["']\s*\)/i.test(low) ||
-    /has-text\(\s*["']calificaciones["']\s*\)/i.test(low) ||
-    /text\s*=\s*["']?diseño["']?$/i.test(low) ||
-    /text\s*=\s*["']?calificaciones["']?$/i.test(low);
-  const targetsReopenCreate =
-    /has-text\(\s*["']crear calificaci[oó]n["']\s*\)/i.test(low) ||
-    /text\s*=\s*["']?crear calificaci[oó]n["']?$/i.test(low);
-  return targetsSidebar || targetsReopenCreate;
-}
-
 function stepUsesForbiddenAccessibilityRef(step: Step): boolean {
   if (step.action === "click" || step.action === "waitForSelector" || step.action === "fill") {
     return REF_SELECTOR_RE.test(step.selector);
@@ -1530,10 +1220,7 @@ function shouldDropPlannedStep(
   return (
     stepUsesForbiddenAccessibilityRef(step) ||
     shouldDropStepInCurrentContext(step, snapshot, history) ||
-    shouldDropRedundantModalOpenClick(step, snapshot) ||
-    shouldDropStaleOpenActionWhenModalFormVisible(step, snapshot) ||
-    shouldDropRedundantViajesNavWhenOnTripsFlow(step, snapshot) ||
-    shouldDropRedundantCalificacionesFlowNav(step, snapshot)
+    shouldDropRedundantModalOpenClick(step, snapshot)
   );
 }
 
@@ -1605,8 +1292,11 @@ function looksLikeSeedInputPlan(steps: Step[]): boolean {
   if (steps.length !== 1) return false;
   const [first] = steps;
   if (!first || first.action !== "goto") return false;
-  const target = first.url.trim().toLowerCase();
-  return target === "/" || target === "";
+  // Compara solo el pathname: un seed real es "ir a la raíz", con o sin query
+  // string (p. ej. un harness de test que anexa `?scenario=...` a la home).
+  const raw = first.url.trim();
+  const pathname = raw.split(/[?#]/)[0]?.toLowerCase() ?? "";
+  return pathname === "/" || pathname === "";
 }
 
 function looksLikeIncompleteLoginReplay(steps: Step[]): boolean {
@@ -1818,7 +1508,6 @@ export async function runAssistedFlow(
   const events: AssistEvent[] = [];
   const outcomes: StepOutcome[] = [];
   const history: Array<{ step: Step; ok: boolean; error?: string; healed?: boolean }> = [];
-  const runUniqueTag = Date.now().toString(36).slice(-6);
 
   const assist = input.assist;
   if (!assist || assist.v2 !== true) {
@@ -2308,12 +1997,6 @@ export async function runAssistedFlow(
       for (const step of horizonSteps) {
         throwIfAborted(opts.signal);
         const index = nextStepIndex++;
-        if (step.action === "fill") {
-          const uniq = maybeUniquifyFillStep(step, assist.goal, runUniqueTag);
-          if (uniq.action === "fill" && uniq.value !== step.value) {
-            step.value = uniq.value;
-          }
-        }
         emit("step_start", { step: redactStepForEvent(step) }, index);
         if (hasSuccessfulHistoryStep(history, step)) {
           const pendingIdx = findFirstPendingPlanIndex(planProgress, step);
@@ -2663,10 +2346,7 @@ export async function runAssistedFlow(
               const healerReplacedOriginal = hasEquivalentReplacementStep(step, sanitized);
               const skipOriginalStep = healerReplacedOriginal ||
                 shouldDropStepInCurrentContext(step, postHealSnapshot, history) ||
-                shouldDropRedundantModalOpenClick(step, postHealSnapshot) ||
-                shouldDropStaleOpenActionWhenModalFormVisible(step, postHealSnapshot) ||
-                shouldDropRedundantViajesNavWhenOnTripsFlow(step, postHealSnapshot) ||
-                shouldDropRedundantCalificacionesFlowNav(step, postHealSnapshot);
+                shouldDropRedundantModalOpenClick(step, postHealSnapshot);
               if (!skipOriginalStep) {
                 await applyStep(page, input.baseUrl, step, input.defaultTimeoutMs);
                 // W10: el paso original se reintenta y tiene éxito TRAS un heal —
