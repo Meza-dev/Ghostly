@@ -15,6 +15,21 @@ export const stepSchema = z.discriminatedUnion("action", [
     timeoutMs: z.number().int().positive().optional(),
   }),
   z.object({ action: z.literal("snapshot") }),
+  z.object({
+    action: z.literal("selectOption"),
+    selector: z.string().min(1),
+    // D1: unión string|string[] — espeja page.selectOption() y evita forzar array en el caso común.
+    value: z.union([z.string(), z.array(z.string()).min(1)]),
+  }),
+  z.object({ action: z.literal("check"), selector: z.string().min(1) }),
+  z.object({ action: z.literal("uncheck"), selector: z.string().min(1) }),
+  z.object({
+    action: z.literal("setInputFiles"),
+    selector: z.string().min(1),
+    // D2: solo nombres relativos, resueltos contra uploadFixturesDir en el executor (zero-trust sandbox).
+    files: z.array(z.string().min(1)).min(1),
+  }),
+  z.object({ action: z.literal("hover"), selector: z.string().min(1) }),
 ]);
 
 const runInputBaseSchema = z.object({
@@ -26,6 +41,8 @@ const runInputBaseSchema = z.object({
   recordVideoOnFailure: z.boolean().optional().default(false),
   artifactsDir: z.string().min(1).optional().default("artifacts"),
   defaultTimeoutMs: z.number().int().positive().optional().default(30_000),
+  // D2: raíz sandbox para setInputFiles; sin configurar, el verbo queda deshabilitado (default-deny).
+  uploadFixturesDir: z.string().min(1).optional(),
 });
 
 export type RunGuardrails = {

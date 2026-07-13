@@ -29,8 +29,8 @@ import { BENCHMARK_FLOWS } from "../../../test-fixtures/flows.js";
 import { formatBenchmarkReport, runReliabilityBenchmark } from "../../../test-fixtures/benchmark-runner.js";
 
 describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pendiente)", () => {
-  it("tiene 16 flujos etiquetados (10 originales + 3 de cobertura del healer HEALER-1 + 1 de HEALER-2 + 1 de cobertura genérica de alcance de modal + 1 de plan-pruning genérico HEALER-4) cubriendo los 6 veredictos de la taxonomía", () => {
-    expect(BENCHMARK_FLOWS).toHaveLength(16);
+  it("tiene 18 flujos etiquetados (10 originales + 3 de cobertura del healer HEALER-1 + 1 de HEALER-2 + 1 de cobertura genérica de alcance de modal + 1 de plan-pruning genérico HEALER-4 + 2 de selectOption T1/F1) cubriendo los 6 veredictos de la taxonomía", () => {
+    expect(BENCHMARK_FLOWS).toHaveLength(18);
     const verdicts = new Set(BENCHMARK_FLOWS.map((f) => f.expectedVerdict));
     expect(verdicts).toEqual(
       new Set([
@@ -51,8 +51,8 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
       // eslint-disable-next-line no-console
       console.log(formatBenchmarkReport(report));
 
-      expect(report.total).toBe(16);
-      expect(report.results).toHaveLength(16);
+      expect(report.total).toBe(18);
+      expect(report.results).toHaveLength(18);
       // El reporte siempre debe producirse, incluso cuando el pipeline actual
       // clasifica mal — este test documenta el baseline, no lo esconde.
     },
@@ -224,7 +224,7 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
       30_000,
     );
 
-    it("los 10 flujos existentes nunca invocan al healer (maxHealingAttemptsPerStep=0 los mantiene inertes)", async () => {
+    it("los 11 flujos inertes nunca invocan al healer (maxHealingAttemptsPerStep=0 los mantiene inertes)", async () => {
       const report = await runReliabilityBenchmark(BENCHMARK_FLOWS);
       const existingResults = report.results.filter(
         (r) =>
@@ -234,12 +234,15 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
           r.flow.id !== "blocking-error-healer-abstains" &&
           r.flow.id !== "modal-open-background-click-ignored" &&
           // HEALER-4 net: usa un strategist real (no noop) para ejercitar
-          // shouldDropPlannedStep — no es uno de los 10 flujos full-plan
+          // shouldDropPlannedStep — no es uno de los flujos full-plan
           // "inertes" que este test cubre. Excluido explícitamente en vez de
-          // subir el conteo a 11 (design §4 / spec "Full benchmark suite").
-          r.flow.id !== "redundant-reopen-dropped-while-dialog-open",
+          // subir el conteo (design §4 / spec "Full benchmark suite").
+          r.flow.id !== "redundant-reopen-dropped-while-dialog-open" &&
+          // T1/F1: usa maxHealingAttemptsPerStep=1 a propósito para probar la
+          // recuperación del healer (Rule D) — no es inerte.
+          r.flow.id !== "select-native-fill-rejected-healer-recovers",
       );
-      expect(existingResults).toHaveLength(10);
+      expect(existingResults).toHaveLength(11);
       for (const r of existingResults) {
         expect(r.healInvocations).toBe(0);
       }
@@ -296,6 +299,42 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
     );
   });
 
+  describe("selectOption (T1/F1 — obs #426, expand-runner-action-vocabulary)", () => {
+    it(
+      "select-option-native: selectOption ejecuta sobre un <select> nativo y la categoría elegida persiste " +
+        "(ejecución directa, sin healer)",
+      async () => {
+        const report = await runReliabilityBenchmark(
+          BENCHMARK_FLOWS.filter((f) => f.id === "select-option-native"),
+        );
+        const [result] = report.results;
+        expect(result).toBeDefined();
+        expect(result!.observedVerdict).toBe("success");
+        expect(result!.falseSuccess).toBe(false);
+        expect(result!.healInvocations).toBe(0);
+      },
+      30_000,
+    );
+
+    it(
+      "select-native-fill-rejected-healer-recovers: reproduce el incidente F1 (fill sobre un <select>) — el " +
+        "healer lo convierte a selectOption con el mismo valor y el guardado posterior llega a success",
+      async () => {
+        const report = await runReliabilityBenchmark(
+          BENCHMARK_FLOWS.filter((f) => f.id === "select-native-fill-rejected-healer-recovers"),
+        );
+        const [result] = report.results;
+        expect(result).toBeDefined();
+        expect(result!.observedVerdict).toBe("success");
+        expect(result!.falseSuccess).toBe(false);
+        expect(result!.healInvocations).toBeGreaterThanOrEqual(1);
+        const healSuccessEvents = result!.runResult.events.filter((e) => e.type === "heal_success");
+        expect(healSuccessEvents.length).toBeGreaterThanOrEqual(1);
+      },
+      30_000,
+    );
+  });
+
   it(
     "cero falsos éxitos (spec AC1/AC3 — invariante duro desde Fase 2b, se mantiene con el juez wireado)",
     async () => {
@@ -310,11 +349,11 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
   );
 
   it(
-    "meta objetivo del benchmark (spec AC1): 16/16 veredictos veraces (10 originales + 3 de cobertura del " +
+    "meta objetivo del benchmark (spec AC1): 18/18 veredictos veraces (10 originales + 3 de cobertura del " +
       "healer HEALER-1 + 1 de HEALER-2 + 1 de cobertura genérica de alcance de modal + 1 de plan-pruning " +
-      "genérico HEALER-4) con el WIRING de la Capa 3 + oráculo de test determinista (Fase 3a) — esto mide " +
-      "correctitud del wiring, NO precisión de un juez LLM real, que es explícitamente Fase 3b/GHOST-30 y se " +
-      "valida contra el mismo ground truth de flows.ts",
+      "genérico HEALER-4 + 2 de selectOption T1/F1) con el WIRING de la Capa 3 + oráculo de test determinista " +
+      "(Fase 3a) — esto mide correctitud del wiring, NO precisión de un juez LLM real, que es explícitamente " +
+      "Fase 3b/GHOST-30 y se valida contra el mismo ground truth de flows.ts",
     async () => {
       const report = await runReliabilityBenchmark();
       // eslint-disable-next-line no-console

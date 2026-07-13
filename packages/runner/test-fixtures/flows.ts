@@ -451,4 +451,60 @@ export const BENCHMARK_FLOWS: BenchmarkFlow[] = [
       };
     },
   },
+  // --- T1 (expand-runner-action-vocabulary): `selectOption` sobre `<select>`
+  // nativo (spec "selectOption sobre <select> nativo y multi-select").
+  {
+    id: "select-option-native",
+    goal: "Crear una nota categorizada como 'Trabajo' con título 'Nota categorizada' y verificar que se guardó",
+    scenario: "happy-path",
+    steps: [
+      { action: "goto", url: "/" },
+      { action: "selectOption", selector: '[data-testid="note-category"]', value: "Trabajo" },
+      { action: "fill", selector: '[data-testid="note-title-input"]', value: "Nota categorizada" },
+      { action: "click", selector: '[data-testid="save-note-button"]' },
+    ],
+    assist: {
+      ...DEFAULT_ASSIST_BASE,
+      goal: "Crear una nota categorizada como 'Trabajo' con título 'Nota categorizada' y verificar que se guardó",
+      // Acotado a la celda de la tabla persistida (no al `<option>` del propio
+      // `<select>`, cuyo texto está siempre en el DOM aunque nada se elija).
+      victory: { selectorVisible: ['[data-testid="notes-table"] td:has-text("Trabajo")'], mustAll: true },
+    },
+    expectedVerdict: "success",
+    rationale:
+      "El motor ejecuta selectOption sobre un <select> nativo (valor por label/value) y la categoría elegida se persiste y refleja en la tabla — prueba directa de ejecución, sin pasar por el healer.",
+  },
+  // --- T1 / F1 (incidente motivador, obs #426 — proposal): reproduce el
+  // fallo real (`fill` sobre un `<select>` -> "Element is not an <input>...")
+  // y prueba que el healer recupera convirtiendo el paso a `selectOption` con
+  // el mismo valor, en vez de que `sanitizeHealerSteps` lo descarte (allowlist
+  // ya ensanchado en T0) NI que el pipeline reintente ciegamente el `fill`
+  // original tras un heal exitoso con un verbo distinto (ver
+  // `hasEquivalentReplacementStep`, pipeline.ts). Vocabulario neutro (sin
+  // "pedido"/"cliente" de dominio), consistente con el resto de este fixture.
+  {
+    id: "select-native-fill-rejected-healer-recovers",
+    goal: "Crear una nota categorizada como 'Personal' con título 'Recuperada por heal' y verificar que se guardó",
+    scenario: "happy-path",
+    steps: [
+      { action: "goto", url: "/" },
+      // Paso DELIBERADAMENTE incorrecto: fill sobre un `<select>` (mismo
+      // patrón del incidente F1) — Playwright lo rechaza explícitamente.
+      { action: "fill", selector: '[data-testid="note-category"]', value: "Personal" },
+      { action: "fill", selector: '[data-testid="note-title-input"]', value: "Recuperada por heal" },
+      { action: "click", selector: '[data-testid="save-note-button"]' },
+    ],
+    assist: {
+      ...DEFAULT_ASSIST_BASE,
+      goal: "Crear una nota categorizada como 'Personal' con título 'Recuperada por heal' y verificar que se guardó",
+      victory: { selectorVisible: ['[data-testid="notes-table"] td:has-text("Personal")'], mustAll: true },
+      maxHealingAttemptsPerStep: 1,
+    },
+    expectedVerdict: "success",
+    rationale:
+      "Reproduce el incidente F1: el fill sobre el <select> falla con el error de Playwright \"Element is not an " +
+      "<input>...\"; el healer (Rule D, testOracleHealer) lo diagnostica y propone selectOption con el mismo " +
+      "valor. sanitizeHealerSteps ya lo acepta (D7, ensanchado en T0) y el pipeline no reintenta el fill original " +
+      "tras el heal exitoso con verbo distinto — el guardado posterior es real y verificable.",
+  },
 ];

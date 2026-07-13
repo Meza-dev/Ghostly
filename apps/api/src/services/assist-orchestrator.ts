@@ -123,6 +123,7 @@ const STRATEGIST_SYSTEM = [
   '- { "action": "press", "key": string }',
   '- { "action": "waitForSelector", "selector": string, "timeoutMs"?: number }',
   '- { "action": "snapshot" }',
+  '- { "action": "selectOption", "selector": string, "value": string | string[] }',
   "Reglas:",
   "- Usa selectores CSS Playwright válidos. Prefiere atributos por rol/nombre/placeholder observables en el mapa.",
   "- No inventes campos ni pasos fuera del contrato.",
@@ -143,6 +144,8 @@ const STRATEGIST_SYSTEM = [
   "- Condición `selectorVisible` en victoria: si el usuario escribió lenguaje natural (p. ej. «toast de confirmación»), tradúcelo a `text=...`, selector CSS real (`.toast-success`), o fragmento estable del mapa; nunca dejes frases sueltas sin traducir.",
   "- REGLA CRÍTICA: antes de proponer nuevos pasos, revisa historial + estado del plan. Si la última acción relevante fue «Guardar», «Enviar», «Confirmar», «Crear» y NO hay error explícito posterior, tu prioridad es verificar victoria; está PROHIBIDO repetir «Guardar/Crear/Enviar» sin evidencia de fallo previo.",
   "- Evita `button[type=submit]` a menos que el mapa lo respalde, porque muchos `<button>` no declaran `type=submit`.",
+  "Controles de formulario (T1 — no sobre-uses estas acciones fuera de su control específico):",
+  '- Para `<select>` (combobox) usá SIEMPRE `selectOption` (NUNCA `fill` ni `click`); `value` es el texto visible de la opción o su value.',
   'Responde SOLO un objeto JSON con forma EXACTA: { "steps": Step[], "hasMore": boolean, "rationale"?: string }.',
 ].join("\n");
 
@@ -157,6 +160,7 @@ const HEALER_SYSTEM = [
   "- 'strict mode violation' => misma lógica: desambigua con texto o atributo único.",
   "- Elemento tapado por overlay/banner => primer paso debe ser cerrar el overlay (click en su botón de cierre o 'Aceptar').",
   "- 'element not visible' con un botón en un modal activo => probablemente debes cerrar ese modal antes (salvo que el modal sea un formulario de creación alineado con el objetivo: entonces interactúa dentro o guarda).",
+  "- \"Element is not an <input>, <textarea> or [contenteditable] element\" al hacer fill sobre un elemento => es un `<select>`: usá `selectOption` con `value` = texto visible de la opción correcta (nunca insistas con fill).",
   "- Si el mapa NO muestra evidencia del anchor/overlay que justificaría tu paso (p. ej. no hay overlay visible en el bloque DOM), NO inventes 'Aceptar/Cancelar' ni selectores que el mapa no respalda: propone un wait/snapshot o devuelve steps vacíos. No decides el desenlace del run: si el fallo parece un error bloqueante de la app, cede al juez.",
   "Preferir selectores robustos: texto visible del mapa O aria-label/role si el mapa los muestra explícitamente; evita selectores genéricos.",
   "PROHIBIDO `[ref=e…]` en selectores; usa #id, [data-testid], [aria-label] del bloque INTERACTIVOS VISIBLES.",
@@ -172,6 +176,8 @@ function normalizeAction(value: unknown): string {
   if (v === "type") return "fill";
   if (v === "keypress") return "press";
   if (v === "a11y" || v === "ariasnapshot") return "snapshot";
+  if (v === "select" || v === "choose") return "selectOption";
+  if (v === "upload") return "setInputFiles";
   return value.trim();
 }
 
@@ -235,16 +241,29 @@ function normalizePlannerSelector(selector: string): string {
   return s;
 }
 
+function canonicalSelectOptionValue(value: string | string[]): string {
+  return Array.isArray(value) ? [...value].sort().join(",") : value;
+}
+
 function canonicalStepKey(step: Step): string {
   if (step.action === "goto") return `goto|${step.url.trim()}`;
   if (step.action === "press") return `press|${step.key.trim().toLowerCase()}`;
   if (step.action === "click") return `click|${normalizePlannerSelector(step.selector).toLowerCase()}`;
   if (step.action === "waitForSelector") return `wait|${normalizePlannerSelector(step.selector).toLowerCase()}`;
   if (step.action === "fill") return `fill|${normalizePlannerSelector(step.selector).toLowerCase()}|${step.value}`;
+  if (step.action === "check") return `check|${normalizePlannerSelector(step.selector).toLowerCase()}`;
+  if (step.action === "uncheck") return `uncheck|${normalizePlannerSelector(step.selector).toLowerCase()}`;
+  if (step.action === "hover") return `hover|${normalizePlannerSelector(step.selector).toLowerCase()}`;
+  if (step.action === "selectOption") {
+    return `selectOption|${normalizePlannerSelector(step.selector).toLowerCase()}|${canonicalSelectOptionValue(step.value)}`;
+  }
+  if (step.action === "setInputFiles") {
+    return `setInputFiles|${normalizePlannerSelector(step.selector).toLowerCase()}|${step.files.join(",")}`;
+  }
   return "snapshot";
 }
 
-function coerceStep(raw: unknown): Step | null {
+export function coerceStep(raw: unknown): Step | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
   const action = normalizeAction(obj.action ?? obj.type ?? obj.name);
@@ -283,6 +302,45 @@ function coerceStep(raw: unknown): Step | null {
     return { action: "waitForSelector", selector: normalizePlannerSelector(selector) };
   }
   if (action === "snapshot") return { action: "snapshot" };
+  if (action === "selectOption") {
+    const selector = obj.selector ?? obj.target ?? obj.locator;
+    if (typeof selector !== "string" || !selector.trim()) return null;
+    const rawValue = obj.value ?? obj.values;
+    if (Array.isArray(rawValue)) {
+      const values = rawValue.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+      if (values.length === 0) return null;
+      return { action: "selectOption", selector: normalizePlannerSelector(selector), value: values };
+    }
+    if (typeof rawValue !== "string" || !rawValue.trim()) return null;
+    return { action: "selectOption", selector: normalizePlannerSelector(selector), value: rawValue };
+  }
+  if (action === "check") {
+    const selector = obj.selector ?? obj.target ?? obj.locator;
+    if (typeof selector !== "string" || !selector.trim()) return null;
+    return { action: "check", selector: normalizePlannerSelector(selector) };
+  }
+  if (action === "uncheck") {
+    const selector = obj.selector ?? obj.target ?? obj.locator;
+    if (typeof selector !== "string" || !selector.trim()) return null;
+    return { action: "uncheck", selector: normalizePlannerSelector(selector) };
+  }
+  if (action === "setInputFiles") {
+    const selector = obj.selector ?? obj.target ?? obj.locator;
+    if (typeof selector !== "string" || !selector.trim()) return null;
+    const rawFiles = obj.files ?? obj.file;
+    const files = Array.isArray(rawFiles)
+      ? rawFiles.filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+      : typeof rawFiles === "string" && rawFiles.trim()
+        ? [rawFiles.trim()]
+        : [];
+    if (files.length === 0) return null;
+    return { action: "setInputFiles", selector: normalizePlannerSelector(selector), files };
+  }
+  if (action === "hover") {
+    const selector = obj.selector ?? obj.target ?? obj.locator;
+    if (typeof selector !== "string" || !selector.trim()) return null;
+    return { action: "hover", selector: normalizePlannerSelector(selector) };
+  }
   return null;
 }
 
@@ -330,8 +388,11 @@ function isIconOnlyTextSelector(selector: string): boolean {
 }
 
 function rejectAmbiguous(steps: Step[]): Step[] {
+  // D7: gate por presencia de `selector` (no por lista de acciones) — cubre uniformemente
+  // los 8 verbos con selector (click/fill/waitForSelector/selectOption/check/uncheck/setInputFiles/hover);
+  // goto/press/snapshot no tienen `selector` y pasan de largo.
   return steps.filter((s) => {
-    if (s.action === "click" || s.action === "fill" || s.action === "waitForSelector") {
+    if ("selector" in s) {
       if (isAmbiguousSelector(s.selector)) return false;
       if (isIconOnlyTextSelector(s.selector)) return false;
     }
