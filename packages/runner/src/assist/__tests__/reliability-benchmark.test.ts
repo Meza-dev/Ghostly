@@ -125,6 +125,25 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
     30_000,
   );
 
+  it(
+    "victoria determinista limpia (victory-met, ok=true) fija verdict=success — spec §5 mapea " +
+      "'victoria verificada limpia → success' directo (FIX #3)",
+    async () => {
+      const report = await runReliabilityBenchmark(
+        BENCHMARK_FLOWS.filter((f) => f.id === "happy-path-create-note"),
+      );
+      const [result] = report.results;
+      expect(result).toBeDefined();
+      expect(result!.runResult.ok).toBe(true);
+      expect(result!.runResult.stopReason).toBe("victory-met");
+      // El desenlace es una victoria determinista limpia (sin juez): el verdict
+      // NO debe quedar en undefined, debe ser "success" explícito.
+      expect(result!.runResult.verdict).toBe("success");
+      expect(result!.runResult.verdictReason).toBeTruthy();
+    },
+    30_000,
+  );
+
   it.todo(
     "RED baseline: el benchmark de Fase 3a corre en full-plan con un strategist noop — no puede probar que " +
       "un agente real SIN el paso explícito de cierre del modal se recupere usando el hint del juez (requiere " +

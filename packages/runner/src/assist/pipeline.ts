@@ -1037,15 +1037,21 @@ function flowDedupKey(step: Step): string {
   return `${step.action}|${step.selector.trim().replace(/\s+/g, " ").toLowerCase()}`;
 }
 
-function snapshotStateKey(snapshot: ObserverSnapshot | undefined): string | undefined {
+export function snapshotStateKey(snapshot: ObserverSnapshot | undefined): string | undefined {
   if (!snapshot) return undefined;
-  const body = `${snapshot.url}\n${snapshot.title}\n${normalizeLooseText(snapshot.treeMarkdown).slice(0, 1200)}`;
+  // FIX #5: se hashea el `treeMarkdown` COMPLETO (antes se truncaba a 1200
+  // chars, así que un cambio real más allá del corte — p. ej. un modal que se
+  // cierra al final del árbol — daba una firma idéntica -> falso "click sin
+  // mutación" -> heal inútil). Se incorporan también longitud y nodeCount para
+  // que cualquier cambio de tamaño del árbol altere siempre la firma.
+  const normalizedTree = normalizeLooseText(snapshot.treeMarkdown);
+  const body = `${snapshot.url}\n${snapshot.title}\n${normalizedTree}`;
   let hash = 2166136261;
   for (let i = 0; i < body.length; i++) {
     hash ^= body.charCodeAt(i);
     hash = Math.imul(hash, 16777619);
   }
-  return `${snapshot.url.toLowerCase()}|${snapshot.title.toLowerCase()}|${(hash >>> 0).toString(16)}`;
+  return `${snapshot.url.toLowerCase()}|${snapshot.title.toLowerCase()}|${normalizedTree.length}|${snapshot.nodeCount}|${(hash >>> 0).toString(16)}`;
 }
 
 function hasSuccessfulHistoryStep(
@@ -2808,6 +2814,20 @@ export async function runAssistedFlow(
     if (p.status !== "pending") continue;
     p.status = "dropped";
     p.note = p.note ?? "not-executed-after-stop";
+  }
+
+  // Victoria determinista limpia (stopReason "victory-met", ok=true): spec §5
+  // mapea "victoria verificada limpia → success" de forma DIRECTA. Sin
+  // intervención del juez el `verdict` quedaba en `undefined` y el `run_end`
+  // omitía el campo, así que filtrar runs por verdict "success" perdía las
+  // victorias limpias. Se asigna en el único punto de finalización, respetando
+  // el invariante ok/verdict (success SIEMPRE con runOk=true, ver
+  // `applyTerminalJudgeVerdict`) y sin pisar un veredicto que el juez ya fijó.
+  if (stopReason === "victory-met" && runOk && verdict === undefined) {
+    verdict = "success";
+    verdictReason =
+      "Victoria verificada de forma determinista: la condición de victoria " +
+      "configurada se cumplió sin necesidad de invocar al juez.";
   }
 
   const finalPlan = buildFinalGeneralPlan(planProgress, learnedFlow);
