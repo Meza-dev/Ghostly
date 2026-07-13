@@ -5,6 +5,7 @@ import type { PlannedStep } from "@ghostly-io/runner";
 import { loadConfig } from "../config.js";
 import { getLlmDisplayModel } from "../llm/client.js";
 import { AssistPlanError, generateAssistPlan } from "../services/assist-plan.js";
+import { buildTargetUnreachableMessage, isTargetUnreachableError } from "../lib/target-unreachable.js";
 import { createStrategist } from "../services/assist-orchestrator.js";
 import { projectExistsForUser } from "../store/projects.js";
 
@@ -71,10 +72,27 @@ planRouter.post("/plan", async (c) => {
         project,
         baseUrl: parsedReq.data.baseUrl,
       });
-      const snapshot = await captureRecon(parsedReq.data.baseUrl, {
-        headless: true,
-        observerMaxNodes: appConfig.assistV2.observerMaxNodes,
-      });
+      let snapshot;
+      try {
+        snapshot = await captureRecon(parsedReq.data.baseUrl, {
+          headless: true,
+          observerMaxNodes: appConfig.assistV2.observerMaxNodes,
+        });
+      } catch (reconError) {
+        const detail = reconError instanceof Error ? reconError.message : String(reconError);
+        if (isTargetUnreachableError(detail)) {
+          // Detalle técnico crudo al log del servidor; al usuario le llega el mensaje claro.
+          // eslint-disable-next-line no-console
+          console.error("[assist-plan v2] Recon no pudo alcanzar la app objetivo", {
+            userId: user.id,
+            project,
+            baseUrl: parsedReq.data.baseUrl,
+            error: detail,
+          });
+          throw new AssistPlanError(buildTargetUnreachableMessage(parsedReq.data.baseUrl), 502);
+        }
+        throw reconError;
+      }
       const strategist = createStrategist({
         llmTimeoutMs: appConfig.assist.llmTimeoutMs,
         chunkSize: appConfig.assistV2.chunkSize,
