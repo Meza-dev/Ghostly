@@ -1697,6 +1697,15 @@ export async function runAssistedFlow(
   let judgeHint: string | undefined;
   /** `PageError` de severidad warning ya enviados al juez (trigger `error-signal`) — evita re-disparar por el mismo error en cada paso. */
   const judgedWarningKeys = new Set<string>();
+  /**
+   * FIX #6: `stepKey` de los pasos que YA agotaron la curación al menos una vez.
+   * Da UNA sola oportunidad de replan-recovery por paso: la primera exhaustion
+   * conserva el comportamiento previo (replan del strategist); la segunda vez
+   * que el MISMO paso agota, se deja de re-planificar y se cede al juez
+   * (`healing-exhausted`) — evita el bucle heal -> replan -> fail que jamás
+   * converge y solo termina por `budget-exhausted` (~5 min, incidente F1).
+   */
+  const healingExhaustedStepKeys = new Set<string>();
 
   try {
     throwIfAborted(opts.signal);
@@ -2703,13 +2712,23 @@ export async function runAssistedFlow(
               };
             }
             let replannedFromError = false;
+            // FIX #6: una sola oportunidad de replan-recovery por paso. La 1ra
+            // vez que este `stepKey` agota la curación se permite el replan
+            // (no regresa los flujos de benchmark que dependen de recuperar al
+            // primer intento); la 2da vez que el MISMO paso vuelve acá (el
+            // replan produjo un paso condenado sobre el mismo objetivo) se
+            // deja de re-planificar y se cae directo al juez `healing-exhausted`
+            // más abajo — así el trigger deja de estar STARVED por el bucle.
+            const exhaustedStepKey = stepKey(step);
+            const replanAlreadySpentForStep = healingExhaustedStepKeys.has(exhaustedStepKey);
+            healingExhaustedStepKeys.add(exhaustedStepKey);
             // HEALER-2 / H1: si el healer cedió por evidencia de bug bloqueante,
             // el replan del strategist tampoco tiene sentido (mismo argumento
             // que el heal loop) — el motor no debe intentar "seguir adelante"
             // ante un error determinístico; cede directo al trigger
             // `healing-exhausted` más abajo con el dossier ya cargado.
             try {
-              if (!healerAbstainedOnBlocking) {
+              if (!healerAbstainedOnBlocking && !replanAlreadySpentForStep) {
                 await waitForKnownModalLoadersToFinish(page, modalLoaderBudgetMs(assist, started, maxLoopMs), log);
                 lastSnapshot = await captureObserverSnapshot(page, observerMaxNodes, {
                   pageErrorTracker,
