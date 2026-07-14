@@ -72,6 +72,11 @@ describe("reliability benchmark (pipeline con Capa 2 completa — Capa 3/juez pe
       expect(result!.falseSuccess).toBe(false);
       expect(result!.runResult.verdict).toBe("fail-app-bug");
       expect(result!.runResult.verdictReason).toMatch(/persistencia/i);
+      // FIX #1: el fail-app-bug ya NO es un hard-map — la persistencia fallida se
+      // enruta AL JUEZ (spec §4.2b) con la señal `victory.persistedAfterReload`.
+      // La invocación del juez lo prueba (antes de FIX #1 era 0: hard-map directo).
+      expect(result!.runResult.judgeEvents?.length ?? 0).toBeGreaterThan(0);
+      expect(result!.runResult.judgeEvents?.[0]?.reason).toBe("victory-candidate");
     },
     30_000,
   );

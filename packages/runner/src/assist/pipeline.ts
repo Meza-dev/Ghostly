@@ -1864,7 +1864,7 @@ export async function runAssistedFlow(
       stepIndex: number,
       horizonNo: number,
       snapshotOverride?: ObserverSnapshot,
-    ): Promise<{ decision: "continue" | "success" | "fail"; reason?: string; verdict?: Verdict }> => {
+    ): Promise<{ decision: "continue" | "success" | "fail"; reason?: string }> => {
       if (snapshotOverride) {
         lastSnapshot = snapshotOverride;
       } else {
@@ -1901,19 +1901,13 @@ export async function runAssistedFlow(
         }
         const revalidation = await revalidateVictoryIfNeeded(stepIndex);
         if (revalidation && !revalidation.survived) {
-          // `assist.goal` es texto libre del usuario — este evento se
-          // persiste vía el log-bridge, así que pasa por el boundary antes
-          // de salir (GHOST-35 audit: leak no detectado por C1/C2/C3, que
-          // solo auditaron el payload de `judge_verdict` y `verdictReason`).
-          emit(
-            "loop_state",
-            { state: "persistence_check_failed", stepIndex, goal: redactOrTruncateText(assist.goal) },
-            stepIndex,
-          );
+          // Persistencia no sobrevivió el reload: NO se hard-mapea a
+          // fail-app-bug — el caller lo enruta AL JUEZ (spec §4.2b) vía
+          // `judgePersistenceFailure`, que emite `persistence_check_failed`
+          // y deja que el juez fije el veredicto terminal.
           return {
             decision: "fail",
             reason: "persistence-check-failed",
-            verdict: "fail-app-bug",
           };
         }
         return { decision: "success", reason: "victory-met" };
@@ -2027,6 +2021,35 @@ export async function runAssistedFlow(
       stopReason = "judge-terminal-verdict";
       pendingSteps.length = 0;
       strategistHasMore = false;
+    };
+
+    // Persistencia no sobrevivió el double-check (spec §4.2b): NO es evidencia
+    // dura de bug de app. Puede ser app rota (fail-app-bug), agente que nunca
+    // guardó (fail-agent-lost) o test mal definido (fail-test-broken) — solo el
+    // juez distingue con el dossier completo. Se pasa AL JUEZ con la señal
+    // determinista `victory.persistedAfterReload=false` y su veredicto se vuelve
+    // el del run (invariante ok/verdict de `applyTerminalJudgeVerdict`: solo
+    // success ⇒ runOk=true). Devuelve `true` si el juez fijó un veredicto
+    // terminal (el caller debe cortar), `false` si pidió `continue` (se aplicó
+    // el hint y el loop sigue).
+    const judgePersistenceFailure = async (stepIndex: number): Promise<boolean> => {
+      // `assist.goal` es texto libre del usuario — este evento se persiste vía
+      // el log-bridge, así que pasa por el boundary de redacción antes de salir
+      // (GHOST-35, mismo gap que audita `redaction-boundary-audit` caso 5).
+      emit(
+        "loop_state",
+        { state: "persistence_check_failed", stepIndex, goal: redactOrTruncateText(assist.goal) },
+        stepIndex,
+      );
+      const outcome = await invokeJudge("victory-candidate", stepIndex, [
+        { check: "victory.persistedAfterReload", passed: false },
+      ]);
+      if (outcome.verdict === "continue") {
+        judgeHint = outcome.hint;
+        return false;
+      }
+      applyTerminalJudgeVerdict(outcome);
+      return true;
     };
 
     while (runOk && (Date.now() - started) < maxLoopMs && horizon < maxHorizons) {
@@ -2312,14 +2335,11 @@ export async function runAssistedFlow(
             break;
           }
           if (immediateVictory.decision === "fail") {
-            runOk = false;
-            stopReason = immediateVictory.reason ?? "victory-not-met-after-goal-complete";
-            if (immediateVictory.verdict) {
-              verdict = immediateVictory.verdict;
-              verdictReason = `Double-check de persistencia falló tras recargar (paso ${index}): el objetivo "${assist.goal}" implicaba persistir estado y el dato no sobrevivió la recarga.`;
-            }
-            pendingSteps.length = 0;
-            strategistHasMore = false;
+            // Persistencia no sobrevivió el reload (spec §4.2b): al juez, no
+            // hard-map. Terminal → applyTerminalJudgeVerdict cortó; continue →
+            // se aplicó el hint y runOk sigue true. En ambos casos cortamos el
+            // step-loop: el while re-planifica si el juez pidió continue.
+            await judgePersistenceFailure(index);
             break;
           }
           const unresolvedWarning = detectUnresolvedWarningSignal(lastSnapshot.pageErrors, index, judgedWarningKeys);
@@ -2626,14 +2646,11 @@ export async function runAssistedFlow(
                   pendingSteps.length = 0;
                   strategistHasMore = false;
                 } else if (immediateVictoryAfterHeal.decision === "fail") {
-                  runOk = false;
-                  stopReason = immediateVictoryAfterHeal.reason ?? "victory-not-met-after-goal-complete";
-                  if (immediateVictoryAfterHeal.verdict) {
-                    verdict = immediateVictoryAfterHeal.verdict;
-                    verdictReason = `Double-check de persistencia falló tras recargar (paso ${index}, post-heal): el objetivo "${assist.goal}" implicaba persistir estado y el dato no sobrevivió la recarga.`;
-                  }
-                  pendingSteps.length = 0;
-                  strategistHasMore = false;
+                  // Persistencia no sobrevivió el reload (spec §4.2b): al juez,
+                  // no hard-map. applyTerminalJudgeVerdict corta en veredicto
+                  // terminal; en `continue` deja runOk=true para que el while
+                  // re-planifique con el hint.
+                  await judgePersistenceFailure(index);
                 } else {
                   const unresolvedWarningAfterHeal = detectUnresolvedWarningSignal(
                     lastSnapshot.pageErrors,
@@ -2870,15 +2887,14 @@ export async function runAssistedFlow(
         } else {
           const revalidation = await revalidateVictoryIfNeeded(nextStepIndex);
           if (revalidation && !revalidation.survived) {
-            runOk = false;
-            stopReason = "persistence-check-failed";
-            verdict = "fail-app-bug";
-            verdictReason = `Double-check de persistencia falló tras recargar (horizonte ${horizon}): el objetivo "${assist.goal}" implicaba persistir estado y el dato no sobrevivió la recarga.`;
+            // Persistencia no sobrevivió el reload (spec §4.2b): al juez, no
+            // hard-map. Terminal → cortar; continue → seguir el loop sin victoria.
+            if (await judgePersistenceFailure(nextStepIndex)) break;
+          } else {
+            victoryMet = true;
+            stopReason = "victory-met";
             break;
           }
-          victoryMet = true;
-          stopReason = "victory-met";
-          break;
         }
       }
       const awaitingSeedExpansion = isSeedInputForFullPlan &&

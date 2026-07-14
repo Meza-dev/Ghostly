@@ -235,9 +235,29 @@ const testOracleJudge: JudgeFn = async (dossier: JudgeDossier): Promise<JudgeVer
   const victoryConfiguredCheck = dossier.deterministicChecks.find((c) => c.check === "victory.configured");
   const victoryMetCheck = dossier.deterministicChecks.find((c) => c.check === "victory.met");
   const healerRecoveredCheck = dossier.deterministicChecks.find((c) => c.check === "healer.recovered");
+  const persistedAfterReloadCheck = dossier.deterministicChecks.find(
+    (c) => c.check === "victory.persistedAfterReload",
+  );
   const connectionErrorAction = dossier.recentActions.find(
     (a) => a.outcome === "failed" && a.error && CONNECTION_ERROR_RE.test(a.error),
   );
+
+  if (persistedAfterReloadCheck?.passed === false) {
+    // Double-check de persistencia (spec §4.2b): el dato no sobrevivió el reload.
+    // En el flujo `non-persisting-save` del benchmark la app respondió 200 (toast
+    // + fila fantasma) pero nunca persistió la nota — ground truth: fail-app-bug.
+    // El oráculo mapea esta señal determinista al veredicto que antes fijaba el
+    // hard-map de `pipeline.ts`; ahora el hard-map se removió y el juez decide.
+    return {
+      verdict: "fail-app-bug",
+      confidence: "high",
+      reasoning:
+        "Test oracle (GHOST-29 wiring, no LLM real): victory.persistedAfterReload=false — el double-check " +
+        "de persistencia recargó y el dato no sobrevivió. La app confirmó pero no persistió el estado; " +
+        "es un bug de la app, no del agente ni del test.",
+      evidence: ["victory.persistedAfterReload=false"],
+    };
+  }
 
   if (dossier.reason === "healing-exhausted" && connectionErrorAction) {
     // La acción falló por un error de RED/CONEXIÓN (server caído), no por un
