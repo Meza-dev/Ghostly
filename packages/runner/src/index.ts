@@ -28,6 +28,7 @@ export {
   pageErrorKey,
   goalImpliesPersistence,
   shouldRevalidateVictory,
+  resolveRevalidateReloadFallback,
   detectStall,
   type AssistedRunResult,
   type AssistedDeps,
