@@ -8,7 +8,12 @@
  * loop real + reload de Playwright) se cubre en el benchmark de fiabilidad.
  */
 import { describe, expect, it } from "vitest";
-import { goalImpliesPersistence, shouldRevalidateVictory, detectStall } from "../pipeline.js";
+import {
+  goalImpliesPersistence,
+  shouldRevalidateVictory,
+  detectStall,
+  resolveRevalidateReloadFallback,
+} from "../pipeline.js";
 import type { VictoryCondition } from "../types.js";
 
 describe("goalImpliesPersistence (spec §4.2b — double-check de persistencia)", () => {
@@ -51,6 +56,36 @@ describe("shouldRevalidateVictory (spec §4.2b — opt-out explícito)", () => {
   it("respects an explicit revalidate: true even when the goal does not look like persistence", () => {
     const victory: VictoryCondition = { textIncludes: ["ok"], revalidate: true };
     expect(shouldRevalidateVictory("Ver el estado actual", victory)).toBe(true);
+  });
+});
+
+describe("resolveRevalidateReloadFallback (spec §4.2b — fallback a la sub-ruta si baseUrl no tiene la evidencia)", () => {
+  it("returns the CURRENT sub-route (page.url()) when it differs from a same-origin baseUrl (bug F1)", () => {
+    // La evidencia de victoria vive en /pedidos; recargar baseUrl (raíz) redirigía
+    // a /login. El fallback debe reintentar en la sub-ruta actual.
+    expect(
+      resolveRevalidateReloadFallback("http://host:4700/pedidos", "http://host:4700/"),
+    ).toBe("http://host:4700/pedidos");
+  });
+
+  it("returns undefined (no fallback) when the current url equals baseUrl", () => {
+    expect(
+      resolveRevalidateReloadFallback("http://host:4700/", "http://host:4700/"),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when the current url is empty (page nunca navegó)", () => {
+    expect(resolveRevalidateReloadFallback("", "http://host:4700/")).toBeUndefined();
+  });
+
+  it("returns undefined when the current url is about:blank", () => {
+    expect(resolveRevalidateReloadFallback("about:blank", "http://host:4700/")).toBeUndefined();
+  });
+
+  it("returns undefined when the current url is a different origin (defensivo)", () => {
+    expect(
+      resolveRevalidateReloadFallback("https://evil.example.com/x", "http://host:4700/"),
+    ).toBeUndefined();
   });
 });
 

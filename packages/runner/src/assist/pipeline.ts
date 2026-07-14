@@ -1548,6 +1548,36 @@ export function shouldRevalidateVictory(
 }
 
 /**
+ * Destino de FALLBACK del reload del double-check de persistencia (spec §4.2b).
+ *
+ * El caller recarga `baseUrl` primero (GET a la raíz navegable). Si la evidencia
+ * no aparece ahí, reintenta en la vista ACTUAL (`currentUrl`) — cubre el bug F1:
+ * la orden se creó y persistió en una sub-ruta (`/pedidos`), pero recargar la
+ * raíz redirige a `/login` (donde la evidencia no puede existir) → falso "no
+ * persistió". Recargar la sub-ruta con un `goto` (siempre GET, nunca re-ejecuta
+ * el POST del submit) y con la sesión del mismo contexto (localStorage/cookies
+ * sobreviven un goto same-origin) recupera la evidencia real.
+ *
+ * Devuelve `undefined` (sin fallback) cuando la URL actual no aporta nada nuevo:
+ * igual a `baseUrl`, vacía, `about:blank`, o de otro origen (defensivo — nunca
+ * navegar fuera de la app bajo prueba). Recargar `baseUrl` primero mantiene el
+ * costo en 1 solo GET para el caso feliz (la evidencia suele estar en la raíz),
+ * y solo paga el segundo GET cuando el primero no encontró la evidencia.
+ */
+export function resolveRevalidateReloadFallback(
+  currentUrl: string,
+  baseUrl: string,
+): string | undefined {
+  if (!currentUrl || currentUrl === "about:blank" || currentUrl === baseUrl) return undefined;
+  try {
+    if (new URL(currentUrl).origin === new URL(baseUrl).origin) return currentUrl;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
  * Detector de estancamiento (Capa 2, spec §4.2c): dispara cuando el diff entre
  * snapshots consecutivos fue vacío/trivial durante `threshold` pasos seguidos
  * (default 3). Función pura sobre el contador que mantiene el loop — separada
@@ -1783,40 +1813,58 @@ export async function runAssistedFlow(
     };
 
     // Capa 2 — double-check de persistencia (spec §4.2b): tras un candidato a
-    // victoria en un goal que implica persistir estado, re-navega a la vista base
-    // (GET fresco, no `page.reload()`) y re-verifica la MISMA condición
-    // configurada. Si no sobrevive, el dato nunca se persistió: es evidencia dura
-    // e inequívoca de un bug de la app (simétrico al 5xx del circuit breaker), no
-    // una victoria — y tampoco zona gris para el juez. Devuelve `undefined`
-    // cuando no aplica revalidar (goal no implica persistencia, o
-    // `revalidate: false` explícito).
+    // victoria en un goal que implica persistir estado, re-navega con un GET
+    // fresco y re-verifica la MISMA condición configurada. Si no sobrevive, el
+    // dato nunca se persistió: se pasa AL JUEZ con la evidencia (spec §4.2b —
+    // el juez distingue app rota / agente que no guardó / test mal definido).
+    // Devuelve `undefined` cuando no aplica revalidar (goal no implica
+    // persistencia, o `revalidate: false` explícito).
     //
     // Nota deliberada: NO usamos `page.reload()`. Tras un submit de formulario
     // (`method="post"`), Playwright deja `page.url()` apuntando a la URL de
-    // destino del POST (p. ej. `/save?...`); un `reload()` ahí re-ejecuta el
-    // POST y "revalida" contra su propia respuesta optimista — nunca detecta
-    // un guardado no persistente. Navegar de nuevo a `baseUrl` (GET) es la
-    // única forma de consultar el estado real del servidor.
+    // destino del POST; un `reload()` ahí re-ejecuta el POST y "revalida" contra
+    // su propia respuesta optimista — nunca detecta un guardado no persistente.
+    // `goto(url)` SIEMPRE es GET, así que evita ese re-POST.
+    //
+    // Se recarga `baseUrl` primero (GET a la raíz navegable) y, si la evidencia
+    // no aparece ahí, se reintenta en la vista ACTUAL (`page.url()`). Esto arregla
+    // el bug F1: la evidencia vivía en una sub-ruta (`/pedidos`) mientras recargar
+    // la raíz redirigía a `/login` → falso "no persistió". El fallback a la
+    // sub-ruta la recupera (la sesión sobrevive un goto same-origin). El orden
+    // base→actual mantiene el caso feliz en 1 solo GET (la evidencia suele estar
+    // en la raíz) y solo paga el segundo GET cuando el primero no la encontró —
+    // clave para no inflar el presupuesto del benchmark. Solo si el dato no
+    // sobrevive en NINGUNA de las dos vistas concluimos que no persistió → juez.
     const revalidateVictoryIfNeeded = async (
       stepIndex: number,
     ): Promise<{ survived: boolean } | undefined> => {
       if (!shouldRevalidateVictory(assist.goal, assist.victory)) return undefined;
       emit("loop_state", { state: "revalidating_persistence", stepIndex }, stepIndex);
-      await page!.goto(input.baseUrl, { waitUntil: "domcontentloaded", timeout: input.defaultTimeoutMs });
-      const reloadedSnapshot = await captureObserverSnapshot(page!, observerMaxNodes, {
-        pageErrorTracker,
-        stepIndex,
-      });
-      lastSnapshot = reloadedSnapshot;
-      const revalidated = await evaluateVictory(page!, reloadedSnapshot, assist.victory);
-      return { survived: revalidated.met };
+      const reloadAndCheck = async (target: string): Promise<boolean> => {
+        await page!.goto(target, { waitUntil: "domcontentloaded", timeout: input.defaultTimeoutMs });
+        const reloadedSnapshot = await captureObserverSnapshot(page!, observerMaxNodes, {
+          pageErrorTracker,
+          stepIndex,
+        });
+        lastSnapshot = reloadedSnapshot;
+        const revalidated = await evaluateVictory(page!, reloadedSnapshot, assist.victory);
+        return revalidated.met;
+      };
+      // La sub-ruta se captura ANTES del primer goto: recargar `baseUrl` deja
+      // `page.url()` en la raíz y perdería el fallback.
+      const fallbackTarget = resolveRevalidateReloadFallback(page!.url(), input.baseUrl);
+      let survived = await reloadAndCheck(input.baseUrl);
+      if (!survived && fallbackTarget) {
+        survived = await reloadAndCheck(fallbackTarget);
+      }
+      return { survived };
     };
 
     const checkImmediateVictory = async (
       stepIndex: number,
       horizonNo: number,
       snapshotOverride?: ObserverSnapshot,
-    ): Promise<{ decision: "continue" | "success" | "fail"; reason?: string; verdict?: Verdict }> => {
+    ): Promise<{ decision: "continue" | "success" | "fail"; reason?: string }> => {
       if (snapshotOverride) {
         lastSnapshot = snapshotOverride;
       } else {
@@ -1853,19 +1901,13 @@ export async function runAssistedFlow(
         }
         const revalidation = await revalidateVictoryIfNeeded(stepIndex);
         if (revalidation && !revalidation.survived) {
-          // `assist.goal` es texto libre del usuario — este evento se
-          // persiste vía el log-bridge, así que pasa por el boundary antes
-          // de salir (GHOST-35 audit: leak no detectado por C1/C2/C3, que
-          // solo auditaron el payload de `judge_verdict` y `verdictReason`).
-          emit(
-            "loop_state",
-            { state: "persistence_check_failed", stepIndex, goal: redactOrTruncateText(assist.goal) },
-            stepIndex,
-          );
+          // Persistencia no sobrevivió el reload: NO se hard-mapea a
+          // fail-app-bug — el caller lo enruta AL JUEZ (spec §4.2b) vía
+          // `judgePersistenceFailure`, que emite `persistence_check_failed`
+          // y deja que el juez fije el veredicto terminal.
           return {
             decision: "fail",
             reason: "persistence-check-failed",
-            verdict: "fail-app-bug",
           };
         }
         return { decision: "success", reason: "victory-met" };
@@ -1979,6 +2021,35 @@ export async function runAssistedFlow(
       stopReason = "judge-terminal-verdict";
       pendingSteps.length = 0;
       strategistHasMore = false;
+    };
+
+    // Persistencia no sobrevivió el double-check (spec §4.2b): NO es evidencia
+    // dura de bug de app. Puede ser app rota (fail-app-bug), agente que nunca
+    // guardó (fail-agent-lost) o test mal definido (fail-test-broken) — solo el
+    // juez distingue con el dossier completo. Se pasa AL JUEZ con la señal
+    // determinista `victory.persistedAfterReload=false` y su veredicto se vuelve
+    // el del run (invariante ok/verdict de `applyTerminalJudgeVerdict`: solo
+    // success ⇒ runOk=true). Devuelve `true` si el juez fijó un veredicto
+    // terminal (el caller debe cortar), `false` si pidió `continue` (se aplicó
+    // el hint y el loop sigue).
+    const judgePersistenceFailure = async (stepIndex: number): Promise<boolean> => {
+      // `assist.goal` es texto libre del usuario — este evento se persiste vía
+      // el log-bridge, así que pasa por el boundary de redacción antes de salir
+      // (GHOST-35, mismo gap que audita `redaction-boundary-audit` caso 5).
+      emit(
+        "loop_state",
+        { state: "persistence_check_failed", stepIndex, goal: redactOrTruncateText(assist.goal) },
+        stepIndex,
+      );
+      const outcome = await invokeJudge("victory-candidate", stepIndex, [
+        { check: "victory.persistedAfterReload", passed: false },
+      ]);
+      if (outcome.verdict === "continue") {
+        judgeHint = outcome.hint;
+        return false;
+      }
+      applyTerminalJudgeVerdict(outcome);
+      return true;
     };
 
     while (runOk && (Date.now() - started) < maxLoopMs && horizon < maxHorizons) {
@@ -2264,14 +2335,11 @@ export async function runAssistedFlow(
             break;
           }
           if (immediateVictory.decision === "fail") {
-            runOk = false;
-            stopReason = immediateVictory.reason ?? "victory-not-met-after-goal-complete";
-            if (immediateVictory.verdict) {
-              verdict = immediateVictory.verdict;
-              verdictReason = `Double-check de persistencia falló tras recargar (paso ${index}): el objetivo "${assist.goal}" implicaba persistir estado y el dato no sobrevivió la recarga.`;
-            }
-            pendingSteps.length = 0;
-            strategistHasMore = false;
+            // Persistencia no sobrevivió el reload (spec §4.2b): al juez, no
+            // hard-map. Terminal → applyTerminalJudgeVerdict cortó; continue →
+            // se aplicó el hint y runOk sigue true. En ambos casos cortamos el
+            // step-loop: el while re-planifica si el juez pidió continue.
+            await judgePersistenceFailure(index);
             break;
           }
           const unresolvedWarning = detectUnresolvedWarningSignal(lastSnapshot.pageErrors, index, judgedWarningKeys);
@@ -2578,14 +2646,11 @@ export async function runAssistedFlow(
                   pendingSteps.length = 0;
                   strategistHasMore = false;
                 } else if (immediateVictoryAfterHeal.decision === "fail") {
-                  runOk = false;
-                  stopReason = immediateVictoryAfterHeal.reason ?? "victory-not-met-after-goal-complete";
-                  if (immediateVictoryAfterHeal.verdict) {
-                    verdict = immediateVictoryAfterHeal.verdict;
-                    verdictReason = `Double-check de persistencia falló tras recargar (paso ${index}, post-heal): el objetivo "${assist.goal}" implicaba persistir estado y el dato no sobrevivió la recarga.`;
-                  }
-                  pendingSteps.length = 0;
-                  strategistHasMore = false;
+                  // Persistencia no sobrevivió el reload (spec §4.2b): al juez,
+                  // no hard-map. applyTerminalJudgeVerdict corta en veredicto
+                  // terminal; en `continue` deja runOk=true para que el while
+                  // re-planifique con el hint.
+                  await judgePersistenceFailure(index);
                 } else {
                   const unresolvedWarningAfterHeal = detectUnresolvedWarningSignal(
                     lastSnapshot.pageErrors,
@@ -2822,15 +2887,14 @@ export async function runAssistedFlow(
         } else {
           const revalidation = await revalidateVictoryIfNeeded(nextStepIndex);
           if (revalidation && !revalidation.survived) {
-            runOk = false;
-            stopReason = "persistence-check-failed";
-            verdict = "fail-app-bug";
-            verdictReason = `Double-check de persistencia falló tras recargar (horizonte ${horizon}): el objetivo "${assist.goal}" implicaba persistir estado y el dato no sobrevivió la recarga.`;
+            // Persistencia no sobrevivió el reload (spec §4.2b): al juez, no
+            // hard-map. Terminal → cortar; continue → seguir el loop sin victoria.
+            if (await judgePersistenceFailure(nextStepIndex)) break;
+          } else {
+            victoryMet = true;
+            stopReason = "victory-met";
             break;
           }
-          victoryMet = true;
-          stopReason = "victory-met";
-          break;
         }
       }
       const awaitingSeedExpansion = isSeedInputForFullPlan &&
