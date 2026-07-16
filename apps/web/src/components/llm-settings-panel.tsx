@@ -1,5 +1,6 @@
 import { CheckCircle2, Loader2, Sparkles, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLanguage } from "../context/language-context";
 import { apiFetch } from "../lib/api";
 
 type ProviderOption = {
@@ -55,6 +56,7 @@ function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
 }
 
 export function LlmSettingsPanel() {
+  const { t } = useLanguage();
   const [providers, setProviders] = useState<ProviderOption[]>([]);
   const [providerId, setProviderId] = useState("cursor-cli");
   const [model, setModel] = useState("auto");
@@ -139,11 +141,11 @@ export function LlmSettingsPanel() {
         }
       }
     } catch {
-      setError("No se pudo cargar la configuración de IA");
+      setError(t("llm.error.load"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -178,7 +180,7 @@ export function LlmSettingsPanel() {
     const resolvedModel = useCustomModel ? customModelId.trim() : model;
     if (!resolvedModel) {
       setSaving(false);
-      setError("Indica un modelo");
+      setError(t("llm.error.noModel"));
       return;
     }
     const res = await apiFetch("/v1/settings/llm", {
@@ -193,7 +195,7 @@ export function LlmSettingsPanel() {
     setSaving(false);
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
-      setError(typeof body.error === "string" ? body.error : "Error al guardar");
+      setError(typeof body.error === "string" ? body.error : t("llm.error.save"));
       return;
     }
     const body = (await res.json()) as { status: LlmSettingsResponse["status"]; settings: LlmSettingsResponse["settings"] };
@@ -206,7 +208,7 @@ export function LlmSettingsPanel() {
       setCustomModelId("");
     }
     setApiKey("");
-    setMessage("Configuración de IA guardada");
+    setMessage(t("llm.msg.saved"));
   }
 
   async function handleTest() {
@@ -215,19 +217,19 @@ export function LlmSettingsPanel() {
     const res = await apiFetch("/v1/settings/llm/test", { method: "POST" });
     setTesting(false);
     if (!res.ok) {
-      setError("No se pudo verificar el proveedor");
+      setError(t("llm.error.test"));
       return;
     }
     const body = (await res.json()) as { status: LlmSettingsResponse["status"] };
     setStatus(body.status);
-    setMessage(body.status.available ? "Proveedor disponible" : "Proveedor no disponible");
+    setMessage(body.status.available ? t("llm.status.available") : t("llm.status.unavailable"));
   }
 
   if (loading) {
     return (
       <div className="flex items-center gap-2 px-4 py-6 text-small text-muted-fg sm:px-5">
         <Loader2 className="h-4 w-4 animate-spin" />
-        Cargando configuración de IA…
+        {t("llm.loading")}
       </div>
     );
   }
@@ -238,25 +240,25 @@ export function LlmSettingsPanel() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-small text-muted-fg">
             <Sparkles className="h-4 w-4 text-primary" />
-            Modo asistido (planificación con IA)
+            {t("llm.assistedMode")}
           </div>
           {status && (
             <StatusBadge
               ok={status.available}
-              label={status.available ? "Listo" : "No disponible"}
+              label={status.available ? t("llm.badge.ready") : t("llm.badge.notAvailable")}
             />
           )}
         </div>
 
         {!status?.available && envFallback && (
           <p className="rounded-ui border border-border bg-muted/50 px-3 py-2 text-caption text-muted-fg">
-            Sin preferencias guardadas; el servidor usa variables de entorno (.env) como respaldo.
+            {t("llm.envFallback")}
           </p>
         )}
 
         <div>
           <label className="mb-1.5 block text-caption font-button text-foreground" htmlFor="llm-provider">
-            Proveedor
+            {t("llm.field.provider")}
           </label>
           <select
             id="llm-provider"
@@ -293,17 +295,17 @@ export function LlmSettingsPanel() {
               <>
                 <StatusBadge
                   ok={status.cursorCli.loggedIn}
-                  label={status.cursorCli.loggedIn ? "Autenticado" : "Sin sesión"}
+                  label={status.cursorCli.loggedIn ? t("llm.cursor.authenticated") : t("llm.cursor.noSession")}
                 />
                 <p className="text-caption text-muted-fg">{status.cursorCli.message}</p>
                 {!status.cursorCli.loggedIn && (
                   <p className="text-caption text-muted-fg">
-                    En terminal: <code className="rounded bg-muted px-1">agent login</code>
+                    {t("llm.cursor.inTerminal")} <code className="rounded bg-muted px-1">agent login</code>
                   </p>
                 )}
               </>
             ) : (
-              <p className="text-caption text-muted-fg">Guarda y prueba para verificar el CLI.</p>
+              <p className="text-caption text-muted-fg">{t("llm.cursor.savePrompt")}</p>
             )}
           </div>
         )}
@@ -311,14 +313,14 @@ export function LlmSettingsPanel() {
         {selected?.needsApiKey && (
           <div>
             <label className="mb-1.5 block text-caption font-button text-foreground" htmlFor="llm-api-key">
-              API key
+              {t("llm.field.apiKey")}
             </label>
             <input
               id="llm-api-key"
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder={apiKeyConfigured ? `Configurada (${apiKeyHint ?? "••••"}) — dejar vacío para mantener` : "sk-…"}
+              placeholder={apiKeyConfigured ? t("llm.apiKey.placeholderConfigured", { hint: apiKeyHint ?? "••••" }) : "sk-…"}
               className="w-full rounded-control-lg border border-border bg-background px-3 py-2 text-small text-foreground placeholder:text-muted-fg outline-none ring-primary focus:ring-2"
               autoComplete="off"
             />
@@ -328,7 +330,7 @@ export function LlmSettingsPanel() {
         {selected?.needsBaseUrl && (
           <div>
             <label className="mb-1.5 block text-caption font-button text-foreground" htmlFor="llm-base-url">
-              Base URL (chat completions)
+              {t("llm.field.baseUrl")}
             </label>
             <input
               id="llm-base-url"
@@ -344,15 +346,15 @@ export function LlmSettingsPanel() {
         <div>
           <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
             <label className="text-caption font-button text-foreground" htmlFor="llm-model">
-              Modelo
+              {t("llm.field.model")}
             </label>
             {selected?.supportsLiveModels && modelsSource && (
               <span className="text-caption text-muted-fg">
                 {modelsLoading
-                  ? "Cargando modelos…"
+                  ? t("llm.models.loading")
                   : modelsSource === "live"
-                    ? `${modelOptions.length} modelos (cuenta Cursor)`
-                    : "Lista reducida (CLI no respondió)"}
+                    ? t("llm.models.liveCount", { count: modelOptions.length })
+                    : t("llm.models.reduced")}
               </span>
             )}
           </div>
@@ -378,7 +380,7 @@ export function LlmSettingsPanel() {
               </option>
             ))}
             {selected?.supportsLiveModels && (
-              <option value={CUSTOM_MODEL_ID}>Personalizado…</option>
+              <option value={CUSTOM_MODEL_ID}>{t("llm.models.custom")}</option>
             )}
           </select>
           {useCustomModel && (
@@ -387,15 +389,14 @@ export function LlmSettingsPanel() {
               type="text"
               value={customModelId}
               onChange={(e) => setCustomModelId(e.target.value)}
-              placeholder="p. ej. composer-2.5, gpt-5.3-codex-high"
+              placeholder={t("llm.models.customPlaceholder")}
               className="mt-2 w-full rounded-control-lg border border-border bg-background px-3 py-2 text-small text-foreground placeholder:text-muted-fg outline-none ring-primary focus:ring-2"
               autoComplete="off"
             />
           )}
           {selected?.supportsLiveModels && (
             <p className="mt-1.5 text-caption text-muted-fg">
-              Lista desde <code className="rounded bg-muted px-1">agent models</code>. Si Cursor añade
-              modelos nuevos, aparecen aquí sin actualizar Ghostly.
+              {t("llm.models.helpBefore")} <code className="rounded bg-muted px-1">agent models</code>{t("llm.models.helpAfter")}
             </p>
           )}
         </div>
@@ -411,14 +412,14 @@ export function LlmSettingsPanel() {
           disabled={testing || saving}
           className="rounded-pill border border-border px-4 py-2 text-small font-button text-foreground hover:bg-muted disabled:opacity-50"
         >
-          {testing ? "Probando…" : "Probar conexión"}
+          {testing ? t("llm.btn.testing") : t("llm.btn.test")}
         </button>
         <button
           type="submit"
           disabled={saving || testing}
           className="rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95 disabled:opacity-50"
         >
-          {saving ? "Guardando…" : "Guardar"}
+          {saving ? t("llm.btn.saving") : t("llm.btn.save")}
         </button>
       </div>
     </form>
