@@ -15,6 +15,7 @@ import { useAppContext } from "../context/app-context";
 import { useAuth } from "../context/auth-context";
 import { useTheme } from "../context/theme-context";
 import { apiFetch } from "../lib/api";
+import { LanguageToggle } from "./language-toggle";
 
 function initialsFromEmail(email: string): string {
   const local = email.split("@")[0] ?? "";
@@ -112,19 +113,22 @@ export function Sidebar() {
             Ghostly
           </span>
         )}
-        <button
-          type="button"
-          onClick={toggleTheme}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control-sm text-sidebar-fg transition-colors hover:bg-sidebar-accent hover:text-sidebar-emphasis"
-          aria-label={theme === "dark" ? "Activar modo claro" : "Activar modo oscuro"}
-          title={theme === "dark" ? "Modo claro" : "Modo oscuro"}
-        >
-          {theme === "dark" ? (
-            <Sun className="h-3.5 w-3.5" strokeWidth={1.8} />
-          ) : (
-            <Moon className="h-3.5 w-3.5" strokeWidth={1.8} />
-          )}
-        </button>
+        <div className="flex items-center gap-1">
+          <LanguageToggle />
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control-sm text-sidebar-fg transition-colors hover:bg-sidebar-accent hover:text-sidebar-emphasis"
+            aria-label={theme === "dark" ? "Activar modo claro" : "Activar modo oscuro"}
+            title={theme === "dark" ? "Modo claro" : "Modo oscuro"}
+          >
+            {theme === "dark" ? (
+              <Sun className="h-3.5 w-3.5" strokeWidth={1.8} />
+            ) : (
+              <Moon className="h-3.5 w-3.5" strokeWidth={1.8} />
+            )}
+          </button>
+        </div>
       </div>
 
       <nav className={`flex min-h-0 flex-1 flex-col gap-1 ${sidebarCollapsed ? "px-2" : "pl-6 pr-4"}`}>
