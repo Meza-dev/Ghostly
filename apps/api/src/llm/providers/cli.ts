@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runCli, type CliRunResult } from "../cli-runner.js";
 import type { ResolvedLlmConfig } from "../config.js";
 import { LlmError } from "../errors.js";
@@ -36,10 +39,17 @@ export class CliLlmProvider implements LlmProvider {
     const model = req.model ?? this.config.model ?? this.def.defaultModel;
     const args = this.def.buildArgs({ model });
 
+    // IA-2.2: el agente CLI corría con cwd = raíz del monorepo, dándole acceso a
+    // TODO el repo (código, .env, dev.db). El strategist/healer solo razonan
+    // sobre el stdin — no necesitan FS. Se lanza en un directorio temporal vacío
+    // y efímero por invocación, y se limpia al terminar (best-effort). Contiene
+    // el blast radius de una inyección indirecta que instruya al agente a leer
+    // archivos locales.
+    const workspace = await mkdtemp(join(tmpdir(), "ghostly-cli-"));
     let result: CliRunResult;
     try {
       result = await runCli(this.config.cliBin, args, {
-        cwd: this.config.cliWorkspace,
+        cwd: workspace,
         timeoutMs: req.timeoutMs,
         stdin: prompt,
       });
@@ -60,6 +70,9 @@ export class CliLlmProvider implements LlmProvider {
         502,
         this.providerId,
       );
+    } finally {
+      // El parseo posterior no necesita el workspace: se descarta ya.
+      void rm(workspace, { recursive: true, force: true }).catch(() => {});
     }
 
     const { stdout, stderr, exitCode } = result;

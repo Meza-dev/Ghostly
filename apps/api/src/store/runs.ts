@@ -1,18 +1,57 @@
 import crypto from "node:crypto";
 import type { AssistEvent, AssistedMeta, CodeHints, RunRecord, Step, StepOutcome } from "@ghostly-io/runner";
+import { safeParseRunInput, stepSchema } from "@ghostly-io/runner";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 
 export type RunRecordWithEvents = RunRecord & { events?: AssistEvent[] };
 
-function parseMemorySteps(raw: string): Step[] {
+/**
+ * Tope de pasos persistidos y replayados por memoria. Actúa además como cota de
+ * DoS al re-validar el seed de memoria (IA-4.1): una memoria directamente
+ * manipulada en dev.db con miles de pasos se rechaza por exceso.
+ */
+const MEMORY_STEP_CAP = 40;
+
+/**
+ * IA-4.1 — Los pasos sembrados desde memoria NO deben saltar la validación que
+ * sí aplica un run fresco. Una `AssistMemory` envenenada (dev.db manipulada, o
+ * una inyección indirecta que persista pasos) podría replayar pasos cross-origin
+ * o malformados sin re-chequeo, saltándose la garantía de mismo-origen.
+ *
+ * Se valida en dos capas:
+ *  1. Estructural (siempre): cada paso contra el schema estricto — descarta
+ *     acciones desconocidas y campos malformados. `z.object` sin passthrough ya
+ *     desecha claves extra.
+ *  2. Mismo-origen (cuando conocemos el `baseUrl` del run): se re-corre el MISMO
+ *     `safeParseRunInput` que un run fresco, con `enforceSameOrigin`. Si el seed
+ *     no pasa (p.ej. un `goto` a otro origin), se descarta ENTERO → replay off,
+ *     el strategist regenera de cero (fail-safe). Sin `baseUrl` (peek previo al
+ *     guardado, no ejecución) solo aplica la capa estructural.
+ */
+export function parseMemorySteps(raw: string, baseUrl?: string): Step[] {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((s): s is Step => !!s && typeof s === "object" && "action" in (s as object));
+    parsed = JSON.parse(raw);
   } catch {
     return [];
   }
+  if (!Array.isArray(parsed)) return [];
+
+  const steps: Step[] = [];
+  for (const candidate of parsed) {
+    const result = stepSchema.safeParse(candidate);
+    if (result.success) steps.push(result.data);
+  }
+  if (steps.length === 0) return [];
+
+  if (baseUrl === undefined) return steps.slice(0, MEMORY_STEP_CAP);
+
+  const check = safeParseRunInput(
+    { baseUrl, steps },
+    { enforceSameOrigin: true, maxSteps: MEMORY_STEP_CAP },
+  );
+  return check.success ? steps : [];
 }
 
 function sanitizeMemorySteps(steps: Step[]): Step[] {
@@ -28,7 +67,7 @@ function sanitizeMemorySteps(steps: Step[]): Step[] {
     seen.add(key);
     out.push(step);
   }
-  return out.slice(0, 40);
+  return out.slice(0, MEMORY_STEP_CAP);
 }
 
 export async function getAssistMemory(params: {
@@ -53,7 +92,7 @@ export async function getAssistMemory(params: {
     SET hits = hits + 1, updatedAt = CURRENT_TIMESTAMP
     WHERE id = ${found.id}
   `.catch(() => undefined);
-  return parseMemorySteps(found.stepsJson);
+  return parseMemorySteps(found.stepsJson, params.baseUrl);
 }
 
 /** Lectura sin incrementar hits (para fusionar antes de guardar tras un fallo). */
@@ -74,7 +113,7 @@ export async function peekAssistMemorySteps(params: {
   `;
   const found = rows[0];
   if (!found) return [];
-  return parseMemorySteps(found.stepsJson);
+  return parseMemorySteps(found.stepsJson, params.baseUrl);
 }
 
 export async function upsertAssistMemory(params: {
