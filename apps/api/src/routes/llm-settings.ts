@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { LLM_PROVIDER_CATALOG, getCatalogEntry } from "../llm/catalog.js";
+import { LLM_PROVIDER_CATALOG, getCatalogEntry, isModelAllowed } from "../llm/catalog.js";
 import { invalidateLlmProviderCache, isLlmConfigured } from "../llm/client.js";
 import { runWithLlmConfigAsync } from "../llm/context.js";
 import { listCursorCliModels } from "../llm/list-cli-models.js";
@@ -112,6 +112,12 @@ llmSettingsRouter.put("/settings/llm", async (c) => {
   const catalog = getCatalogEntry(parsed.data.providerId);
   if (!catalog) {
     return c.json({ ok: false, error: "proveedor desconocido" }, 400);
+  }
+
+  // Allow-list del campo `model` (C1): rechaza espacios/metacaracteres de shell
+  // y argument-injection antes de que el valor llegue al spawn del proveedor CLI.
+  if (!isModelAllowed(catalog, parsed.data.model)) {
+    return c.json({ ok: false, error: "modelo no permitido para este proveedor" }, 400);
   }
 
   const existing = await getUserLlmSettings(user.id);

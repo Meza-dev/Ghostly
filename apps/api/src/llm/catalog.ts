@@ -140,6 +140,33 @@ export function getCatalogEntry(providerId: string): LlmProviderCatalogEntry | u
 }
 
 /**
+ * Charset seguro para el campo `model` (C1): solo alfanuméricos y `._:/-`, sin
+ * espacios ni metacaracteres de shell, primer carácter alfanumérico (rechaza
+ * argument-injection tipo `--flag`, CWE-88), máx 64 chars. Este regex es el
+ * control de seguridad: neutraliza tanto la inyección de comandos como la de
+ * argumentos independientemente del proveedor.
+ */
+const SAFE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/;
+
+/**
+ * Allow-list del campo `model` en la frontera de entrada (PUT /v1/settings/llm).
+ * - Siempre exige `SAFE_MODEL` (mata inyección de comandos/argumentos).
+ * - Proveedores con catálogo estático: además el id debe estar en el catálogo.
+ * - Proveedores con `supportsLiveModels` (ej. cursor-cli): el catálogo vivo puede
+ *   crecer, así que basta el charset seguro (no hay lista estática exhaustiva).
+ */
+export function isModelAllowed(catalog: LlmProviderCatalogEntry, model: string): boolean {
+  const m = model.trim();
+  if (!SAFE_MODEL.test(m)) return false;
+  if (catalog.supportsLiveModels) return true;
+  const staticIds = new Set<string>([
+    catalog.defaultModel,
+    ...catalog.modelOptions.map((o) => o.id),
+  ]);
+  return staticIds.has(m);
+}
+
+/**
  * Gating de capacidad de imágenes por provider (spec §4.3 — evidencia visual
  * "híbrido según provider"). Providers desconocidos (no catalogados, ej. un
  * CLI agent custom) se tratan como NO soportan imágenes por defecto — el

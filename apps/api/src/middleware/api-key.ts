@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { Context, Next } from "hono";
+import { getJwtSecret, verifyToken } from "../lib/token.js";
 
 type AuthFileShape = {
   apiKey?: string;
@@ -25,13 +26,19 @@ export async function apiKeyMiddleware(c: Context, next: Next) {
     return next();
   }
 
-  // Si llega sesión por JWT (header o query token para SSE), no exigir x-api-key.
+  // Si llega una sesión por JWT (header o query token para SSE) y el token es
+  // VÁLIDO, no exigimos x-api-key. La mera presencia de un Bearer no basta:
+  // se debe verificar la firma antes de eximir el gate (C2). authMiddleware
+  // vuelve a validar aguas abajo — controles independientes, defensa en capas.
   const authHeader = c.req.header("authorization") ?? c.req.header("Authorization");
-  const hasBearer = authHeader?.startsWith("Bearer ");
-  const hasQueryToken = Boolean(c.req.query("token"));
-  if (hasBearer || hasQueryToken) {
+  const bearerToken = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice(7)
+    : c.req.query("token");
+  if (bearerToken && verifyToken(bearerToken, getJwtSecret())) {
     return next();
   }
+  // Si el Bearer/token está presente pero es inválido, NO se exime: caemos al
+  // chequeo de la API key de host (que fallará si no hay X-Api-Key válida).
 
   const expected = readExpectedApiKey();
   const provided = c.req.header("x-api-key")?.trim();

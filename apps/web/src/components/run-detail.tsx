@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { RunRecord, Step } from "../../../../packages/runner/src/schema.js";
 import { useRunStream } from "../hooks/use-run-stream";
-import { apiFetch } from "../lib/api";
+import { apiFetch, getToken } from "../lib/api";
 import { appendInstructionsToGoal, buildOverriddenSteps, deriveEditableFillFields } from "../lib/rerun-fields";
 import { getVerdictMeta } from "../lib/verdict";
 import { AddInstructionsModal } from "./add-instructions-modal";
@@ -101,7 +101,12 @@ function artifactUrl(filePath: string): string {
   const marker = "/artifacts/";
   const idx = normalized.indexOf(marker);
   const relative = idx !== -1 ? normalized.slice(idx + marker.length) : normalized.split("/").pop() ?? "";
-  return `/artifacts/${relative}`;
+  // /artifacts/* ahora requiere auth (C3). Como <img>/<a> no envían el header
+  // Authorization, pasamos el JWT por query param (?token=), soportado por el
+  // middleware de auth para SSE/EventSource y descargas.
+  const token = getToken();
+  const suffix = token ? `?token=${encodeURIComponent(token)}` : "";
+  return `/artifacts/${relative}${suffix}`;
 }
 
 function formatStepSummary(step: Record<string, unknown>): string {

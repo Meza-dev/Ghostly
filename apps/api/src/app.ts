@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { containedPath } from "./lib/contained-path.js";
 import { llmSettingsRouter } from "./routes/llm-settings.js";
 import { attachUserLlmMiddleware } from "./middleware/llm-config.js";
 import { runWithLlmConfigAsync } from "./llm/context.js";
@@ -87,13 +88,22 @@ export function createApp(): Hono {
   app.route("/v1", apiKeysRouter);
   app.route("/v1", llmSettingsRouter);
 
+  // Artefactos (C3): exigir autenticación (fuera de la cadena /v1/*, antes
+  // no tenían ningún guard) y contener la ruta bajo ARTIFACTS_ROOT.
+  app.use("/artifacts/*", apiKeyMiddleware);
+  app.use("/artifacts/*", authMiddleware);
   app.get("/artifacts/*", async (c) => {
     const relative = c.req.path.replace(/^\/artifacts\//, "");
-    const filePath = resolve(ARTIFACTS_ROOT, relative);
+    const filePath = containedPath(ARTIFACTS_ROOT, relative);
+    if (!filePath) {
+      return c.json({ ok: false, error: "not found" }, 404);
+    }
     try {
       const data = await readFile(filePath);
       const mime = MIME[extname(filePath)] ?? "application/octet-stream";
-      return new Response(data, { headers: { "Content-Type": mime } });
+      return new Response(data, {
+        headers: { "Content-Type": mime, "X-Content-Type-Options": "nosniff" },
+      });
     } catch {
       return c.json({ ok: false, error: "not found" }, 404);
     }
@@ -104,13 +114,13 @@ export function createApp(): Hono {
   const webDir = process.env.GHOST_WEB_DIR;
   if (webDir && existsSync(webDir)) {
     app.get("*", async (c) => {
-      let reqPath = c.req.path;
+      const reqPath = c.req.path;
       // Eliminar la barra inicial para resolver la ruta correctamente
       const relative = reqPath.startsWith("/") ? reqPath.slice(1) : reqPath;
-      let filePath = resolve(webDir, relative);
-
-      // Si no existe o es directorio, servir index.html (SPA fallback)
-      if (!existsSync(filePath) || statSync(filePath).isDirectory()) {
+      // Contención (C3): si la ruta escapa de webDir, no existe o es directorio,
+      // caer al SPA fallback (index.html) en vez de servir el archivo externo.
+      let filePath = containedPath(webDir, relative);
+      if (!filePath || statSync(filePath).isDirectory()) {
         filePath = resolve(webDir, "index.html");
       }
 
