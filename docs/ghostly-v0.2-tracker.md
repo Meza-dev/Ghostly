@@ -125,7 +125,13 @@ Base: `docs/security-audit-2026-07.md` (gitignoreado). Decisión 2026-07: **sing
 - [x] **C2 — Forja de token admin (JWT default + UUID fijo)** → cerrado (PR #26): sin secreto default + guarda de arranque + fix bypass API key + UUID admin aleatorio
 - [x] **C3 — Lectura de archivos sin auth (path traversal)** → crítico cerrado (PR #26): `containedPath` (../, symlink, UNC) + auth en `/artifacts`
 - [x] **La cadena de compromiso total sin auth (C3→C2→C1) está ROTA**
-- [ ] ⏸️ Hardening multi-usuario/deploy → roadmap `586f5be8`: IDOR de artefactos, URLs firmadas (vs JWT en URL), `Content-Disposition`, `admin123` default (M2), H1 SSRF, H2/M1/M3/M4, L1-L3, Parte II agéntica (IA-1…4)
+- [x] **Flanco agéntico estructural (Parte II)** → cerrado (PR #28), con smoke test en vivo del cursor-agent:
+  - IA-2.4 allowlist de entorno para el CLI (el agente ya no ve `JWT_SECRET`/API keys/`DATABASE_URL`)
+  - IA-2.2 workspace efímero (no la raíz del repo) · IA-2.1 modo `ask` fijado
+  - IA-4.1 replay de memoria re-valida (same-origin + schema); memoria envenenada → rechazo total
+- [ ] 📋 **2º lote estructural de seguridad** (pendiente): IA-3 (MCP/scanner: path containment + git hardening), IA-1.3 (mismo-origen en capa de ejecución + submit cross-origin), IA-4.3 (JSON reviver anti proto-pollution)
+- [ ] 🎨 **Seguridad de diseño** (va con la pasada de diseño): IA-1.1/4.2 spotlighting de prompts, IA-1.2 confirmación/dry-run de acciones destructivas, IA-1.4 gaming de victoria
+- [ ] ⏸️ Hardening multi-usuario/deploy → roadmap `586f5be8`: IDOR de artefactos, URLs firmadas (vs JWT en URL), `Content-Disposition`, `admin123` default (M2), H1 SSRF, H2/M1/M3/M4, L1-L3, IA-3.3 (bloquear `file:`/loopback)
 
 > ⚠️ **Cambio de comportamiento (C2):** el API ahora **se niega a arrancar sin `JWT_SECRET` fuerte** (≥32 chars, no default). Instancias nuevas deben setearlo o el server no levanta.
 
