@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAppContext } from "../context/app-context";
+import { useLanguage } from "../context/language-context";
 
 type Props = {
   onClose: () => void;
@@ -9,6 +10,7 @@ type Props = {
 
 export function NewProjectModal({ onClose, inputId = "proj-label" }: Props) {
   const { addProject } = useAppContext();
+  const { t } = useLanguage();
   const [label, setLabel] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -24,11 +26,11 @@ export function NewProjectModal({ onClose, inputId = "proj-label" }: Props) {
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/50">
       <div className="flex w-[400px] flex-col gap-4 rounded-ui border border-border bg-card p-6 shadow-xl">
-        <span className="font-nav-active text-body text-foreground">Nuevo proyecto</span>
+        <span className="font-nav-active text-body text-foreground">{t("modal.newProject.title")}</span>
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
             <label className="text-caption text-muted-fg" htmlFor={inputId}>
-              Nombre del proyecto
+              {t("modal.newProject.nameLabel")}
             </label>
             <input
               id={inputId}
@@ -37,7 +39,7 @@ export function NewProjectModal({ onClose, inputId = "proj-label" }: Props) {
               autoFocus
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="mi-proyecto-web"
+              placeholder={t("modal.newProject.namePlaceholder")}
               className="rounded-control-md border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             />
           </div>
@@ -48,14 +50,14 @@ export function NewProjectModal({ onClose, inputId = "proj-label" }: Props) {
               disabled={loading}
               className="rounded-pill border border-border px-4 py-2 text-small font-button text-foreground hover:bg-accent disabled:opacity-50"
             >
-              Cancelar
+              {t("modal.cancel")}
             </button>
             <button
               type="submit"
               disabled={loading}
               className="rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95 disabled:opacity-50"
             >
-              {loading ? "Creando…" : "Crear"}
+              {loading ? t("modal.newProject.creating") : t("modal.newProject.create")}
             </button>
           </div>
         </form>

@@ -1,5 +1,6 @@
 import { ChevronDown, Loader2, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useLanguage } from "../context/language-context";
 
 type Props = {
   disabled: boolean;
@@ -35,26 +36,25 @@ export function RerunSplitButton({
   onChangeData,
   onAddInstructions,
 }: Props) {
+  const { t } = useLanguage();
   const [menuOpen, setMenuOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const items: MenuItem[] = [
-    { key: "same", label: "Reejecutar igual", enabled: true, onSelect: onRerunSame },
+    { key: "same", label: t("rerun.same"), enabled: true, onSelect: onRerunSame },
     {
       key: "data",
-      label: "Cambiar datos…",
+      label: t("rerun.menu.changeData"),
       enabled: canChangeData,
-      title: canChangeData ? undefined : "Este run no tiene campos de datos editables.",
+      title: canChangeData ? undefined : t("rerun.changeData.noFields"),
       onSelect: onChangeData,
     },
     {
       key: "instructions",
-      label: "Añadir instrucciones…",
+      label: t("rerun.menu.addInstructions"),
       enabled: canAddInstructions,
-      title: canAddInstructions
-        ? undefined
-        : "Este run no es asistido; no hay objetivo al que añadir instrucciones.",
+      title: canAddInstructions ? undefined : t("rerun.addInstructions.unavailable"),
       onSelect: onAddInstructions,
     },
   ];
@@ -105,7 +105,7 @@ export function RerunSplitButton({
         className="inline-flex items-center gap-1.5 rounded-l-control-sm border border-r-0 border-border bg-muted px-3 py-1.5 text-small font-button text-primary-fg hover:bg-bg-muted disabled:opacity-60"
       >
         {rerunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-        {rerunning ? "Reejecutando..." : "Reejecutar"}
+        {rerunning ? t("rerun.rerunning") : t("rerun.button")}
       </button>
       <button
         type="button"
@@ -113,7 +113,7 @@ export function RerunSplitButton({
         disabled={disabled || rerunning}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
-        aria-label="Más opciones de reejecución"
+        aria-label={t("rerun.moreOptions")}
         className="inline-flex items-center justify-center rounded-r-control-sm border border-border bg-muted px-2 py-1.5 text-primary-fg hover:bg-bg-muted disabled:opacity-60"
       >
         <ChevronDown className="h-3.5 w-3.5" />
