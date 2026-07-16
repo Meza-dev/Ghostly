@@ -24,11 +24,18 @@ export function resolveCliBin(providerId: string, defaultBin: string): string {
   return defaultBin;
 }
 
-/** En Windows, .cmd/.bat requieren shell para spawn. */
-export function needsShellForCli(bin: string): boolean {
+/**
+ * ¿El binario es un script de Windows (.cmd/.bat/.ps1)? Estos NO son ejecutables
+ * nativos: para lanzarlos SIN shell hay que invocar `cmd.exe /c <script> ...args`
+ * con los argumentos como elementos separados del array (windowsVerbatimArguments
+ * = false), de modo que Node haga el quoting por argumento. NUNCA usamos
+ * `shell: true` (C1): eso aplanaría los args en una línea que cmd.exe reinterpreta,
+ * habilitando inyección de comandos vía el campo `model`. La rama `bin === "agent"`
+ * fue eliminada: el binario pelado se ejecuta directo (ENOENT si no está instalado).
+ */
+export function isWindowsCmdScript(bin: string): boolean {
   if (process.platform !== "win32") return false;
-  if (bin.endsWith(".cmd") || bin.endsWith(".bat") || bin.endsWith(".ps1")) return true;
-  return bin === "agent";
+  return bin.endsWith(".cmd") || bin.endsWith(".bat") || bin.endsWith(".ps1");
 }
 
 /** Raíz del monorepo o cwd; evita pasar --workspace con espacios (rompe shell en Windows). */

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { needsShellForCli } from "./resolve-cli-bin.js";
+import { isWindowsCmdScript } from "./resolve-cli-bin.js";
 
 export type CliRunResult = { stdout: string; stderr: string; exitCode: number };
 
@@ -9,12 +9,22 @@ export function runCli(
   opts: { cwd: string; timeoutMs: number; stdin?: string },
 ): Promise<CliRunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, {
+    // NUNCA shell:true (C1). Para scripts .cmd/.bat/.ps1 en Windows invocamos
+    // cmd.exe /c con el script y sus args como ELEMENTOS SEPARADOS del array,
+    // para que Node aplique el quoting por argumento. Así un `model` con `&`
+    // llega como un único argv literal, no como operador de shell.
+    let file = bin;
+    let spawnArgs = args;
+    if (isWindowsCmdScript(bin)) {
+      file = process.env.ComSpec ?? "cmd.exe";
+      spawnArgs = ["/d", "/s", "/c", bin, ...args];
+    }
+    const child = spawn(file, spawnArgs, {
       cwd: opts.cwd,
       env: { ...process.env },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
-      shell: needsShellForCli(bin),
+      shell: false,
     });
 
     let stdout = "";
