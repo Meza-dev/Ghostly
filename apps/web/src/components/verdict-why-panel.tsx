@@ -1,4 +1,5 @@
 import { Sparkles } from "lucide-react";
+import { useLanguage } from "../context/language-context";
 import { getVerdictMeta } from "../lib/verdict";
 import type { AssistEvent } from "./assist-timeline";
 import { VerdictBadge } from "./verdict-badge";
@@ -38,6 +39,7 @@ type Props = {
  * se renderiza tal cual, sin re-sanitizar ni volver a buscar datos crudos.
  */
 export function VerdictWhyPanel({ verdict, verdictReason, judgeEvents }: Props) {
+  const { t } = useLanguage();
   const lastJudgeEvent = judgeEvents.length > 0 ? judgeEvents[judgeEvents.length - 1] : undefined;
   const judgePayload = lastJudgeEvent ? asJudgePayload(lastJudgeEvent.payload) : undefined;
 
@@ -53,13 +55,13 @@ export function VerdictWhyPanel({ verdict, verdictReason, judgeEvents }: Props) 
         ) : (
           <span className="h-4 w-4" />
         )}
-        <p className="font-nav-active text-small text-foreground">Por qué</p>
+        <p className="font-nav-active text-small text-foreground">{t("verdict.why.title")}</p>
         <VerdictBadge verdict={verdict} size="sm" />
       </div>
 
       {meta.isFinding && (
         <p className="mt-2 rounded-control-sm bg-brand-primary-soft px-3 py-2 text-small text-primary">
-          Este test hizo su trabajo: encontró un bug real en la aplicación. No es un error de Ghostly.
+          {t("verdict.why.findingNote")}
         </p>
       )}
 
@@ -69,17 +71,19 @@ export function VerdictWhyPanel({ verdict, verdictReason, judgeEvents }: Props) 
 
       {judgePayload?.reasoning && (
         <div className="mt-3 border-t border-border pt-3">
-          <p className="text-overline text-muted-fg">Razonamiento del juez</p>
+          <p className="text-overline text-muted-fg">{t("verdict.why.judgeReasoning")}</p>
           <p className="mt-1 text-small text-foreground">{judgePayload.reasoning}</p>
           {judgePayload.confidence && (
-            <p className="mt-1 text-caption text-muted-fg">Confianza: {judgePayload.confidence}</p>
+            <p className="mt-1 text-caption text-muted-fg">
+              {t("verdict.why.confidence", { value: judgePayload.confidence })}
+            </p>
           )}
         </div>
       )}
 
       {judgePayload?.evidence && judgePayload.evidence.length > 0 && (
         <div className="mt-3 border-t border-border pt-3">
-          <p className="text-overline text-muted-fg">Evidencia</p>
+          <p className="text-overline text-muted-fg">{t("verdict.why.evidence")}</p>
           <ul className="mt-1 flex flex-col gap-1">
             {judgePayload.evidence.map((item, idx) => (
               <li key={idx} className="font-mono text-micro text-muted-fg">
