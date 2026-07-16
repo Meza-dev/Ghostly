@@ -46,6 +46,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     if (!res.ok) {
       const data = (await res.json()) as { error?: string };
+      // i18n: context can't use useLanguage(); this fallback is rendered by pages/login (out of T7 scope).
+      // Follow-up: return a stable key ("auth.login.error", already in i18n) and translate at the login render site.
       return data.error ?? "Error de login";
     }
     const data = (await res.json()) as { token: string; user: AuthUser };

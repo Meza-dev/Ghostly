@@ -4,6 +4,11 @@ export const en = {
   "lang.toggle.toEn": "Switch to English",
   "settings.language.title": "Language",
   "settings.language.desc": "Choose the interface language.",
+  // T7 — auth / app / common
+  "common.loading": "Loading…",
+  "app.nav.flows": "Flows & cases",
+  "app.placeholder.comingSoon": "{title} — coming soon",
+  "auth.login.error": "Login error",
 } as const;
 
 export type MessageKey = keyof typeof en;
