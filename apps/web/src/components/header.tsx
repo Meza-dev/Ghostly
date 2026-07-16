@@ -1,32 +1,34 @@
 import { Plus, Search } from "lucide-react";
 import { useLocation } from "react-router-dom";
+import { useLanguage } from "../context/language-context";
+import type { MessageKey } from "../i18n/en";
 
-const TITLES: Record<string, string> = {
-  "/": "Inicio",
-  "/runs": "Ejecuciones",
-  "/flows": "Flujos & casos",
-  "/settings": "Preferencias",
+const TITLE_KEYS: Record<string, MessageKey> = {
+  "/": "nav.home",
+  "/runs": "nav.runs",
+  "/flows": "nav.flows",
+  "/settings": "nav.settings",
 };
 
-const SUBTITLES: Record<string, string> = {
-  "/":
-    "Organiza proyectos",
-  "/runs":
-    "Lista de ejecuciones del navegador.",
-  "/flows": "Define y reutiliza flujos — sección en preparación.",
-  "/settings": "Cuenta y preferencias.",
+const SUBTITLE_KEYS: Record<string, MessageKey> = {
+  "/": "header.subtitle.home",
+  "/runs": "header.subtitle.runs",
+  "/flows": "header.subtitle.flows",
+  "/settings": "header.subtitle.settings",
 };
 
 export function Header() {
   const location = useLocation();
+  const { t } = useLanguage();
   const isRunsPage = location.pathname.startsWith("/runs");
 
-  const matched = Object.entries(TITLES).find(([path]) =>
+  const matched = Object.entries(TITLE_KEYS).find(([path]) =>
     path === "/" ? location.pathname === "/" : location.pathname.startsWith(path),
   );
-  const title = matched?.[1] ?? "Ghostly";
+  const title = matched ? t(matched[1]) : "Ghostly";
   const subtitleKey = matched?.[0] ?? "/";
-  const subtitle = SUBTITLES[subtitleKey] ?? "";
+  const subtitleMsgKey = SUBTITLE_KEYS[subtitleKey];
+  const subtitle = subtitleMsgKey ? t(subtitleMsgKey) : "";
   const breadcrumb = [title];
 
   return (
@@ -50,7 +52,7 @@ export function Header() {
         >
           <span className="inline-flex items-center gap-1.5">
             <Search className="h-3.5 w-3.5" strokeWidth={1.8} />
-            Buscar
+            {t("header.search")}
           </span>
           <span className="rounded-control-sm border border-border px-1.5 py-0.5 font-mono text-micro text-muted-fg">
             Ctrl+Shift+K
@@ -66,7 +68,7 @@ export function Header() {
           className="inline-flex items-center gap-2 rounded-control-sm bg-primary px-3 py-1.5 text-small font-button text-primary-fg hover:opacity-95"
         >
           <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-          {isRunsPage ? "Nueva ejecución" : "Nuevo proyecto"}
+          {isRunsPage ? t("header.newRun") : t("header.newProject")}
         </button>
       </div>
     </header>

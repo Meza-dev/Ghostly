@@ -2,6 +2,7 @@ import { Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/app-context";
+import { useLanguage } from "../context/language-context";
 
 function isTypingTarget(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
@@ -22,6 +23,7 @@ export function CommandPalette() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { projects, setActiveProjectId } = useAppContext();
+  const { t } = useLanguage();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
@@ -42,28 +44,28 @@ export function CommandPalette() {
     const list: CmdItem[] = [
       {
         id: "inicio",
-        label: "Inicio",
+        label: t("nav.home"),
         type: "page",
         keywords: "home dashboard proyectos",
         action: () => navigate("/"),
       },
       {
         id: "runs",
-        label: "Ejecuciones",
+        label: t("nav.runs"),
         type: "page",
         keywords: "ejecuciones runs historial",
         action: () => navigate("/runs"),
       },
       {
         id: "flows",
-        label: "Flujos y casos",
+        label: t("nav.flows"),
         type: "page",
         keywords: "flows tests grupos",
         action: () => navigate("/flows"),
       },
       {
         id: "settings",
-        label: "Preferencias",
+        label: t("nav.settings"),
         type: "page",
         keywords: "settings cuenta api keys",
         action: () => navigate("/settings"),
@@ -73,7 +75,7 @@ export function CommandPalette() {
     if (pathname === "/runs") {
       list.push({
         id: "new-run",
-        label: "Nueva ejecución",
+        label: t("palette.newRun"),
         type: "action",
         keywords: "modal crear ejecutar",
         action: () => {
@@ -83,7 +85,7 @@ export function CommandPalette() {
     } else if (pathname.startsWith("/runs/")) {
       list.push({
         id: "new-run",
-        label: "Nueva ejecución",
+        label: t("palette.newRun"),
         type: "action",
         keywords: "modal crear ejecutar",
         action: () => {
@@ -93,7 +95,7 @@ export function CommandPalette() {
     } else {
       list.push({
         id: "new-project",
-        label: "Nuevo proyecto",
+        label: t("palette.newProject"),
         type: "action",
         keywords: "crear workspace",
         action: () => {
@@ -118,7 +120,7 @@ export function CommandPalette() {
     }
 
     return list;
-  }, [navigate, pathname, projects, setActiveProjectId]);
+  }, [navigate, pathname, projects, setActiveProjectId, t]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -224,12 +226,12 @@ export function CommandPalette() {
       className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] px-4"
       role="dialog"
       aria-modal="true"
-      aria-label="Buscar y comandos"
+      aria-label={t("palette.aria.dialog")}
     >
       <button
         type="button"
         className="absolute inset-0 bg-black/45 backdrop-blur-[2px]"
-        aria-label="Cerrar"
+        aria-label={t("palette.aria.close")}
         onClick={close}
       />
       <div className="relative z-10 flex w-full max-w-lg flex-col overflow-hidden rounded-panel border border-border bg-card shadow-overlay">
@@ -241,7 +243,7 @@ export function CommandPalette() {
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
-            placeholder="Buscar página o acción…"
+            placeholder={t("palette.placeholder")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="min-w-0 flex-1 bg-transparent text-small text-foreground outline-none placeholder:text-muted-fg"
@@ -252,7 +254,7 @@ export function CommandPalette() {
         </div>
         <ul className="max-h-[min(50vh,320px)] overflow-auto py-1">
           {filtered.length === 0 ? (
-            <li className="px-4 py-6 text-center text-caption text-muted-fg">Sin resultados</li>
+            <li className="px-4 py-6 text-center text-caption text-muted-fg">{t("palette.noResults")}</li>
           ) : (
             filtered.map((it, idx) => (
               <li key={it.id}>
@@ -266,7 +268,7 @@ export function CommandPalette() {
                 >
                   <span className="truncate">{it.label}</span>
                   <span className="ml-auto pl-3 font-mono text-micro uppercase tracking-wide text-muted-fg">
-                    {it.type === "project" ? "Proyecto" : it.type === "action" ? "Acción" : "Página"}
+                    {it.type === "project" ? t("palette.type.project") : it.type === "action" ? t("palette.type.action") : t("palette.type.page")}
                   </span>
                 </button>
               </li>
@@ -274,8 +276,8 @@ export function CommandPalette() {
           )}
         </ul>
         <div className="border-t border-border px-4 py-2 text-micro text-muted-fg">
-          <span className="font-mono">Ctrl+Shift+N</span> acción rápida · <span className="font-mono">↑↓</span> navegar ·{" "}
-          <span className="font-mono">Enter</span> ejecutar
+          <span className="font-mono">Ctrl+Shift+N</span> {t("palette.footer.quickAction")} · <span className="font-mono">↑↓</span> {t("palette.footer.navigate")} ·{" "}
+          <span className="font-mono">Enter</span> {t("palette.footer.run")}
         </div>
       </div>
     </div>
