@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLanguage } from "../context/language-context";
 import type { EditableFillField } from "../lib/rerun-fields";
 import { ModalShell } from "./modal-shell";
 
@@ -11,6 +12,7 @@ type Props = {
 
 /** Modal "Cambiar datos": un campo editable por cada step `fill` reconstruido del run. */
 export function RerunDataModal({ fields, submitting, onClose, onSubmit }: Props) {
+  const { t } = useLanguage();
   const [values, setValues] = useState<Record<number, string>>(() =>
     Object.fromEntries(fields.map((field) => [field.replayIndex, field.sensitive ? "" : field.currentValue ?? ""])),
   );
@@ -31,10 +33,10 @@ export function RerunDataModal({ fields, submitting, onClose, onSubmit }: Props)
 
   return (
     <ModalShell onClose={handleClose} className="flex max-h-[80vh] w-[440px] flex-col gap-4 overflow-y-auto">
-      <span className="font-nav-active text-body text-foreground">Cambiar datos</span>
+      <span className="font-nav-active text-body text-foreground">{t("rerun.changeData.title")}</span>
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         {fields.length === 0 && (
-          <p className="text-caption text-muted-fg">Este run no tiene campos de datos editables.</p>
+          <p className="text-caption text-muted-fg">{t("rerun.changeData.noFields")}</p>
         )}
         {fields.map((field) => (
           <div key={field.replayIndex} className="flex flex-col gap-1">
@@ -45,7 +47,7 @@ export function RerunDataModal({ fields, submitting, onClose, onSubmit }: Props)
               id={`rerun-field-${field.replayIndex}`}
               type={field.sensitive ? "password" : "text"}
               required={field.sensitive}
-              placeholder={field.sensitive ? "•••• oculto — escribí un valor nuevo" : undefined}
+              placeholder={field.sensitive ? t("rerun.changeData.sensitivePlaceholder") : undefined}
               value={values[field.replayIndex] ?? ""}
               onChange={(e) =>
                 setValues((prev) => ({ ...prev, [field.replayIndex]: e.target.value }))
@@ -61,14 +63,14 @@ export function RerunDataModal({ fields, submitting, onClose, onSubmit }: Props)
             disabled={submitting}
             className="rounded-pill border border-border px-4 py-2 text-small font-button text-foreground hover:bg-accent disabled:opacity-50"
           >
-            Cancelar
+            {t("modal.cancel")}
           </button>
           <button
             type="submit"
             disabled={!canSubmit}
             className="rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95 disabled:opacity-50"
           >
-            {submitting ? "Reejecutando…" : "Aplicar y reejecutar"}
+            {submitting ? t("rerun.rerunning") : t("rerun.applyAndRerun")}
           </button>
         </div>
       </form>
