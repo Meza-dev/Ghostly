@@ -69,3 +69,35 @@ describe("runCli (C1 — spawn nunca con shell:true; sin interpretación de meta
     expect(args).toEqual(["--model", "auto"]);
   });
 });
+
+describe("runCli (IA-2.4 — allowlist de entorno; NUNCA hereda todo process.env)", () => {
+  it("NO propaga secretos del entorno al proceso hijo del agente", async () => {
+    process.env.SECRET_TEST_LEAK = "leak-me";
+    process.env.JWT_SECRET = "super-secret";
+    try {
+      spawnMock.mockImplementation(() => makeFakeChild());
+      await runCli("agent", ["--model", "auto"], { cwd: ".", timeoutMs: 1000 });
+      const env = spawnMock.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
+      expect(env.env).toBeDefined();
+      expect(env.env).not.toHaveProperty("SECRET_TEST_LEAK");
+      expect(env.env).not.toHaveProperty("JWT_SECRET");
+    } finally {
+      delete process.env.SECRET_TEST_LEAK;
+      delete process.env.JWT_SECRET;
+    }
+  });
+
+  it("SÍ propaga PATH y la credencial propia del provider (CURSOR_API_KEY)", async () => {
+    process.env.PATH = process.env.PATH ?? "/usr/bin";
+    process.env.CURSOR_API_KEY = "cursor-token";
+    try {
+      spawnMock.mockImplementation(() => makeFakeChild());
+      await runCli("agent", ["--model", "auto"], { cwd: ".", timeoutMs: 1000 });
+      const env = spawnMock.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
+      expect(env.env?.PATH).toBeDefined();
+      expect(env.env?.CURSOR_API_KEY).toBe("cursor-token");
+    } finally {
+      delete process.env.CURSOR_API_KEY;
+    }
+  });
+});

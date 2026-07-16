@@ -3,6 +3,52 @@ import { isWindowsCmdScript } from "./resolve-cli-bin.js";
 
 export type CliRunResult = { stdout: string; stderr: string; exitCode: number };
 
+/**
+ * Allowlist EXPLÍCITA de variables de entorno heredadas por el proceso hijo del
+ * CLI (IA-2.4). El provider `cursor-cli` no lanza un modelo pasivo: lanza un
+ * AGENTE DE CÓDIGO con acceso al host. Heredar todo `process.env` le expondría
+ * cada secreto del entorno del dev (JWT_SECRET, OPENAI_API_KEY, CURSOR_API_KEY,
+ * DATABASE_URL, la Ghostly API key…), exfiltrables por el canal legítimo del
+ * `result`/`rationale` que Ghostly parsea y persiste. NUNCA se hace
+ * `{ ...process.env }`: solo se pasa lo mínimo para que el binario arranque y
+ * encuentre su sesión/credenciales.
+ *   - PATH / PATHEXT: resolución del ejecutable y de scripts en Windows.
+ *   - SystemRoot / ComSpec: requeridos por spawn en Windows (cmd.exe + DLLs base);
+ *     sin ellos el propio arranque del proceso hijo falla.
+ *   - LOCALAPPDATA / APPDATA / USERPROFILE / HOMEDRIVE / HOMEPATH: dónde
+ *     cursor-agent guarda su sesión/auth en Windows (mismo LOCALAPPDATA que usa
+ *     resolve-cli-bin para localizar el .cmd).
+ *   - HOME: idem en POSIX.
+ *   - TEMP / TMP: directorio temporal del binario.
+ *   - CURSOR_API_KEY: credencial propia del provider (bypass de login interactivo).
+ * Los nombres solo-Windows son inertes en POSIX (no existen en process.env) y
+ * viceversa, así que una sola lista sirve cross-platform.
+ */
+const CLI_ENV_ALLOWLIST = [
+  "PATH",
+  "PATHEXT",
+  "SystemRoot",
+  "ComSpec",
+  "LOCALAPPDATA",
+  "APPDATA",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "HOME",
+  "TEMP",
+  "TMP",
+  "CURSOR_API_KEY",
+] as const;
+
+function buildCliEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of CLI_ENV_ALLOWLIST) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
 export function runCli(
   bin: string,
   args: string[],
@@ -21,7 +67,7 @@ export function runCli(
     }
     const child = spawn(file, spawnArgs, {
       cwd: opts.cwd,
-      env: { ...process.env },
+      env: buildCliEnv(),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       shell: false,
