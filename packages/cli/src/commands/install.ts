@@ -42,11 +42,11 @@ function copyCursorAssetsGlobal(): { copied: number; skipped: boolean } {
 export function registerInstall(program: Command): void {
   program
     .command("install")
-    .description("Configura Ghostly: API Key, MCP de Cursor y navegadores")
-    .option("--api-url <url>", "URL del backend local", DEFAULT_API_URL)
+    .description("Set up Ghostly: API key, Cursor MCP, and browsers")
+    .option("--api-url <url>", "Local backend URL", DEFAULT_API_URL)
     .action(async (opts: { apiUrl: string }) => {
       console.clear();
-      p.intro("👻  Ghostly — Instalación");
+      p.intro("👻  Ghostly — Installation");
 
       const existingAuth = readAuth();
       let apiKey = existingAuth?.apiKey?.trim() ?? "";
@@ -57,7 +57,7 @@ export function registerInstall(program: Command): void {
 
       // ── 2. Guardar auth.json ──────────────────────────────────────────────
       const s1 = p.spinner();
-      s1.start("Guardando credenciales en ~/.ghostly/auth.json");
+      s1.start("Saving credentials to ~/.ghostly/auth.json");
       try {
         writeAuth({
           apiKey,
@@ -65,12 +65,12 @@ export function registerInstall(program: Command): void {
           ...(existingAuth?.llm ? { llm: existingAuth.llm } : {}),
           ...(existingAuth?.extraEnv ? { extraEnv: existingAuth.extraEnv } : {}),
         });
-        s1.stop("Credenciales guardadas ✓");
+        s1.stop("Credentials saved ✓");
         if (!hadExistingApiKey) {
-          p.log.info("No existía apiKey, se generó automáticamente con ghostly keygen (modo uuid).");
+          p.log.info("No apiKey existed; one was generated automatically via ghostly keygen (uuid mode).");
         }
       } catch (err) {
-        s1.stop("Error al guardar credenciales");
+        s1.stop("Failed to save credentials");
         p.log.error(String(err));
         process.exit(1);
       }
@@ -81,96 +81,96 @@ export function registerInstall(program: Command): void {
 
       if (alreadyConfigured) {
         const overwrite = await p.confirm({
-          message: "Ya existe una configuración de Ghostly en ~/.cursor/mcp.json. ¿Sobreescribir?",
+          message: "A Ghostly configuration already exists in ~/.cursor/mcp.json. Overwrite it?",
           initialValue: false,
         });
         if (p.isCancel(overwrite) || !overwrite) {
           injectMcp = false;
-          p.log.info("Configuración MCP sin cambios.");
+          p.log.info("MCP configuration left unchanged.");
         }
       }
 
       if (injectMcp) {
         const s2 = p.spinner();
-        s2.start("Inyectando servidor MCP en ~/.cursor/mcp.json");
+        s2.start("Injecting MCP server into ~/.cursor/mcp.json");
         try {
           const mcpEntry = getMcpServerEntryPath();
           if (!existsSync(mcpEntry)) {
             throw new Error(
-              `No se encontró ${mcpEntry}. Reinstala o actualiza @ghostly-io/cli para incluir el servidor MCP empaquetado.`,
+              `${mcpEntry} not found. Reinstall or update @ghostly-io/cli to include the bundled MCP server.`,
             );
           }
           injectGhostlyMcp(apiKey, opts.apiUrl);
-          s2.stop("Servidor MCP configurado en Cursor ✓");
+          s2.stop("MCP server configured in Cursor ✓");
         } catch (err) {
-          s2.stop("Error al escribir mcp.json");
+          s2.stop("Failed to write mcp.json");
           p.log.error(String(err));
-          p.log.warn("Puedes añadirlo manualmente — consulta la documentación.");
+          p.log.warn("You can add it manually — see the documentation.");
         }
       }
 
       // ── 4. Instalar Chromium (solo si no está instalado) ──────────────────
       if (isChromiumInstalled()) {
-        p.log.info("Chromium ya está instalado ✓");
+        p.log.info("Chromium is already installed ✓");
       } else {
         const installBrowsers = await p.confirm({
-          message: "Chromium no está instalado. ¿Instalarlo ahora? (necesario para correr tests)",
+          message: "Chromium is not installed. Install it now? (required to run tests)",
           initialValue: true,
         });
 
         if (!p.isCancel(installBrowsers) && installBrowsers) {
           const s3 = p.spinner();
-          s3.start("Instalando Chromium (puede tardar un momento)");
+          s3.start("Installing Chromium (this may take a moment)");
           try {
             execSync("npx playwright install chromium", {
               stdio: "ignore",
               timeout: 300_000,
             });
-            s3.stop("Chromium instalado ✓");
+            s3.stop("Chromium installed ✓");
           } catch {
-            s3.stop("No se pudo instalar Chromium automáticamente");
-            p.log.warn("Ejecuta manualmente: npx playwright install chromium");
+            s3.stop("Could not install Chromium automatically");
+            p.log.warn("Run manually: npx playwright install chromium");
           }
         }
       }
 
       // ── 5. Copiar reglas/skills de Cursor en ~/.cursor (global) ───────────
       const s4 = p.spinner();
-      s4.start("Sincronizando reglas y skills en ~/.cursor/");
+      s4.start("Syncing rules and skills into ~/.cursor/");
       try {
         const result = copyCursorAssetsGlobal();
         if (result.skipped) {
-          s4.stop("No se encontraron assets de Cursor en este build");
-          p.log.warn("Reinstala/actualiza el CLI para incluir reglas y skills empaquetadas.");
+          s4.stop("No Cursor assets found in this build");
+          p.log.warn("Reinstall/update the CLI to include the bundled rules and skills.");
         } else if (result.copied === 0) {
-          s4.stop("Reglas y skills globales ya estaban presentes ✓");
+          s4.stop("Global rules and skills were already present ✓");
         } else {
-          s4.stop(`Reglas y skills globales copiadas ✓ (${result.copied} bloques)`);
+          s4.stop(`Global rules and skills copied ✓ (${result.copied} blocks)`);
         }
       } catch (err) {
-        s4.stop("No se pudieron importar reglas/skills");
+        s4.stop("Could not import rules/skills");
         p.log.error(String(err));
       }
 
       // ── Resumen final ─────────────────────────────────────────────────────
       p.note(
         [
-          "Para habilitar el modo asistido con IA, configura tus credenciales de proveedor:",
+          "To enable AI-assisted mode, configure your provider credentials:",
           "",
           "  ghostly config",
           "",
-          "También puedes definir ASSIST_LLM_API_KEY por variable de entorno.",
+          "You can also set ASSIST_LLM_API_KEY via an environment variable.",
         ].join("\n"),
-        "Configuración de IA",
+        "AI configuration",
       );
 
       p.outro(`
-✅  Instalación completada correctamente.
+✅  Installation completed successfully.
 
-  Próximos pasos:
-  • Iniciar servicios locales:   ghostly up
-  • Actualizar el CLI:           ghostly update
-  • Documentación:               https://ghostly.dev/docs
+  Next steps:
+  • Start local services:   ghostly up
+  • Update the CLI:          ghostly update
+  • Documentation:          https://ghostly.dev/docs
       `.trim());
     });
 }

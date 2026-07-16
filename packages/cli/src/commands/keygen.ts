@@ -7,9 +7,9 @@ const DEFAULT_API_URL = "http://localhost:4000";
 export function registerKeygen(program: Command): void {
   program
     .command("keygen")
-    .description("Genera una API Key y la guarda en ~/.ghostly/auth.json")
-    .option("--token", "Genera un token aleatorio hexadecimal en lugar de UUID", false)
-    .option("--api-url <url>", "URL del backend local", DEFAULT_API_URL)
+    .description("Generate an API key and save it to ~/.ghostly/auth.json")
+    .option("--token", "Generate a random hexadecimal token instead of a UUID", false)
+    .option("--api-url <url>", "Local backend URL", DEFAULT_API_URL)
     .action((opts: { token?: boolean; apiUrl: string }) => {
       const mode = opts.token ? "token" : "uuid";
       const apiKey = generateApiKey(mode);
@@ -25,8 +25,8 @@ export function registerKeygen(program: Command): void {
 
       p.outro(
         [
-          "Nueva API Key generada y guardada en ~/.ghostly/auth.json",
-          `Formato: ${mode}`,
+          "New API key generated and saved to ~/.ghostly/auth.json",
+          `Format: ${mode}`,
           `apiKey: ${apiKey}`,
         ].join("\n"),
       );
