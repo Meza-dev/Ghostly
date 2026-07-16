@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { prisma } from "../lib/prisma.js";
 import { hashPassword, verifyPassword } from "../lib/password.js";
-import { signToken } from "../lib/token.js";
+import { getJwtSecret, signToken } from "../lib/token.js";
 import { authMiddleware } from "../middleware/auth.js";
 
 export const authRouter = new Hono();
@@ -23,7 +23,7 @@ authRouter.post("/auth/login", async (c) => {
     return c.json({ ok: false, error: "credenciales inválidas" }, 401);
   }
 
-  const secret = process.env.JWT_SECRET ?? "ghostly-secret";
+  const secret = getJwtSecret();
   const token = signToken({ sub: user.id, email: user.email, role: user.role }, secret);
 
   return c.json({ ok: true, token, user: { id: user.id, email: user.email, role: user.role } });

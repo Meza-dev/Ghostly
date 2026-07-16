@@ -1,6 +1,6 @@
 import type { Context, Next } from "hono";
 import { prisma } from "../lib/prisma.js";
-import { verifyToken } from "../lib/token.js";
+import { getJwtSecret, verifyToken } from "../lib/token.js";
 
 export type AuthUser = {
   id: string;
@@ -15,7 +15,7 @@ declare module "hono" {
 }
 
 export async function authMiddleware(c: Context, next: Next) {
-  const secret = process.env.JWT_SECRET ?? "ghostly-secret";
+  const secret = getJwtSecret();
 
   // Intentar Bearer JWT (Authorization header o ?token= query param para SSE/EventSource).
   const authHeader = c.req.header("Authorization");

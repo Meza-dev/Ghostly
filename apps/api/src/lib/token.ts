@@ -1,5 +1,28 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+/** Secretos por defecto públicos que NUNCA deben usarse para firmar JWT. */
+const KNOWN_DEFAULT_SECRETS = new Set(["ghostly-secret"]);
+
+/** Longitud mínima aceptable para el secreto de firma HMAC. */
+const MIN_SECRET_LENGTH = 32;
+
+/**
+ * Resuelve el secreto JWT desde el entorno y falla si es inseguro (ausente,
+ * demasiado corto o un default público conocido). Es la ÚNICA fuente de verdad
+ * del secreto: `signToken`/`verifyToken` reciben el resultado de esta función.
+ * Se usa tanto en el guard de arranque (index.ts) como por request.
+ */
+export function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET?.trim();
+  if (!secret || secret.length < MIN_SECRET_LENGTH || KNOWN_DEFAULT_SECRETS.has(secret)) {
+    throw new Error(
+      `JWT_SECRET es obligatorio y debe tener >= ${MIN_SECRET_LENGTH} caracteres. ` +
+        "Definí un secreto fuerte y aleatorio en el entorno (.env) antes de arrancar la API.",
+    );
+  }
+  return secret;
+}
+
 export type TokenPayload = {
   sub: string;   // userId
   email: string;

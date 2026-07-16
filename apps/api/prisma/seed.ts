@@ -23,8 +23,9 @@ async function main() {
     console.log(`Admin actualizado: ${email}`);
   } else {
     await prisma.user.create({
+      // Sin `id` hardcodeado (C2 §9b): Prisma usa @default(uuid()), de modo que
+      // el `sub` del admin no es predecible/enumerable por un atacante.
       data: {
-        id: "00000000-0000-0000-0000-000000000001",
         email,
         passwordHash: hashPassword(password),
         role: "admin",
