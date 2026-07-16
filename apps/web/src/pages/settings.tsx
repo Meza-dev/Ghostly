@@ -1,6 +1,7 @@
 import { Copy, Key, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { LlmSettingsPanel } from "../components/llm-settings-panel";
+import { useLanguage, type Lang } from "../context/language-context";
 import { useTheme, type Theme } from "../context/theme-context";
 import { apiFetch } from "../lib/api";
 
@@ -113,6 +114,7 @@ function PrefToggle({ on, onChange }: { on: boolean; onChange: (next: boolean) =
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
+  const { lang, setLang, t } = useLanguage();
   const [prefs, setPrefs] = useState<UiPrefs>(defaultUiPrefs);
   const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
   const [label, setLabel] = useState("");
@@ -174,6 +176,10 @@ export function SettingsPage() {
     setTheme(m);
   }
 
+  function setLangMode(l: Lang) {
+    setLang(l);
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-6xl min-h-0 flex-1 flex-col gap-6 overflow-auto pb-4">
       <div className="border-b border-border pb-4">
@@ -198,6 +204,24 @@ export function SettingsPage() {
                     }`}
                   >
                     {m === "light" ? "Claro" : "Oscuro"}
+                  </button>
+                ))}
+              </div>
+            </SettingsRow>
+            <SettingsRow title={t("settings.language.title")} desc={t("settings.language.desc")}>
+              <div className="flex gap-1 rounded-control-md border border-border bg-muted/80 p-0.5">
+                {(["en", "es"] as const).map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    onClick={() => setLangMode(l)}
+                    className={`rounded-control-sm px-3 py-1 text-caption font-button uppercase transition-colors ${
+                      lang === l
+                        ? "bg-card text-foreground shadow-sm ring-1 ring-border/60"
+                        : "text-muted-fg hover:text-foreground"
+                    }`}
+                  >
+                    {l}
                   </button>
                 ))}
               </div>
