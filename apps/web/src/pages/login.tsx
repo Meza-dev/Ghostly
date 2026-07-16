@@ -238,7 +238,7 @@ export function LoginPage() {
 
           {error && (
             <p className="rounded-control-lg bg-error px-3 py-2 text-caption text-error-fg">
-              {error}
+              {error === "auth.login.error" ? t("auth.login.error") : error}
             </p>
           )}
 
