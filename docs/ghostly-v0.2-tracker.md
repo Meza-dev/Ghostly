@@ -114,13 +114,20 @@ El corazón "Trust" está **construido, arreglado y probado**: 3 capas + healer 
 - [ ] Exponer `revalidate: false` en la UI (el schema lo soporta, el modal no)
 - [ ] #4 — corregir placeholder de "Texto esperado" (sugiere un toast, que siempre falla revalidación)
 
-## 8. Seguridad
+## 8. Seguridad (track propio — modelo: single-user por instancia)
+
+Base: `docs/security-audit-2026-07.md` (gitignoreado). Decisión 2026-07: **single-user por instancia**; el hardening multi-usuario/deploy queda para roadmap `someday` (`586f5be8`), requerido antes de cualquier deploy compartido.
 
 - [x] Repo público: docs sensibles gitignoreados (`security-audit-2026-07.md`, `docker-deployment.md`) — PR #16
 - [x] Redacción de secretos validada en vivo (user/pass → `[REDACTED]` en logs y persistencia)
 - [x] `setInputFiles` diseñado sandbox-only (el LLM nunca toca rutas arbitrarias del disco)
-- [ ] ⚠️ **Verificar/parchear los CRÍTICOS de la auditoría 2026-07**: JWT secret con default público · `spawn` confiando en input del usuario · rutas estáticas que esquivan auth · endpoint LLM sin validar destino (SSRF) — **sin confirmación de fix, repo público**
-- [ ] Confirmar merge de PR #16 (gitignore)
+- [x] **C1 — RCE por command injection** → cerrado (PR #26): sin `shell:true` + allow-list de `model`
+- [x] **C2 — Forja de token admin (JWT default + UUID fijo)** → cerrado (PR #26): sin secreto default + guarda de arranque + fix bypass API key + UUID admin aleatorio
+- [x] **C3 — Lectura de archivos sin auth (path traversal)** → crítico cerrado (PR #26): `containedPath` (../, symlink, UNC) + auth en `/artifacts`
+- [x] **La cadena de compromiso total sin auth (C3→C2→C1) está ROTA**
+- [ ] ⏸️ Hardening multi-usuario/deploy → roadmap `586f5be8`: IDOR de artefactos, URLs firmadas (vs JWT en URL), `Content-Disposition`, `admin123` default (M2), H1 SSRF, H2/M1/M3/M4, L1-L3, Parte II agéntica (IA-1…4)
+
+> ⚠️ **Cambio de comportamiento (C2):** el API ahora **se niega a arrancar sin `JWT_SECRET` fuerte** (≥32 chars, no default). Instancias nuevas deben setearlo o el server no levanta.
 
 ## 9. Proceso / herramientas
 
