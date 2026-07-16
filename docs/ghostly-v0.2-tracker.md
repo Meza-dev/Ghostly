@@ -4,12 +4,25 @@
 > **Triage de cosas nuevas:** ¿compromete "Ghostly nunca miente"? → v0.2 · ¿capacidad nueva/mejora? → v0.3+
 > Última actualización: 2026-07-10
 
+## 🏁 ESTADO: v0.2 CERRADA (funcionalidad/back)
+
+El corazón "Trust" está **construido, arreglado y probado**: 3 capas + healer v2 + los 11 hallazgos del testing en vivo, todo en `main`. La fiabilidad del motor (#1–#11) está completa. Barrido cruzado (Engram + docs + Kanon) confirma que **nada estructural quedó afuera**.
+
+**Fuera de v0.2 por decisión explícita:** Fase 5 (modo CI → v0.3) · seguridad (track aparte, siguiente) · rediseño/UX (track aparte).
+
+**Residual v0.2 diferido a "verificación continua" (no bloquea el cierre):**
+- E1 — validar `inconclusive-environment` en vivo (opcional; el sistema ya maneja bien los errores de red)
+- Benchmark con juez LLM real (medición de precisión, no de cableado — roadmap `5f674ae3`)
+- 2 restos hardcode del healer (`MODAL_LOADER_TEXT_PATTERNS`, `victoryTargetVisible` en pipeline.ts) — deuda menor
+
+**Próximo:** seguridad → (otro día) rediseño.
+
 ---
 
 ## 1. Núcleo v0.2 (las 3 capas + soporte)
 
 - [x] Spec v0.2 escrita y aprobada (`docs/specs/ghostly-v0.2-trust-release.md`)
-- [x] **Benchmark de fiabilidad creado** (app fixture propia + flows etiquetados + oráculos deterministas de juez/healer) — hoy 18 archivos / 155 tests
+- [x] **Benchmark de fiabilidad creado** (app fixture propia + flows etiquetados + oráculos deterministas de juez/healer) — hoy 20 archivos / 165 tests + 1 todo
 - [x] Capa 1 — Observer ampliado: `pageErrors` (consola + red 4xx/5xx + alerts DOM)
 - [x] Capa 2 — Circuit breaker de errores bloqueantes
 - [x] Capa 2 — Victoria verificada + double-check de persistencia
@@ -56,23 +69,24 @@
 - [x] D1 — juez: 3 triggers + continue/hint + terminal (zona gris aceptada)
 - [x] D2 — juez distingue responsables (`fail-test-broken`, confianza alta)
 - [x] Modelo LLM cambiado a grok-4.5-xhigh (~3x más rápido que composer)
-- [ ] E1 — validar `inconclusive-environment` (requiere matar server con timing quirúrgico)
-- [ ] F1 — re-testear al mergear PR #22 (navegación ✅, quedó bloqueado por `<select>`)
-- [ ] F2 — ida y vuelta multi-pantalla (mismo bloqueo)
-- [ ] (opcional) forzar `fail-agent-lost` limpio: quitar un data-testid a propósito
-- [ ] Benchmark con **juez LLM real** (hoy solo oráculo determinista — gap spec §7)
+- [x] **F1 — navegación multi-página + selectOption + persistencia → `success` en vivo** (validó #9/#10/#3 con goal fresco, no replay)
+- [ ] E1 — validar `inconclusive-environment` (opcional; verificación continua)
+- [ ] F2 — ida y vuelta multi-pantalla → **descartado** (F1-fresco ya cubre 2 páginas con dependencia)
+- [ ] Benchmark con **juez LLM real** (hoy solo oráculo determinista — gap spec §7 → roadmap `5f674ae3`)
 
-## 5. Hallazgos del testing (ledger)
+## 5. Hallazgos del testing (ledger) — 11/11 resueltos o triageados
 
-- [x] #7 — Juez terminal sin evidencia histórica → **en main** (PR #17, validado en vivo)
-- [x] #3 — Victoria limpia dejaba `verdict = null` → hecho, en PR #18
-- [x] #5 — Falso "click sin mutación" (huella 1200 chars) → hecho, en PR #18
-- [x] #8 — App caída = error crudo → mensaje claro hecho, en PR #20
-- [ ] #1 — Persistencia fallida debe ir al juez (no hard-map a `fail-app-bug`) — **1º slice post-#22**
-- [ ] #6 — `healing-exhausted` → juez (1 replan por paso; requiere fixture "strategist testarudo") — **2º slice post-#22**
-- [ ] ⏸️ #2 — Victoria matchea texto tipeado en inputs → revisión de victoria
-- [ ] ⏸️ #4 — Placeholder sugiere toast como victoria → pasada de diseño
-- [x] #9 — Verbos faltantes → T0+T1 hechos con 2 gates PASS → **PR #22 abierto**
+- [x] #7 — Juez terminal sin evidencia histórica → main (PR #17, validado en vivo)
+- [x] #3 — Victoria limpia dejaba `verdict = null` → main (PR #18)
+- [x] #5 — Falso "click sin mutación" (huella 1200 chars) → main (PR #18)
+- [x] #8 — App caída = error crudo → mensaje claro → main (PR #20)
+- [x] #9 — Verbos faltantes (`<select>`) → selectOption en main (PR #22), F1 desbloqueado
+- [x] #1 — Persistencia fallida ahora va al juez (no hard-map) → main (PR #23)
+- [x] #10 — Double-check recargaba baseUrl y perdía sesión/página → main (PR #23), validado en vivo (F1 `success`)
+- [x] #6 — `healing-exhausted` converge al juez (1 replan por paso) → main (PR #24), unit-test + gate
+- [x] #11 — Modal se cierra post-fill, healer no recupera → **cubierto por #6** (su síntoma)
+- [ ] ⏸️ #2 — Victoria matchea texto tipeado en inputs → track de diseño (la condición de victoria puede mutar a "pistas")
+- [ ] ⏸️ #4 — Placeholder sugiere toast como victoria → track de diseño
 
 ## 6. Vocabulario de acciones (#9)
 
@@ -111,26 +125,26 @@
 ## 9. Proceso / herramientas
 
 - [x] Tracker v0.2 creado (este doc, PR #21)
-- [x] Backlog de verbos estructurado y persistido (Engram #435)
+- [x] Backlog de verbos estructurado y persistido (Engram #435) + issues Kanon GHOST-41…47
+- [x] Kanon: GHOST-37…40 pasados a done + issues del backlog de verbos creados
 - [x] Deuda anotada: unificar los 3 `coerceStep` en un módulo
-- [ ] Kanon caído: al volver, crear issues del backlog de verbos + pasar GHOST-37..40 a done
 - [ ] `pnpm typecheck` roto en `@ghostly-io/scanner` (pre-existente en main, ajeno a v0.2) — arreglar o excluir
+- [ ] Higiene Kanon: epic **GHOST-17 "parametrización"** quedó `in_progress` (fase-1 done, fase-2 backlog) — es un track aparte, no v0.2; marcar bien
 
-## 10. Cola de merges (hoy)
+## 10. Cola de merges — TODO MERGEADO ✅
 
-- [ ] PR #6 — doc healer
-- [ ] PR #18 — fixes #3 + #5
-- [ ] PR #20 — fix #8
-- [ ] PR #21 — este tracker
-- [ ] PR #22 — verbos T0+T1 (gates PASS)
-- [ ] Confirmar PR #16 — gitignore seguridad
+- [x] PR #6, #16, #18, #20, #21, #22, #23 (#10+#1), #24 (#6) — **11 PRs mergeados a main en la jornada**
 
 ---
 
-## Para cerrar v0.2 (lista corta)
+## Barrido cruzado (Engram + docs + Kanon) — 2026-07-10
 
-1. Mergear la cola (sección 10)
-2. Slice #1 → slice #6
-3. Re-test F1/F2 + validar E1
-4. Decidir Fase 5 (¿v0.3?)
-5. Verificar críticos de seguridad (sección 8 — o declararlos explícitamente fuera de v0.2)
+Confirmado que no quedó nada de v0.2 por las grietas. Lo abierto en las 3 fuentes está correctamente fuera de v0.2:
+- **Fase 5** → GHOST-33/34 (backlog, v0.3)
+- **Verbos** → GHOST-41…47 (backlog, v0.3)
+- **Roadmap** → observabilidad/optimización cerebros, iframes, multi-tab, MCP fases 1-3, hosted multi-user, onboarding, testing backend/API, benchmark con IA real, diagnóstico de fallo del proveedor IA (`9509b6b1`), etc. → todo v0.3+
+- **Epic GHOST-17** (parametrización) → in_progress, track aparte
+
+## v0.2 CERRADA → próximo: SEGURIDAD → (otro día) rediseño
+
+Seguridad es track propio (ver `docs/security-audit-2026-07.md`, gitignoreado): **3 CRÍTICOS confirmados explotables** (C1 RCE por command injection en `spawn`, C2 forja de token admin por JWT default, C3 lectura de archivos sin auth) que se **encadenan en compromiso total sin autenticación**, + H1 SSRF + Parte II superficie agéntica (IA-1…4: prompt injection indirecto, provider CLI, MCP, replay de memoria).
