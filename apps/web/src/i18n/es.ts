@@ -342,4 +342,9 @@ export const es: Record<MessageKey, string> = {
   "overview.card.total": "Total",
   "overview.card.coverage": "{pct}% cobertura",
   "overview.card.viewRuns": "Ver ejecuciones",
+  // T7 — auth / app / common
+  "common.loading": "Cargando…",
+  "app.nav.flows": "Flujos & casos",
+  "app.placeholder.comingSoon": "{title} — próximamente",
+  "auth.login.error": "Error de login",
 };

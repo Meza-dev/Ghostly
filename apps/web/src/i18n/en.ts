@@ -340,6 +340,11 @@ export const en = {
   "overview.card.total": "Total",
   "overview.card.coverage": "{pct}% coverage",
   "overview.card.viewRuns": "View runs",
+  // T7 — auth / app / common
+  "common.loading": "Loading…",
+  "app.nav.flows": "Flows & cases",
+  "app.placeholder.comingSoon": "{title} — coming soon",
+  "auth.login.error": "Login error",
 } as const;
 
 export type MessageKey = keyof typeof en;
