@@ -23,6 +23,7 @@ import { createHealer, createJudge, createStrategist } from "../services/assist-
 import { runControlRegistry } from "../services/run-control.js";
 import { runEventBus } from "../services/run-event-bus.js";
 import { projectExistsForUser } from "../store/projects.js";
+import { msg, pickLang } from "../i18n/pick.js";
 import {
   appendRunEvent,
   createRunningRun,
@@ -217,23 +218,25 @@ runRouter.get("/runs", async (c) => {
 });
 
 runRouter.get("/runs/:id", async (c) => {
+  const lang = pickLang(c.req.header("Accept-Language"));
   const user = c.get("user");
   const record = await getRun(c.req.param("id"), user.id);
-  if (!record) return c.json({ ok: false, error: "not found" }, 404);
+  if (!record) return c.json({ ok: false, error: msg("common.notFound", lang) }, 404);
   return c.json(record);
 });
 
 runRouter.post("/runs/:id/cancel", async (c) => {
+  const lang = pickLang(c.req.header("Accept-Language"));
   const user = c.get("user");
   const id = c.req.param("id");
   const record = await getRun(id, user.id);
-  if (!record) return c.json({ ok: false, error: "not found" }, 404);
+  if (!record) return c.json({ ok: false, error: msg("common.notFound", lang) }, 404);
   if (record.status !== "running") {
-    return c.json({ ok: false, error: "run ya finalizó" }, 409);
+    return c.json({ ok: false, error: msg("run.alreadyFinished", lang) }, 409);
   }
   const res = runControlRegistry.cancel(id, user.id);
   if (!res.ok) {
-    if (res.reason === "forbidden") return c.json({ ok: false, error: "forbidden" }, 403);
+    if (res.reason === "forbidden") return c.json({ ok: false, error: msg("common.forbidden", lang) }, 403);
     // Fallback para runs huérfanos tras reinicio del server:
     // el registro quedó en "running" pero no hay AbortController en memoria.
     const nowIso = new Date().toISOString();
@@ -283,12 +286,13 @@ runRouter.post("/runs/:id/cancel", async (c) => {
 });
 
 runRouter.post("/run", async (c) => {
+  const lang = pickLang(c.req.header("Accept-Language"));
   const user = c.get("user");
   let body: Record<string, unknown>;
   try {
     body = (await c.req.json()) as Record<string, unknown>;
   } catch {
-    return c.json({ ok: false, error: "cuerpo JSON inválido" }, 400);
+    return c.json({ ok: false, error: msg("common.invalidJsonBody", lang) }, 400);
   }
   body = normalizeRunBody(body);
 
@@ -298,16 +302,16 @@ runRouter.post("/run", async (c) => {
     enforceSameOrigin: true,
   });
   if (!parsed.success) {
-    return c.json({ ok: false, error: "validación", details: parsed.error.flatten() }, 400);
+    return c.json({ ok: false, error: msg("common.validationError", lang), details: parsed.error.flatten() }, 400);
   }
 
   const project = typeof body.project === "string" ? body.project.trim() : "";
   if (!project) {
-    return c.json({ ok: false, error: "project requerido" }, 400);
+    return c.json({ ok: false, error: msg("run.projectRequired", lang) }, 400);
   }
   const projectIsValid = await projectExistsForUser(project, user.id);
   if (!projectIsValid) {
-    return c.json({ ok: false, error: "project inválido" }, 400);
+    return c.json({ ok: false, error: msg("plan.invalidProject", lang) }, 400);
   }
   const contextId = typeof body.contextId === "string" ? body.contextId.trim() : "";
 
@@ -315,7 +319,7 @@ runRouter.post("/run", async (c) => {
   if (body.codeHints !== undefined) {
     const parsedCodeHints = codeHintsSchema.safeParse(body.codeHints);
     if (!parsedCodeHints.success) {
-      return c.json({ ok: false, error: "codeHints inválido", details: parsedCodeHints.error.flatten() }, 400);
+      return c.json({ ok: false, error: msg("run.invalidCodeHints", lang), details: parsedCodeHints.error.flatten() }, 400);
     }
     codeHints = parsedCodeHints.data;
   }
@@ -324,7 +328,7 @@ runRouter.post("/run", async (c) => {
   if (body.assisted !== undefined) {
     const parsedAssisted = assistedMetaSchema.safeParse(body.assisted);
     if (!parsedAssisted.success) {
-      return c.json({ ok: false, error: "assisted inválido", details: parsedAssisted.error.flatten() }, 400);
+      return c.json({ ok: false, error: msg("run.invalidAssisted", lang), details: parsedAssisted.error.flatten() }, 400);
     }
     assisted = redactAssistedMeta(parsedAssisted.data);
   }
@@ -332,11 +336,11 @@ runRouter.post("/run", async (c) => {
   let assistV2: z.infer<typeof assistV2Schema> | undefined;
   if (body.assist !== undefined) {
     if (!appConfig.assistV2.enabled) {
-      return c.json({ ok: false, error: "assist v2 deshabilitado" }, 409);
+      return c.json({ ok: false, error: msg("plan.assistV2Disabled", lang) }, 409);
     }
     const parsedAssist = assistV2Schema.safeParse(body.assist);
     if (!parsedAssist.success) {
-      return c.json({ ok: false, error: "assist inválido", details: parsedAssist.error.flatten() }, 400);
+      return c.json({ ok: false, error: msg("run.invalidAssist", lang), details: parsedAssist.error.flatten() }, 400);
     }
     assistV2 = parsedAssist.data;
     if (assisted) {
@@ -405,7 +409,7 @@ runRouter.post("/run", async (c) => {
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    return c.json({ ok: false, error: "no se pudo crear run", message }, 500);
+    return c.json({ ok: false, error: msg("run.createFailed", lang), message }, 500);
   }
 
   // Notifica estado inicial por el bus para clientes ya suscritos.

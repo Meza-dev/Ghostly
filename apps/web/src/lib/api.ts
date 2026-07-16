@@ -17,5 +17,6 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   const headers = new Headers(init.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (!headers.has("Content-Type") && init.body) headers.set("Content-Type", "application/json");
+  headers.set("Accept-Language", localStorage.getItem("ghostly-lang") ?? "en");
   return fetch(path, { ...init, headers });
 }

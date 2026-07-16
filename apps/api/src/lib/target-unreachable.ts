@@ -1,3 +1,5 @@
+import { msg, type Lang } from "../i18n/pick.js";
+
 /**
  * Clasificación de errores de conectividad del recon: distingue "la app bajo
  * prueba no responde" de cualquier otro fallo inesperado. Función pura para
@@ -17,6 +19,6 @@ export function isTargetUnreachableError(message: string): boolean {
 }
 
 /** Mensaje claro para el usuario: el problema es del entorno objetivo, no de Ghostly. */
-export function buildTargetUnreachableMessage(baseUrl: string): string {
-  return `No se pudo alcanzar la aplicación en ${baseUrl}. La app bajo prueba no responde (¿está levantada?). El problema es del entorno objetivo, no de Ghostly.`;
+export function buildTargetUnreachableMessage(baseUrl: string, lang: Lang = "en"): string {
+  return msg("assist.targetUnreachable", lang, { baseUrl });
 }
