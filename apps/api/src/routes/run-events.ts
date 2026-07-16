@@ -3,6 +3,7 @@ import { streamSSE } from "hono/streaming";
 import { authMiddleware } from "../middleware/auth.js";
 import { runEventBus, type LiveRunEvent } from "../services/run-event-bus.js";
 import { getRun } from "../store/runs.js";
+import { msg, pickLang } from "../i18n/pick.js";
 
 export const runEventsRouter = new Hono();
 
@@ -15,12 +16,13 @@ runEventsRouter.use("/runs/:id/events/stream", authMiddleware);
  * - Cierre: al recibir `end` o status final (pass/fail), cierra el stream.
  */
 runEventsRouter.get("/runs/:id/events/stream", async (c) => {
+  const lang = pickLang(c.req.header("Accept-Language"));
   const user = c.get("user");
   const id = c.req.param("id");
 
   const run = await getRun(id, user.id);
   if (!run) {
-    return c.json({ ok: false, error: "run no encontrado" }, 404);
+    return c.json({ ok: false, error: msg("run.notFound", lang) }, 404);
   }
 
   return streamSSE(c, async (stream) => {

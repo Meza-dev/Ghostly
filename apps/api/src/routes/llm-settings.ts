@@ -11,6 +11,7 @@ import {
 } from "../llm/user-config.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { getUserLlmSettings, upsertUserLlmSettings } from "../store/llm-settings.js";
+import { msg, pickLang } from "../i18n/pick.js";
 
 export const llmSettingsRouter = new Hono();
 
@@ -62,13 +63,14 @@ llmSettingsRouter.get("/settings/llm/models", async (c) => {
 });
 
 llmSettingsRouter.get("/settings/llm", async (c) => {
+  const lang = pickLang(c.req.header("Accept-Language"));
   const user = c.get("user");
   const stored = await getUserLlmSettings(user.id);
   const catalog = stored ? getCatalogEntry(stored.providerId) : null;
   const config = settingsToResolvedConfig(stored);
 
   const source = stored ? ("user" as const) : ("env" as const);
-  const status = await runWithLlmConfigAsync(config, () => getLlmStatus(config, source));
+  const status = await runWithLlmConfigAsync(config, () => getLlmStatus(config, source, lang));
   const apiKey = maskApiKey(stored?.apiKey);
 
   return c.json({
@@ -96,28 +98,29 @@ const saveSchema = z.object({
 });
 
 llmSettingsRouter.put("/settings/llm", async (c) => {
+  const lang = pickLang(c.req.header("Accept-Language"));
   const user = c.get("user");
   let body: unknown;
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ ok: false, error: "cuerpo JSON inválido" }, 400);
+    return c.json({ ok: false, error: msg("common.invalidJsonBody", lang) }, 400);
   }
 
   const parsed = saveSchema.safeParse(body);
   if (!parsed.success) {
-    return c.json({ ok: false, error: "validación", details: parsed.error.flatten() }, 400);
+    return c.json({ ok: false, error: msg("common.validationError", lang), details: parsed.error.flatten() }, 400);
   }
 
   const catalog = getCatalogEntry(parsed.data.providerId);
   if (!catalog) {
-    return c.json({ ok: false, error: "proveedor desconocido" }, 400);
+    return c.json({ ok: false, error: msg("llm.unknownProvider", lang) }, 400);
   }
 
   // Allow-list del campo `model` (C1): rechaza espacios/metacaracteres de shell
   // y argument-injection antes de que el valor llegue al spawn del proveedor CLI.
   if (!isModelAllowed(catalog, parsed.data.model)) {
-    return c.json({ ok: false, error: "modelo no permitido para este proveedor" }, 400);
+    return c.json({ ok: false, error: msg("llm.modelNotAllowed", lang) }, 400);
   }
 
   const existing = await getUserLlmSettings(user.id);
@@ -129,7 +132,7 @@ llmSettingsRouter.put("/settings/llm", async (c) => {
   }
 
   if (catalog.needsApiKey && !apiKey?.trim()) {
-    return c.json({ ok: false, error: "API key requerida para este proveedor" }, 400);
+    return c.json({ ok: false, error: msg("llm.apiKeyRequired", lang) }, 400);
   }
 
   const baseUrl =
@@ -137,7 +140,7 @@ llmSettingsRouter.put("/settings/llm", async (c) => {
     (catalog.needsBaseUrl ? catalog.defaultBaseUrl : undefined);
 
   if (catalog.needsBaseUrl && !baseUrl) {
-    return c.json({ ok: false, error: "Base URL requerida" }, 400);
+    return c.json({ ok: false, error: msg("llm.baseUrlRequired", lang) }, 400);
   }
 
   const record = {
@@ -151,7 +154,7 @@ llmSettingsRouter.put("/settings/llm", async (c) => {
   invalidateLlmProviderCache();
 
   const config = settingsToResolvedConfig(record);
-  const status = await runWithLlmConfigAsync(config, () => getLlmStatus(config, "user"));
+  const status = await runWithLlmConfigAsync(config, () => getLlmStatus(config, "user", lang));
   const masked = maskApiKey(record.apiKey);
 
   return c.json({
@@ -168,10 +171,11 @@ llmSettingsRouter.put("/settings/llm", async (c) => {
 });
 
 llmSettingsRouter.post("/settings/llm/test", async (c) => {
+  const lang = pickLang(c.req.header("Accept-Language"));
   const user = c.get("user");
   const stored = await getUserLlmSettings(user.id);
   const config = settingsToResolvedConfig(stored);
   const source = stored ? ("user" as const) : ("env" as const);
-  const status = await runWithLlmConfigAsync(config, () => getLlmStatus(config, source));
+  const status = await runWithLlmConfigAsync(config, () => getLlmStatus(config, source, lang));
   return c.json({ ok: true, status });
 });

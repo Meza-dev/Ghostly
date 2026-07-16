@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { prisma } from "../lib/prisma.js";
 import { authMiddleware } from "../middleware/auth.js";
+import { msg, pickLang } from "../i18n/pick.js";
 
 export const apiKeysRouter = new Hono();
 
@@ -19,16 +20,17 @@ apiKeysRouter.get("/api-keys", async (c) => {
 });
 
 apiKeysRouter.post("/api-keys", async (c) => {
+  const lang = pickLang(c.req.header("Accept-Language"));
   const user = c.get("user");
   let body: { label?: unknown };
   try {
     body = (await c.req.json()) as { label?: unknown };
   } catch {
-    return c.json({ ok: false, error: "cuerpo JSON inválido" }, 400);
+    return c.json({ ok: false, error: msg("common.invalidJsonBody", lang) }, 400);
   }
 
   if (typeof body.label !== "string" || !body.label.trim()) {
-    return c.json({ ok: false, error: "label requerido" }, 400);
+    return c.json({ ok: false, error: msg("common.labelRequired", lang) }, 400);
   }
 
   const key = randomBytes(32).toString("hex");
@@ -41,10 +43,11 @@ apiKeysRouter.post("/api-keys", async (c) => {
 });
 
 apiKeysRouter.delete("/api-keys/:id", async (c) => {
+  const lang = pickLang(c.req.header("Accept-Language"));
   const user = c.get("user");
   const record = await prisma.apiKey.findUnique({ where: { id: c.req.param("id") } });
   if (!record || record.userId !== user.id) {
-    return c.json({ ok: false, error: "not found" }, 404);
+    return c.json({ ok: false, error: msg("common.notFound", lang) }, 404);
   }
   await prisma.apiKey.delete({ where: { id: record.id } });
   return c.json({ ok: true });

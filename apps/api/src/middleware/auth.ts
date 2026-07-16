@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono";
 import { prisma } from "../lib/prisma.js";
 import { getJwtSecret, verifyToken } from "../lib/token.js";
+import { msg, pickLang } from "../i18n/pick.js";
 
 export type AuthUser = {
   id: string;
@@ -15,6 +16,7 @@ declare module "hono" {
 }
 
 export async function authMiddleware(c: Context, next: Next) {
+  const lang = pickLang(c.req.header("Accept-Language"));
   const secret = getJwtSecret();
 
   // Intentar Bearer JWT (Authorization header o ?token= query param para SSE/EventSource).
@@ -27,7 +29,7 @@ export async function authMiddleware(c: Context, next: Next) {
     const token = bearerToken;
     const payload = verifyToken(token, secret);
     if (!payload) {
-      return c.json({ ok: false, error: "token inválido o expirado" }, 401);
+      return c.json({ ok: false, error: msg("auth.invalidOrExpiredToken", lang) }, 401);
     }
     // El JWT puede ser criptográficamente válido pero apuntar a un user
     // que ya no existe (BD recreada, usuario eliminado). Validamos existencia
@@ -37,7 +39,7 @@ export async function authMiddleware(c: Context, next: Next) {
       select: { id: true, email: true, role: true },
     });
     if (!user) {
-      return c.json({ ok: false, error: "sesión expirada, vuelve a iniciar sesión" }, 401);
+      return c.json({ ok: false, error: msg("auth.sessionExpired", lang) }, 401);
     }
     c.set("user", user);
     return next();
@@ -54,8 +56,8 @@ export async function authMiddleware(c: Context, next: Next) {
       c.set("user", { id: record.user.id, email: record.user.email, role: record.user.role });
       return next();
     }
-    return c.json({ ok: false, error: "API Key inválida" }, 401);
+    return c.json({ ok: false, error: msg("auth.invalidApiKey", lang) }, 401);
   }
 
-  return c.json({ ok: false, error: "se requiere autenticación" }, 401);
+  return c.json({ ok: false, error: msg("auth.authRequired", lang) }, 401);
 }
