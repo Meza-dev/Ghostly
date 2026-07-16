@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAppContext } from "../context/app-context";
 import { useAuth } from "../context/auth-context";
+import { useLanguage } from "../context/language-context";
 import { useTheme } from "../context/theme-context";
 import { apiFetch } from "../lib/api";
 import { LanguageToggle } from "./language-toggle";
@@ -26,33 +27,34 @@ function initialsFromEmail(email: string): string {
 
 const navMain = [
   {
-    label: "Inicio",
+    labelKey: "nav.home",
     icon: LayoutDashboard,
     path: "/",
-    hint: "Proyectos y vista general",
+    hintKey: "sidebar.hint.home",
   },
   {
-    label: "Ejecuciones",
+    labelKey: "nav.runs",
     icon: CirclePlay,
     path: "/runs",
-    hint: "Historial de ejecuciones y botón Nueva ejecución",
+    hintKey: "sidebar.hint.runs",
   },
   {
-    label: "Flujos & casos",
+    labelKey: "nav.flows",
     icon: Workflow,
     path: "/flows",
-    hint: "Próximamente: flujos reutilizables",
+    hintKey: "sidebar.hint.flows",
   },
 ] as const;
 
 const navSys = [
-  { label: "Preferencias", icon: SlidersHorizontal, path: "/settings" },
+  { labelKey: "nav.settings", icon: SlidersHorizontal, path: "/settings" },
 ] as const;
 
 export function Sidebar() {
   const { sidebarCollapsed, projects, setActiveProjectId } = useAppContext();
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const { t } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
   const [projectStats, setProjectStats] = useState<Record<string, { total: number; pass: number }>>({});
@@ -119,8 +121,8 @@ export function Sidebar() {
             type="button"
             onClick={toggleTheme}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control-sm text-sidebar-fg transition-colors hover:bg-sidebar-accent hover:text-sidebar-emphasis"
-            aria-label={theme === "dark" ? "Activar modo claro" : "Activar modo oscuro"}
-            title={theme === "dark" ? "Modo claro" : "Modo oscuro"}
+            aria-label={theme === "dark" ? t("sidebar.theme.toLight.aria") : t("sidebar.theme.toDark.aria")}
+            title={theme === "dark" ? t("sidebar.theme.light") : t("sidebar.theme.dark")}
           >
             {theme === "dark" ? (
               <Sun className="h-3.5 w-3.5" strokeWidth={1.8} />
@@ -132,11 +134,13 @@ export function Sidebar() {
       </div>
 
       <nav className={`flex min-h-0 flex-1 flex-col gap-1 ${sidebarCollapsed ? "px-2" : "pl-6 pr-4"}`}>
-        {navMain.map(({ label, icon: Icon, path, hint }) => {
+        {navMain.map(({ labelKey, icon: Icon, path, hintKey }) => {
           const active = location.pathname === path || (path !== "/" && location.pathname.startsWith(path));
+          const label = t(labelKey);
+          const hint = t(hintKey);
           return (
             <button
-              key={label}
+              key={path}
               type="button"
               onClick={() => navigate(path)}
               title={sidebarCollapsed ? `${label} — ${hint}` : hint}
@@ -155,11 +159,12 @@ export function Sidebar() {
         })}
 
         {sidebarCollapsed && <div className="my-2 border-t border-border" />}
-        {navSys.map(({ label, icon: Icon, path }) => {
+        {navSys.map(({ labelKey, icon: Icon, path }) => {
           const active = location.pathname === path;
+          const label = t(labelKey);
           return (
             <button
-              key={label}
+              key={path}
               type="button"
               onClick={() => navigate(path)}
               title={sidebarCollapsed ? label : undefined}
@@ -178,7 +183,7 @@ export function Sidebar() {
         {!sidebarCollapsed && projects.length > 0 && (
           <>
             <p className="px-2 pb-1 pt-6 text-overline font-overline uppercase tracking-wide text-muted-fg">
-              Proyectos
+              {t("sidebar.projects")}
             </p>
             {projects.slice(0, 5).map((p) => (
               <button
@@ -197,10 +202,10 @@ export function Sidebar() {
             <div className="mt-3 rounded-surface border border-border bg-sidebar-accent p-2.5">
               <div className="mb-2 inline-flex items-center gap-2 text-micro uppercase tracking-wide text-muted-fg">
                 <Activity className="h-3.5 w-3.5" strokeWidth={1.7} />
-                Actividad
+                {t("sidebar.activity")}
               </div>
               {projects.length === 0 ? (
-                <p className="font-mono text-caption text-sidebar-fg">Sin proyectos</p>
+                <p className="font-mono text-caption text-sidebar-fg">{t("sidebar.noProjects")}</p>
               ) : (
                 <div className="flex flex-col gap-1">
                   {projects.slice(0, 5).map((project) => (
@@ -237,7 +242,7 @@ export function Sidebar() {
             <button
               type="button"
               onClick={handleLogout}
-              title="Cerrar sesión"
+              title={t("sidebar.logout")}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control-sm border border-border bg-transparent text-foreground hover:bg-muted"
             >
               <LogOut className="h-3.5 w-3.5" strokeWidth={1.7} />
@@ -248,7 +253,7 @@ export function Sidebar() {
           <button
             type="button"
             onClick={handleLogout}
-            title="Cerrar sesión"
+            title={t("sidebar.logout")}
             className="mt-2 flex w-full items-center justify-center rounded-control-sm border border-border bg-transparent py-2 text-foreground hover:bg-muted"
           >
             <LogOut className="h-3.5 w-3.5" strokeWidth={1.7} />
