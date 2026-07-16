@@ -2,19 +2,23 @@ import { Loader2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AssistedMeta, RunRecord, Step } from "../../../../packages/runner/src/schema.js";
 import { useAppContext } from "../context/app-context";
+import { useLanguage } from "../context/language-context";
+import type { MessageKey } from "../i18n/en";
 import { apiFetch } from "../lib/api";
 
+type TFn = (key: MessageKey, vars?: Record<string, string | number>) => string;
+
 /** Conserva la URL de inicio (incluyendo path) como `baseUrl`. */
-function parseStartUrl(raw: string): { ok: true; baseUrl: string; gotoPath: string } | { ok: false; message: string } {
+function parseStartUrl(raw: string, t: TFn): { ok: true; baseUrl: string; gotoPath: string } | { ok: false; message: string } {
   const s = raw.trim();
-  if (!s) return { ok: false, message: "Indica la URL de inicio." };
+  if (!s) return { ok: false, message: t("newRun.error.startUrlRequired") };
   let u: URL;
   try {
     u = new URL(/^https?:\/\//i.test(s) ? s : `https://${s}`);
   } catch {
-    return { ok: false, message: "La URL de inicio no es válida." };
+    return { ok: false, message: t("newRun.error.startUrlInvalid") };
   }
-  if (!u.hostname) return { ok: false, message: "La URL de inicio no es válida." };
+  if (!u.hostname) return { ok: false, message: t("newRun.error.startUrlInvalid") };
   const baseUrl = `${u.origin}${u.pathname && u.pathname !== "" ? u.pathname : "/"}`;
   const path = u.pathname && u.pathname !== "" ? u.pathname : "/";
   const gotoPath = `${path}${u.search}${u.hash}`;
@@ -23,11 +27,6 @@ function parseStartUrl(raw: string): { ok: true; baseUrl: string; gotoPath: stri
 
 /** JSON = solo pasos después del primer `goto` (la URL de inicio ya abre la página). */
 const DEFAULT_STEPS_JSON = JSON.stringify([{ action: "waitForSelector", selector: "h1" }], null, 2);
-
-const RUN_MODE_HELP: Record<"advanced" | "assisted", string> = {
-  advanced: "Pasos en JSON compatibles con el runner. Para flujos ya definidos o control total.",
-  assisted: "Indica URL, objetivo y, si quieres, una condición de éxito. Al ejecutar se planifica y corre el flujo en un solo paso.",
-};
 
 type Props = {
   onClose: () => void;
@@ -46,6 +45,7 @@ type AssistPlanResponse = {
 
 export function NewRunModal({ onClose, onRunStarted }: Props) {
   const { projects, activeProjectId } = useAppContext();
+  const { t } = useLanguage();
   const [tab, setTab] = useState<"assisted" | "advanced">("assisted");
   const [assistAvailable, setAssistAvailable] = useState(true);
   const [assistChecked, setAssistChecked] = useState(false);
@@ -63,14 +63,14 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
   const [victoryMustAll, setVictoryMustAll] = useState(false);
 
   const submitDisabledReason = (() => {
-    if (loading) return "Hay una ejecución iniciándose.";
-    if (planning) return "Generando plan asistido…";
-    if (projects.length === 0) return "No hay proyectos disponibles. Crea uno primero.";
-    if (!assistChecked) return "Validando configuración del modo asistido...";
+    if (loading) return t("newRun.disabled.starting");
+    if (planning) return t("newRun.disabled.planning");
+    if (projects.length === 0) return t("newRun.disabled.noProjects");
+    if (!assistChecked) return t("newRun.disabled.validating");
     if (tab === "assisted" && !assistAvailable) {
-      return "Modo asistido no disponible: configura el proveedor de IA en Preferencias.";
+      return t("newRun.disabled.assistUnavailable");
     }
-    if (tab === "assisted" && !assistGoal.trim()) return "Escribe un objetivo para el modo asistido.";
+    if (tab === "assisted" && !assistGoal.trim()) return t("newRun.disabled.goalRequired");
     return null;
   })();
   const isSubmitDisabled = submitDisabledReason !== null;
@@ -114,11 +114,11 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
     setError(null);
 
     if (!projectId) {
-      setError("Debes seleccionar un proyecto para ejecutar la ejecución.");
+      setError(t("newRun.error.projectRequired"));
       return;
     }
 
-    const parsedUrl = parseStartUrl(startUrl);
+    const parsedUrl = parseStartUrl(startUrl, t);
     if (!parsedUrl.ok) {
       setError(parsedUrl.message);
       return;
@@ -133,17 +133,15 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
       try {
         extra = JSON.parse(stepsJson) as Step[];
       } catch {
-        setError("Los pasos no son JSON válido");
+        setError(t("newRun.error.invalidJson"));
         return;
       }
       if (!Array.isArray(extra)) {
-        setError("El JSON debe ser un array de pasos.");
+        setError(t("newRun.error.notArray"));
         return;
       }
       if (extra.length > 0 && extra[0]?.action === "goto") {
-        setError(
-          "Quita el primer «goto» del JSON: la URL de inicio ya hace la primera navegación.",
-        );
+        setError(t("newRun.error.removeFirstGoto"));
         return;
       }
       steps = [firstGoto, ...extra];
@@ -151,7 +149,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
     } else {
       const goal = assistGoal.trim();
       if (!goal) {
-        setError("Escribe un objetivo para el modo asistido.");
+        setError(t("newRun.disabled.goalRequired"));
         return;
       }
       setPlanning(true);
@@ -168,19 +166,19 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         });
         const body = (await res.json()) as { ok?: boolean; error?: string } & Partial<AssistPlanResponse>;
         if (!res.ok || !body.ok || !body.draft || !body.meta) {
-          setError(typeof body.error === "string" ? body.error : "No se pudo generar el plan asistido.");
+          setError(typeof body.error === "string" ? body.error : t("newRun.error.planFailed"));
           setPlanning(false);
           return;
         }
         planBody = body as AssistPlanResponse;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error de red");
+        setError(err instanceof Error ? err.message : t("newRun.error.network"));
         setPlanning(false);
         return;
       }
       const plannedSteps = planBody.draft.steps ?? [];
       if (plannedSteps.length === 0) {
-        setError("El plan asistido no incluye pasos ejecutables. Ajusta el objetivo e inténtalo de nuevo.");
+        setError(t("newRun.error.noExecutableSteps"));
         setPlanning(false);
         return;
       }
@@ -226,13 +224,13 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         setError(
           typeof body.error === "string"
             ? body.error
-            : "Error de validación en el servidor (revisa pasos y URL).",
+            : t("newRun.error.serverValidation"),
         );
         return;
       }
       const response = (await res.json()) as { id?: string; status?: string };
       if (!response?.id) {
-        setError("La respuesta no incluye el ID de la ejecución.");
+        setError(t("newRun.error.noRunId"));
         return;
       }
       // Respuesta fire-and-forget: construimos un RunRecord mínimo en estado "running"
@@ -247,7 +245,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         steps: [],
       } as RunRecord;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error de red");
+      setError(err instanceof Error ? err.message : t("newRun.error.network"));
     } finally {
       setLoading(false);
     }
@@ -261,13 +259,13 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="flex max-h-[90vh] w-full max-w-[640px] flex-col gap-4 overflow-hidden rounded-ui border border-border bg-card p-6 shadow-xl">
         <div className="flex shrink-0 items-center justify-between">
-          <span className="font-nav-active text-body text-foreground">Nueva ejecución</span>
+          <span className="font-nav-active text-body text-foreground">{t("newRun.title")}</span>
           <button
             type="button"
             onClick={() => { if (!loading && !planning) onClose(); }}
             disabled={loading || planning}
             className="flex h-7 w-7 items-center justify-center rounded-control-md text-muted-fg hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
-            aria-label="Cerrar"
+            aria-label={t("newRun.close")}
           >
             <X className="h-4 w-4" strokeWidth={2} />
           </button>
@@ -287,7 +285,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
                   : "text-muted-fg hover:text-foreground"
               }`}
             >
-              Asistido
+              {t("newRun.tab.assisted")}
             </button>
             <button
               type="button"
@@ -298,17 +296,17 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
                   : "text-muted-fg hover:text-foreground"
               }`}
             >
-              Avanzado
+              {t("newRun.tab.advanced")}
             </button>
           </div>
           <p className="text-caption leading-snug text-muted-fg" id="run-mode-hint">
-            {RUN_MODE_HELP[tab]}
+            {t(tab === "assisted" ? "newRun.mode.assisted.help" : "newRun.mode.advanced.help")}
           </p>
           {!assistAvailable && (
             <p className="text-caption text-warning-fg">
-              Modo asistido deshabilitado: ve a{" "}
-              <span className="font-semibold">Preferencias → Modo asistido (IA)</span> y elige un proveedor
-              (Cursor CLI, Mistral, etc.).
+              {t("newRun.assistDisabled.prefix")}{" "}
+              <span className="font-semibold">{t("newRun.assistDisabled.settingsPath")}</span>{" "}
+              {t("newRun.assistDisabled.suffix")}
             </p>
           )}
         </div>
@@ -320,7 +318,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         >
           <div className="flex flex-col gap-1">
             <label className="text-caption text-muted-fg" htmlFor="proj-select">
-              Proyecto
+              {t("newRun.field.project")}
             </label>
             <select
               id="proj-select"
@@ -337,14 +335,14 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
             </select>
             {projects.length === 0 && (
               <p className="text-caption text-error-fg">
-                Crea un proyecto primero para poder ejecutar ejecuciones.
+                {t("newRun.field.projectEmpty")}
               </p>
             )}
           </div>
 
           <div className="flex flex-col gap-1">
             <label className="text-caption text-muted-fg" htmlFor="startUrl">
-              URL de inicio
+              {t("newRun.field.startUrl")}
             </label>
             <input
               id="startUrl"
@@ -356,18 +354,18 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
               className="rounded-control-md border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             />
             <p className="text-caption text-muted-fg">
-              La ruta forma parte de la base; la ejecución abre esa URL como primer paso.
+              {t("newRun.field.startUrlHelp")}
             </p>
           </div>
 
           {tab === "advanced" ? (
             <div className="flex min-h-0 flex-1 flex-col gap-1">
               <label className="text-caption text-muted-fg" htmlFor="stepsJson">
-                Pasos después del inicio (JSON)
+                {t("newRun.field.stepsJson")}
               </label>
               <p className="text-caption text-muted-fg">
-                No incluyas el primer <span className="font-mono">goto</span>: ya se deriva de la URL de inicio. Puede ser un array vacío{" "}
-                <span className="font-mono">[]</span> para solo abrir la página.
+                {t("newRun.advanced.stepsHelp.part1")} <span className="font-mono">goto</span>{t("newRun.advanced.stepsHelp.part2")}{" "}
+                <span className="font-mono">[]</span> {t("newRun.advanced.stepsHelp.part3")}
               </p>
               <textarea
                 id="stepsJson"
@@ -382,37 +380,37 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
             <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
               <div className="flex flex-col gap-1">
                 <label className="text-caption text-muted-fg" htmlFor="assist-goal">
-                  Objetivo
+                  {t("newRun.field.goal")}
                 </label>
                 <textarea
                   id="assist-goal"
                   rows={3}
                   value={assistGoal}
                   onChange={(e) => setAssistGoal(e.target.value)}
-                  placeholder="Ejemplo: iniciar sesión con usuario y contraseña y llegar al dashboard."
+                  placeholder={t("newRun.field.goalPlaceholder")}
                   className="rounded-control-md border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
 
               <div className="rounded-control-lg border border-border bg-background p-3">
-                <p className="mb-2 text-caption font-button text-foreground">Condición de éxito (opcional)</p>
+                <p className="mb-2 text-caption font-button text-foreground">{t("newRun.victory.title")}</p>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <input
                     value={victoryText}
                     onChange={(e) => setVictoryText(e.target.value)}
-                    placeholder="Texto esperado (ej. Producto creado)"
+                    placeholder={t("newRun.victory.textPlaceholder")}
                     className="rounded-control-md border border-border bg-card px-2 py-1.5 text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
                   <input
                     value={victorySelector}
                     onChange={(e) => setVictorySelector(e.target.value)}
-                    placeholder='Selector visible (ej. .toast-success)'
+                    placeholder={t("newRun.victory.selectorPlaceholder")}
                     className="rounded-control-md border border-border bg-card px-2 py-1.5 font-mono text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
                   <input
                     value={victoryUrl}
                     onChange={(e) => setVictoryUrl(e.target.value)}
-                    placeholder="URL contiene (ej. /products)"
+                    placeholder={t("newRun.victory.urlPlaceholder")}
                     className="rounded-control-md border border-border bg-card px-2 py-1.5 text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
                   <label className="flex items-center gap-2 text-caption text-muted-fg">
@@ -421,7 +419,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
                       checked={victoryMustAll}
                       onChange={(e) => setVictoryMustAll(e.target.checked)}
                     />
-                    Exigir todas las condiciones
+                    {t("newRun.victory.mustAll")}
                   </label>
                 </div>
               </div>
@@ -439,14 +437,14 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
               disabled={loading || planning}
               className="rounded-pill border border-border px-4 py-2 text-small font-button text-foreground hover:bg-accent disabled:opacity-50"
             >
-              Cancelar
+              {t("newRun.cancel")}
             </button>
             <button
               type="submit"
               disabled={isSubmitDisabled}
               className="rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95 disabled:opacity-60"
             >
-              {loading ? "Ejecutando…" : "Ejecutar"}
+              {loading ? t("newRun.running") : t("newRun.submit")}
             </button>
           </div>
           {submitDisabledReason && (
@@ -467,12 +465,12 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
           <Loader2 className="h-10 w-10 animate-spin text-primary" strokeWidth={2} aria-hidden />
           <div className="text-center">
             <p className="text-body font-nav-active text-foreground">
-              {planning && !loading ? "Generando plan" : "Ejecutando"}
+              {planning && !loading ? t("newRun.overlay.planningTitle") : t("newRun.overlay.runningTitle")}
             </p>
             <p className="mt-2 text-caption text-muted-fg">
               {planning && !loading
-                ? "Analizando la página y preparando los pasos. Un momento."
-                : "El navegador está siguiendo el flujo. Puede tardar varios minutos; no cierres esta ventana."}
+                ? t("newRun.overlay.planningDesc")
+                : t("newRun.overlay.runningDesc")}
             </p>
           </div>
         </div>

@@ -2,6 +2,8 @@ import { ArrowLeft, Film } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { RunRecord, Step } from "../../../../packages/runner/src/schema.js";
+import { useLanguage } from "../context/language-context";
+import type { MessageKey } from "../i18n/en";
 import { useRunStream } from "../hooks/use-run-stream";
 import { apiFetch, getToken } from "../lib/api";
 import { appendInstructionsToGoal, buildOverriddenSteps, deriveEditableFillFields } from "../lib/rerun-fields";
@@ -126,13 +128,15 @@ function formatDuration(ms: number): string {
   return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
 }
 
-function timelineLabel(type: AssistEvent["type"]): string {
+type TFn = (key: MessageKey, vars?: Record<string, string | number>) => string;
+
+function timelineLabel(type: AssistEvent["type"], t: TFn): string {
   const labels: Record<AssistEvent["type"], string> = {
     recon: "recon",
-    plan_chunk: "plan inicial",
-    loop_state: "estado loop",
-    horizon_start: "horizonte inicia",
-    horizon_end: "horizonte termina",
+    plan_chunk: t("runDetail.timeline.planChunk"),
+    loop_state: t("runDetail.timeline.loopState"),
+    horizon_start: t("runDetail.timeline.horizonStart"),
+    horizon_end: t("runDetail.timeline.horizonEnd"),
     victory_check: "victory check",
     memory_hit: "memory hit",
     memory_miss: "memory miss",
@@ -143,37 +147,37 @@ function timelineLabel(type: AssistEvent["type"]): string {
     heal_action: "heal action",
     heal_success: "heal success",
     heal_failure: "heal fail",
-    judge_verdict: "veredicto del juez",
+    judge_verdict: t("runDetail.timeline.judgeVerdict"),
     run_end: "run end",
   };
   return labels[type] ?? type;
 }
 
-function timelineDetail(evt: AssistEvent): string {
+function timelineDetail(evt: AssistEvent, t: TFn): string {
   const payload = evt.payload as Record<string, unknown>;
   if (evt.type === "plan_chunk") {
     const steps = Array.isArray(payload.steps) ? payload.steps.length : 0;
-    return `${steps} pasos generados desde objetivo + DOM snapshot`;
+    return t("runDetail.detail.planChunk", { count: steps });
   }
   if (evt.type === "step_start" || evt.type === "step_success" || evt.type === "step_failure") {
     if (payload.step && typeof payload.step === "object") {
       return formatStepSummary(payload.step as Record<string, unknown>);
     }
   }
-  if (evt.type === "heal_start") return "selector adaptado por heurística";
+  if (evt.type === "heal_start") return t("runDetail.detail.healStart");
   if (evt.type === "step_failure" && typeof payload.error === "string") {
     return payload.error.split("\n")[0] ?? payload.error;
   }
   if (evt.type === "victory_check") {
     // `objectiveLikelyCompleted`/`terminalStep` fueron eliminados del motor en
     // GHOST-28 (spec §4.2b) — la victoria ya no se declara por heurística.
-    return payload.met === true ? "victory cumplida" : "victory selector ausente";
+    return payload.met === true ? t("runDetail.detail.victoryMet") : t("runDetail.detail.victoryMissing");
   }
   if (evt.type === "judge_verdict") {
     const reason = typeof payload.reason === "string" ? payload.reason : "?";
     const verdict = typeof payload.verdict === "string" ? payload.verdict : "?";
     const meta = getVerdictMeta(verdict);
-    return `motivo=${reason} · ${meta.shortLabel}`;
+    return t("runDetail.detail.judgeVerdict", { reason, label: meta.shortLabel });
   }
   return JSON.stringify(payload).slice(0, 140);
 }
@@ -181,6 +185,7 @@ function timelineDetail(evt: AssistEvent): string {
 export function RunDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { t, lang } = useLanguage();
   const [run, setRun] = useState<RunRecordWithEvents | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -230,12 +235,12 @@ export function RunDetail() {
       const res = await apiFetch(`/v1/runs/${id}/cancel`, { method: "POST" });
       if (!res.ok) {
         const body = (await res.json()) as { error?: string };
-        setCancelError(body.error ?? "No se pudo cancelar la ejecución.");
+        setCancelError(body.error ?? t("runDetail.error.cancelFailed"));
         return;
       }
       await fetchRun();
     } catch (e) {
-      setCancelError(e instanceof Error ? e.message : "No se pudo cancelar la ejecución.");
+      setCancelError(e instanceof Error ? e.message : t("runDetail.error.cancelFailed"));
     } finally {
       setCancelling(false);
     }
@@ -254,7 +259,7 @@ export function RunDetail() {
     const canUseAssistGoal = Boolean(goal);
     const canUseReplaySteps = replaySteps.length > 0;
     if (!valueOverrides && !extraInstructions && !canUseAssistGoal && !canUseReplaySteps) {
-      setRerunError("No hay objetivo asistido ni pasos replayables para reejecutar.");
+      setRerunError(t("runDetail.error.noReplayTarget"));
       return;
     }
     setRerunError(null);
@@ -328,12 +333,12 @@ export function RunDetail() {
       });
       const payload = (await res.json().catch(() => ({}))) as { error?: string } & Partial<RunStartResponse>;
       if (!res.ok || !payload.id) {
-        setRerunError(payload.error ?? "No se pudo iniciar la reejecución.");
+        setRerunError(payload.error ?? t("runDetail.error.rerunFailed"));
         return;
       }
       navigate(`/runs/${payload.id}`);
     } catch (e) {
-      setRerunError(e instanceof Error ? e.message : "No se pudo iniciar la reejecución.");
+      setRerunError(e instanceof Error ? e.message : t("runDetail.error.rerunFailed"));
     } finally {
       setRerunning(false);
     }
@@ -529,9 +534,9 @@ export function RunDetail() {
   if (notFound) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 text-muted-fg">
-        <p className="text-body">Run no encontrado</p>
+        <p className="text-body">{t("runDetail.notFound")}</p>
         <button type="button" onClick={() => navigate("/")} className="text-small text-primary underline">
-          Volver al listado
+          {t("runDetail.backToList")}
         </button>
       </div>
     );
@@ -540,7 +545,7 @@ export function RunDetail() {
   if (!run) {
     return (
       <div className="flex h-full items-center justify-center text-small text-muted-fg">
-        Cargando…
+        {t("runDetail.loading")}
       </div>
     );
   }
@@ -565,7 +570,7 @@ export function RunDetail() {
         className="inline-flex w-fit items-center gap-1.5 text-small text-muted-fg hover:text-foreground"
       >
         <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} />
-        Volver a ejecuciones
+        {t("runDetail.backToRuns")}
       </button>
 
       <div className="rounded-surface border border-border bg-card p-5">
@@ -582,7 +587,7 @@ export function RunDetail() {
                 {run.status === "pass" ? "Pass" : run.status === "fail" ? "Fail" : "Run"}
               </span>
               {run.status !== "running" && <VerdictBadge verdict={run.verdict} status={run.status} />}
-              <span className="text-caption uppercase tracking-wide text-muted-fg">{run.project ?? "sin proyecto"}</span>
+              <span className="text-caption uppercase tracking-wide text-muted-fg">{run.project ?? t("runDetail.noProject")}</span>
             </div>
             <h1 className="text-xl font-title tracking-tight text-foreground">{objective || `Run ${run.id.slice(0, 9)}`}</h1>
             <div className="flex flex-wrap items-center gap-2 font-mono text-caption text-muted-fg">
@@ -599,7 +604,7 @@ export function RunDetail() {
                 className="inline-flex items-center gap-1.5 rounded-control-sm border border-border bg-muted px-3 py-1.5 text-small font-button text-foreground hover:bg-bg-muted"
               >
                 <Film className="h-3.5 w-3.5" />
-                Ver video
+                {t("runDetail.watchVideo")}
               </button>
             )}
             {isLive ? (
@@ -609,7 +614,7 @@ export function RunDetail() {
                 disabled={cancelling}
                 className="rounded-control-sm border border-error-fg/40 bg-error/20 px-3 py-1.5 text-small text-error-fg hover:bg-error/30 disabled:opacity-60"
               >
-                {cancelling ? "Cancelando..." : "Cancelar ejecución"}
+                {cancelling ? t("runDetail.cancelling") : t("runDetail.cancelRun")}
               </button>
             ) : (
               <RerunSplitButton
@@ -625,10 +630,10 @@ export function RunDetail() {
           </div>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-5 border-t border-border pt-4 sm:grid-cols-4">
-          <div><p className="text-overline text-muted-fg">Duración</p><p className="text-2xl font-title leading-none">{formatDuration(run.durationMs)}</p></div>
-          <div><p className="text-overline text-muted-fg">Pasos</p><p className="text-2xl font-title leading-none">{run.steps.filter((s) => s.ok).length}/{run.steps.length}</p></div>
-          <div><p className="text-overline text-muted-fg">Self-heals</p><p className="text-2xl font-title leading-none">{displaySteps.filter((s) => s.healed).length}</p></div>
-          <div><p className="text-overline text-muted-fg">Iniciado</p><p className="text-md font-mono text-muted-fg">{new Date(run.startedAt).toLocaleString()}</p></div>
+          <div><p className="text-overline text-muted-fg">{t("runDetail.stat.duration")}</p><p className="text-2xl font-title leading-none">{formatDuration(run.durationMs)}</p></div>
+          <div><p className="text-overline text-muted-fg">{t("runDetail.stat.steps")}</p><p className="text-2xl font-title leading-none">{run.steps.filter((s) => s.ok).length}/{run.steps.length}</p></div>
+          <div><p className="text-overline text-muted-fg">{t("runDetail.stat.selfHeals")}</p><p className="text-2xl font-title leading-none">{displaySteps.filter((s) => s.healed).length}</p></div>
+          <div><p className="text-overline text-muted-fg">{t("runDetail.stat.started")}</p><p className="text-md font-mono text-muted-fg">{new Date(run.startedAt).toLocaleString(lang)}</p></div>
         </div>
       </div>
 
@@ -642,10 +647,10 @@ export function RunDetail() {
 
       <div className="flex items-end gap-1 border-b border-border">
         {[
-          { id: "steps", label: "Pasos" },
-          { id: "timeline", label: "Timeline" },
-          { id: "code", label: "Plan" },
-          { id: "artifacts", label: "Artefactos" },
+          { id: "steps", label: t("runDetail.tab.steps") },
+          { id: "timeline", label: t("runDetail.tab.timeline") },
+          { id: "code", label: t("runDetail.tab.plan") },
+          { id: "artifacts", label: t("runDetail.tab.artifacts") },
         ].map((t) => (
           <button
             key={t.id}
@@ -679,14 +684,14 @@ export function RunDetail() {
                 <span className="font-mono text-caption text-muted-fg">{String(step.index + 1).padStart(2, "0")}</span>
                 <span className={`h-3.5 w-3.5 rounded-full ${step.ok === false ? "bg-error-fg" : step.ok === true ? "bg-success-fg" : "bg-primary"}`} />
                 <span className="font-mono text-small text-primary">{step.action}</span>
-                <span className="truncate font-mono text-small text-muted-fg">{step.error ?? "Paso ejecutado"}</span>
+                <span className="truncate font-mono text-small text-muted-fg">{step.error ?? t("runDetail.stepExecuted")}</span>
                 <span className="text-right font-mono text-caption text-muted-fg">{step.ok === null ? "..." : step.ok ? "ok" : "fail"}</span>
               </button>
             ))}
           </div>
 
           <div className="flex min-h-0 flex-col gap-2 lg:sticky lg:top-3 lg:self-start">
-            <p className="text-overline text-muted-fg">Snapshot · paso {(selectedStep?.index ?? 0) + 1}</p>
+            <p className="text-overline text-muted-fg">{t("runDetail.snapshotStep", { n: (selectedStep?.index ?? 0) + 1 })}</p>
             <div className="relative min-h-[min(68vh,620px)] w-full overflow-hidden rounded-control-sm border border-border bg-bg-muted lg:aspect-auto">
               {artifactLoading && (
                 <div className="absolute inset-0 animate-pulse bg-muted" />
@@ -695,7 +700,7 @@ export function RunDetail() {
                 <img
                   key={selectedStep.screenshotPath}
                   src={artifactUrl(selectedStep.screenshotPath)}
-                  alt={`Paso ${selectedStep.index + 1}`}
+                  alt={t("runDetail.stepAlt", { n: selectedStep.index + 1 })}
                   className="h-full w-full object-contain"
                   onLoad={() => setArtifactLoading(false)}
                   onError={() => setArtifactLoading(false)}
@@ -703,7 +708,7 @@ export function RunDetail() {
               )}
               {!selectedStep?.screenshotPath && (
                 <div className="absolute inset-0 flex items-center justify-center font-mono text-caption text-muted-fg">
-                  Sin screenshot para este paso
+                  {t("runDetail.noScreenshot")}
                 </div>
               )}
             </div>
@@ -717,7 +722,7 @@ export function RunDetail() {
       {tab === "timeline" && (
         <div className="overflow-hidden rounded-surface border border-border bg-card">
           {mergedEvents.length === 0 ? (
-            <p className="p-4 text-small text-muted-fg">Sin eventos.</p>
+            <p className="p-4 text-small text-muted-fg">{t("runDetail.noEvents")}</p>
           ) : (
             <ol className="ghostly-scrollbar max-h-[560px] overflow-auto">
               {mergedEvents.map((evt, idx) => {
@@ -738,9 +743,9 @@ export function RunDetail() {
                           ? "text-success-fg"
                           : "text-foreground"
                       }`}>
-                        {timelineLabel(evt.type)}
+                        {timelineLabel(evt.type, t)}
                       </p>
-                      <p className="mt-0.5 break-words font-mono text-small text-muted-fg">{timelineDetail(evt)}</p>
+                      <p className="mt-0.5 break-words font-mono text-small text-muted-fg">{timelineDetail(evt, t)}</p>
                     </div>
                   </li>
                 );
@@ -768,13 +773,13 @@ export function RunDetail() {
               }}
               className="rounded-control-sm border border-border bg-muted px-2.5 py-1 text-caption text-muted-fg hover:text-foreground"
             >
-              {copiedPlan ? "Copiado" : "Copiar JSON"}
+              {copiedPlan ? t("runDetail.copied") : t("runDetail.copyJson")}
             </button>
           </div>
           <pre className="ghostly-scrollbar max-h-80 overflow-auto rounded-control-sm border border-border bg-muted/40 p-3 font-mono text-micro text-foreground">
             {JSON.stringify(executedStepsJson.length > 0 ? executedStepsJson : fullPlannedSteps, null, 2)}
           </pre>
-          {loopProgress.loopState && <p className="mt-2 text-caption text-muted-fg">Estado loop: {loopProgress.loopState}</p>}
+          {loopProgress.loopState && <p className="mt-2 text-caption text-muted-fg">{t("runDetail.loopState", { state: loopProgress.loopState })}</p>}
         </div>
       )}
 
@@ -793,12 +798,12 @@ export function RunDetail() {
               </div>
               <div className="min-w-0">
                 <p className="truncate text-small text-foreground">{item.name}</p>
-                <p className="text-caption text-muted-fg">Descargar</p>
+                <p className="text-caption text-muted-fg">{t("runDetail.download")}</p>
               </div>
             </a>
           ))}
           {artifactItems.length === 0 && (
-            <p className="text-small text-muted-fg">No hay artefactos disponibles para esta ejecución.</p>
+            <p className="text-small text-muted-fg">{t("runDetail.noArtifacts")}</p>
           )}
         </div>
       )}
