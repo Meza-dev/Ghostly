@@ -15,16 +15,16 @@ type ConfigOptions = {
 export function registerConfig(program: Command): void {
   program
     .command("config")
-    .description("Configura el proveedor IA (API HTTP o Cursor CLI) para modo asistido")
-    .option("--llm-provider <provider>", "Proveedor: http, openai, cursor-cli, etc.")
-    .option("--llm-model <model>", "Modelo LLM a usar")
-    .option("--llm-api-key <key>", "API key del proveedor LLM (solo HTTP)")
-    .option("--llm-base-url <url>", "Base URL del proveedor LLM (solo HTTP)")
-    .option("--clear", "Limpia la configuración IA guardada")
+    .description("Configure the AI provider (HTTP API or Cursor CLI) for assisted mode")
+    .option("--llm-provider <provider>", "Provider: http, openai, cursor-cli, etc.")
+    .option("--llm-model <model>", "LLM model to use")
+    .option("--llm-api-key <key>", "LLM provider API key (HTTP only)")
+    .option("--llm-base-url <url>", "LLM provider base URL (HTTP only)")
+    .option("--clear", "Clear the saved AI configuration")
     .action(async (opts: ConfigOptions) => {
       const current = readAuth();
       if (!current) {
-        p.log.error("No se encontró ~/.ghostly/auth.json. Ejecuta primero: ghostly install");
+        p.log.error("~/.ghostly/auth.json not found. Run this first: ghostly install");
         process.exit(1);
       }
 
@@ -33,7 +33,7 @@ export function registerConfig(program: Command): void {
           ...current,
           llm: undefined,
         });
-        p.outro("Configuración IA eliminada de ~/.ghostly/auth.json");
+        p.outro("AI configuration removed from ~/.ghostly/auth.json");
         return;
       }
 
@@ -43,17 +43,17 @@ export function registerConfig(program: Command): void {
       const providerChoice =
         opts.llmProvider ??
         (await p.select({
-          message: "Proveedor IA para modo asistido",
+          message: "AI provider for assisted mode",
           options: [
             {
               value: "cursor-cli",
               label: "Cursor Agent CLI",
-              hint: "usa auth local (agent login)",
+              hint: "uses local auth (agent login)",
             },
             {
               value: "http",
-              label: "API HTTP (OpenAI, Ollama, OpenRouter…)",
-              hint: "requiere API key y URL",
+              label: "HTTP API (OpenAI, Ollama, OpenRouter…)",
+              hint: "requires API key and URL",
             },
           ],
           initialValue: isCliLlmProvider(existingLlm.provider)
@@ -70,7 +70,7 @@ export function registerConfig(program: Command): void {
       const model =
         opts.llmModel ??
         (await p.text({
-          message: "Modelo",
+          message: "Model",
           placeholder: useCli
             ? "composer-2.5, claude-sonnet-5-thinking-high, etc."
             : "gpt-4o-mini, claude-3-5-sonnet, llama3, etc.",
@@ -85,14 +85,14 @@ export function registerConfig(program: Command): void {
         const apiKey =
           opts.llmApiKey ??
           (await p.password({
-            message: "API key del proveedor",
+            message: "Provider API key",
           }));
         if (p.isCancel(apiKey)) process.exit(0);
 
         const baseUrl =
           opts.llmBaseUrl ??
           (await p.text({
-            message: "Base URL del chat completions",
+            message: "Chat completions base URL",
             placeholder: existingLlm.baseUrl ?? "https://api.openai.com/v1/chat/completions",
             initialValue: existingLlm.baseUrl ?? "",
           }));
@@ -106,7 +106,7 @@ export function registerConfig(program: Command): void {
           p.log.success(`Cursor CLI: ${check.message}`);
         } else {
           p.log.warn(check.message);
-          p.log.warn("Puedes continuar; el modo asistido fallará hasta que `agent login` funcione.");
+          p.log.warn("You can continue; assisted mode will fail until `agent login` works.");
         }
       }
 
@@ -124,13 +124,13 @@ export function registerConfig(program: Command): void {
 
       p.outro(
         [
-          "Configuración IA guardada en ~/.ghostly/auth.json",
+          "AI configuration saved to ~/.ghostly/auth.json",
           `provider: ${nextProvider}`,
-          `model: ${nextModel || "(vacío)"}`,
+          `model: ${nextModel || "(empty)"}`,
           useCli
-            ? "auth: Cursor Agent CLI (sin API key en auth.json)"
-            : `apiKey: ${nextApiKey ? "********" : "(vacía)"}`,
-          useCli ? "" : `baseUrl: ${nextBaseUrl || "(vacía)"}`,
+            ? "auth: Cursor Agent CLI (no API key in auth.json)"
+            : `apiKey: ${nextApiKey ? "********" : "(empty)"}`,
+          useCli ? "" : `baseUrl: ${nextBaseUrl || "(empty)"}`,
         ]
           .filter(Boolean)
           .join("\n"),
