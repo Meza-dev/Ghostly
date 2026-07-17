@@ -61,6 +61,7 @@ function extractRoutesFromSource(src: string, filePath: string, projectRoot: str
   let m: RegExpExecArray | null;
   while ((m = ROUTE_RE.exec(src)) !== null) {
     const attrs = m[1];
+    if (attrs === undefined) continue;
     const routePath = extractPathAttr(attrs);
     if (!routePath) continue;
 

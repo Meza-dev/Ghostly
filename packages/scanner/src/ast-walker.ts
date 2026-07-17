@@ -46,6 +46,7 @@ function extractAttrValue(src: string, attrStart: number): string | undefined {
   i++;
   if (src[i] === '"' || src[i] === "'") {
     const q = src[i++];
+    if (q === undefined) return undefined;
     const end = src.indexOf(q, i);
     return end === -1 ? undefined : src.slice(i, end).trim();
   }
@@ -53,6 +54,7 @@ function extractAttrValue(src: string, attrStart: number): string | undefined {
     i++;
     if (src[i] === "'" || src[i] === '"' || src[i] === "`") {
       const q = src[i++];
+      if (q === undefined) return undefined;
       const end = src.indexOf(q, i);
       return end === -1 ? undefined : src.slice(i, end).trim();
     }
@@ -125,18 +127,21 @@ function parseFile(filePath: string, src: string, projectRoot: string): ParsedFi
   const ATTR_RE = /\b(data-testid|aria-label|role)(?==)/g;
   let m: RegExpExecArray | null;
   while ((m = ATTR_RE.exec(src)) !== null) {
-    const value = extractAttrValue(src, m.index + m[1].length);
+    const attr = m[1];
+    if (attr === undefined) continue;
+    const value = extractAttrValue(src, m.index + attr.length);
     if (!value) continue;
     const comp = ensureComponent(findComponentName(src, m.index, fallback));
-    if (m[1] === "data-testid") comp.testIds.push(value);
-    else if (m[1] === "aria-label") comp.ariaLabels.push(value);
-    else if (m[1] === "role") comp.roles.push(value);
+    if (attr === "data-testid") comp.testIds.push(value);
+    else if (attr === "aria-label") comp.ariaLabels.push(value);
+    else if (attr === "role") comp.roles.push(value);
   }
 
   // ── <input | <textarea | <select ───────────────────────────────────────────
   const INPUT_RE = /<(input|textarea|select)\b([^>]*?)(?:\/?>)/gis;
   while ((m = INPUT_RE.exec(src)) !== null) {
     const attrs = m[2];
+    if (attrs === undefined) continue;
     const compName = findComponentName(src, m.index, fallback);
     const formName = isInsideForm(src, m.index)
       ? compName
@@ -157,6 +162,7 @@ function parseFile(filePath: string, src: string, projectRoot: string): ParsedFi
   const BTN_RE = /<[Bb]utton\b([^>]*?)(?:>|$)/gms;
   while ((m = BTN_RE.exec(src)) !== null) {
     const attrs = m[1];
+    if (attrs === undefined) continue;
     const isSubmit = /type=["'`]submit["'`]/.test(attrs)
       || /type=\{["'`]submit["'`]\}/.test(attrs);
     if (!isSubmit) continue;
