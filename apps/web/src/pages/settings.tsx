@@ -160,7 +160,7 @@ export function SettingsPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("¿Revocar esta API Key?")) return;
+    if (!confirm(t("settings.apiKeys.revokeConfirm"))) return;
     await apiFetch(`/v1/api-keys/${id}`, { method: "DELETE" });
     void loadKeys();
   }
@@ -183,14 +183,14 @@ export function SettingsPage() {
   return (
     <div className="mx-auto flex w-full max-w-6xl min-h-0 flex-1 flex-col gap-6 overflow-auto pb-4">
       <div className="border-b border-border pb-4">
-        <h1 className="text-title font-title tracking-tight text-foreground">Preferencias</h1>
-        <p className="mt-1 text-small text-muted-fg">Workspace, comportamiento del runner e integraciones.</p>
+        <h1 className="text-title font-title tracking-tight text-foreground">{t("settings.title")}</h1>
+        <p className="mt-1 text-small text-muted-fg">{t("settings.subtitle")}</p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="flex min-h-0 flex-col gap-6">
-          <SettingsSection title="Apariencia" desc="Cómo se ve Ghostly para ti.">
-            <SettingsRow title="Tema" desc="Cambia entre claro y oscuro.">
+          <SettingsSection title={t("settings.appearance.title")} desc={t("settings.appearance.desc")}>
+            <SettingsRow title={t("settings.theme.title")} desc={t("settings.theme.desc")}>
               <div className="flex gap-1 rounded-control-md border border-border bg-muted/80 p-0.5">
                 {(["light", "dark"] as const).map((m) => (
                   <button
@@ -203,7 +203,7 @@ export function SettingsPage() {
                         : "text-muted-fg hover:text-foreground"
                     }`}
                   >
-                    {m === "light" ? "Claro" : "Oscuro"}
+                    {m === "light" ? t("settings.theme.light") : t("settings.theme.dark")}
                   </button>
                 ))}
               </div>
@@ -228,14 +228,14 @@ export function SettingsPage() {
             </SettingsRow>
           </SettingsSection>
 
-          <SettingsSection title="Runner" desc="Cómo se comporta el fantasma cuando ejecuta.">
-            <SettingsRow title="Git auto-watch" desc="Disparar ejecuciones cuando se detectan commits en repos vinculados.">
+          <SettingsSection title={t("settings.runner.title")} desc={t("settings.runner.desc")}>
+            <SettingsRow title={t("settings.runner.gitWatch.title")} desc={t("settings.runner.gitWatch.desc")}>
               <PrefToggle on={prefs.gitWatch} onChange={(v) => patchPrefs({ gitWatch: v })} />
             </SettingsRow>
-            <SettingsRow title="Self-heal de selectores" desc="Adapta selectores rotos al ejecutar (recomendado).">
+            <SettingsRow title={t("settings.runner.heal.title")} desc={t("settings.runner.heal.desc")}>
               <PrefToggle on={prefs.heal} onChange={(v) => patchPrefs({ heal: v })} />
             </SettingsRow>
-            <SettingsRow title="Grabar video" desc="Guarda un .webm de cada ejecución para diagnóstico.">
+            <SettingsRow title={t("settings.runner.video.title")} desc={t("settings.runner.video.desc")}>
               <PrefToggle on={prefs.video} onChange={(v) => patchPrefs({ video: v })} />
             </SettingsRow>
           </SettingsSection>
@@ -243,40 +243,40 @@ export function SettingsPage() {
 
         <div className="flex min-h-0 flex-col gap-6">
           <SettingsSection
-            title="Modo asistido (IA)"
-            desc="Proveedor para planificar flujos asistidos (estilo Open Design BYOK)."
+            title={t("settings.assist.title")}
+            desc={t("settings.assist.desc")}
             bare
           >
             <LlmSettingsPanel />
           </SettingsSection>
 
-          <SettingsSection title="Integraciones" desc="Servicios externos.">
-            <SettingsRow title="MCP servers" desc="Servidores MCP disponibles para esta workspace.">
-              <span className="font-mono text-caption text-muted-fg">3 conectados</span>
+          <SettingsSection title={t("settings.integrations.title")} desc={t("settings.integrations.desc")}>
+            <SettingsRow title={t("settings.integrations.mcp.title")} desc={t("settings.integrations.mcp.desc")}>
+              <span className="font-mono text-caption text-muted-fg">{t("settings.integrations.mcp.connected", { count: 3 })}</span>
             </SettingsRow>
-            <SettingsRow title="Notificaciones Slack" desc="Avisar al canal #qa-alerts cuando una ejecución falla.">
+            <SettingsRow title={t("settings.integrations.slack.title")} desc={t("settings.integrations.slack.desc")}>
               <PrefToggle on={prefs.slack} onChange={(v) => patchPrefs({ slack: v })} />
             </SettingsRow>
-            <SettingsRow title="GitHub" desc="Conectado a luna-acme · 3 repos vinculados.">
+            <SettingsRow title={t("settings.integrations.github.title")} desc={t("settings.integrations.github.desc")}>
               <button
                 type="button"
                 className="rounded-control-sm border border-border bg-muted px-2.5 py-1 text-caption text-muted-fg transition-colors hover:border-border-strong hover:text-foreground"
               >
-                Reconfigurar
+                {t("settings.integrations.github.reconfigure")}
               </button>
             </SettingsRow>
           </SettingsSection>
 
-          <SettingsSection title="Workspace" desc="Detalles de la cuenta.">
-            <SettingsRow title="Nombre" desc="Aparece en el panel y en notificaciones.">
+          <SettingsSection title={t("settings.workspace.title")} desc={t("settings.workspace.desc")}>
+            <SettingsRow title={t("settings.workspace.name.title")} desc={t("settings.workspace.name.desc")}>
               <input
                 value={prefs.workspaceName}
                 onChange={(e) => patchPrefs({ workspaceName: e.target.value })}
                 className="min-w-[10rem] max-w-full rounded-control-sm border border-border-strong bg-background px-2.5 py-1.5 text-small text-foreground outline-none ring-primary focus:ring-2 sm:w-44"
-                aria-label="Nombre del workspace"
+                aria-label={t("settings.workspace.name.aria")}
               />
             </SettingsRow>
-            <SettingsRow title="Plan" desc="Equipo · 8 puestos activos.">
+            <SettingsRow title={t("settings.workspace.plan.title")} desc={t("settings.workspace.plan.desc")}>
               <span className="text-small text-muted-fg">Team</span>
             </SettingsRow>
           </SettingsSection>
@@ -285,11 +285,13 @@ export function SettingsPage() {
 
       <section className="flex flex-col gap-4 overflow-hidden rounded-surface border border-border bg-card shadow-surface">
         <header className="border-b border-border bg-muted/50 px-4 py-3 sm:px-5">
-          <h2 className="text-body font-nav-active text-foreground">API Keys</h2>
+          <h2 className="text-body font-nav-active text-foreground">{t("settings.apiKeys.title")}</h2>
           <p className="mt-0.5 text-caption text-muted-fg">
-            Para scripts, CI o el paquete{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-caption">@ghostly-io/client</code>: crea una key y
-            envíala en el header <code className="rounded bg-muted px-1 py-0.5 font-mono text-caption">X-Api-Key</code>.
+            {t("settings.apiKeys.descLead")}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-caption">@ghostly-io/client</code>
+            {t("settings.apiKeys.descMid")}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-caption">X-Api-Key</code>
+            {t("settings.apiKeys.descTail")}
           </p>
         </header>
 
@@ -298,7 +300,7 @@ export function SettingsPage() {
           <div className="flex items-center gap-3 rounded-ui border border-success/40 bg-success/10 px-4 py-3">
             <Key className="h-4 w-4 shrink-0 text-success" strokeWidth={2} />
             <div className="min-w-0 flex-1">
-              <p className="text-caption font-button text-success">Copia esta key ahora, no se mostrará de nuevo</p>
+              <p className="text-caption font-button text-success">{t("settings.apiKeys.copyWarning")}</p>
               <p className="mt-1 break-all font-mono text-caption text-foreground">{newKey}</p>
             </div>
             <button
@@ -308,14 +310,14 @@ export function SettingsPage() {
             >
               <Copy className="h-3.5 w-3.5" strokeWidth={2} />
             </button>
-            {copied && <span className="text-caption text-success">Copiado</span>}
+            {copied && <span className="text-caption text-success">{t("settings.apiKeys.copied")}</span>}
           </div>
         )}
 
         <form onSubmit={handleCreate} className="flex gap-2">
           <input
             type="text"
-            placeholder="Nombre de la key (ej. CI pipeline)"
+            placeholder={t("settings.apiKeys.namePlaceholder")}
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             className="flex-1 rounded-control-lg border border-border bg-background px-3 py-2 text-small text-foreground placeholder:text-muted-fg focus:outline-none focus:ring-2 focus:ring-primary"
@@ -326,12 +328,12 @@ export function SettingsPage() {
             className="inline-flex items-center gap-2 rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95 disabled:opacity-50"
           >
             <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-            {creating ? "Creando…" : "Crear"}
+            {creating ? t("settings.apiKeys.creating") : t("settings.apiKeys.create")}
           </button>
         </form>
 
         {keys.length === 0 ? (
-          <p className="text-small text-muted-fg">No tienes API Keys aún.</p>
+          <p className="text-small text-muted-fg">{t("settings.apiKeys.empty")}</p>
         ) : (
           <div className="flex flex-col divide-y divide-border rounded-ui border border-border bg-card">
             {keys.map((k) => (
@@ -342,13 +344,13 @@ export function SettingsPage() {
                   <p className="font-mono text-caption text-muted-fg">{k.key}</p>
                 </div>
                 <span className="shrink-0 text-caption text-muted-fg">
-                  {new Date(k.createdAt).toLocaleDateString()}
+                  {new Date(k.createdAt).toLocaleDateString(lang)}
                 </span>
                 <button
                   type="button"
                   onClick={() => handleDelete(k.id)}
                   className="shrink-0 rounded p-1 text-muted-fg hover:text-error-fg"
-                  aria-label="Revocar"
+                  aria-label={t("settings.apiKeys.revokeAria")}
                 >
                   <Trash2 className="h-4 w-4" strokeWidth={2} />
                 </button>

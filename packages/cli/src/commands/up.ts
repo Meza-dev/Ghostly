@@ -36,18 +36,18 @@ function runPrisma(args: string, prismaDir: string, databaseUrl: string): void {
 export function registerUp(program: Command): void {
   program
     .command("up")
-    .description("Levanta el backend y frontend de Ghostly localmente")
-    .option("-p, --port <number>", "Puerto del backend", String(DEFAULT_PORT))
+    .description("Start the Ghostly backend and frontend locally")
+    .option("-p, --port <number>", "Backend port", String(DEFAULT_PORT))
     .action(async (opts: { port: string }) => {
       const port = Number.parseInt(opts.port, 10) || DEFAULT_PORT;
 
       console.clear();
-      p.intro("👻  Ghostly — Iniciando servicios");
+      p.intro("👻  Ghostly — Starting services");
 
       // ── 1. Verificar auth ─────────────────────────────────────────────────
       const auth = readAuth();
       if (!auth) {
-        p.log.error("No se encontraron credenciales. Ejecuta primero: ghostly install");
+        p.log.error("No credentials found. Run this first: ghostly install");
         process.exit(1);
       }
 
@@ -58,8 +58,8 @@ export function registerUp(program: Command): void {
       const seedPath = getApiSeedPath();
 
       if (!existsSync(apiDist)) {
-        p.log.error(`No se encontró el bundle de la API en: ${apiDist}`);
-        p.log.warn("Asegúrate de haber instalado el CLI desde un build completo.");
+        p.log.error(`API bundle not found at: ${apiDist}`);
+        p.log.warn("Make sure you installed the CLI from a complete build.");
         process.exit(1);
       }
 
@@ -70,33 +70,33 @@ export function registerUp(program: Command): void {
 
       // ── 4. Preparar base de datos (db push) ───────────────────────────────
       const s1 = p.spinner();
-      s1.start(isNewDb ? `Creando base de datos en ${dbPath}` : `Actualizando esquema de base de datos`);
+      s1.start(isNewDb ? `Creating database at ${dbPath}` : `Updating database schema`);
       try {
         runPrisma("db push --skip-generate --accept-data-loss", apiPrisma, databaseUrl);
-        s1.stop(isNewDb ? "Base de datos creada ✓" : "Esquema actualizado ✓");
+        s1.stop(isNewDb ? "Database created ✓" : "Schema updated ✓");
       } catch (err) {
-        s1.stop("Advertencia: no se pudo ejecutar la migración automática");
+        s1.stop("Warning: could not run the automatic migration");
         p.log.warn(String(err));
-        p.log.warn("El servidor intentará conectarse a la DB de todas formas.");
+        p.log.warn("The server will try to connect to the DB anyway.");
       }
 
       // ── 4.5 Generar cliente Prisma para esta instalación global ───────────
       const s15 = p.spinner();
-      s15.start("Generando cliente Prisma local");
+      s15.start("Generating local Prisma client");
       try {
         runPrisma("generate --schema schema.prisma", apiPrisma, databaseUrl);
-        s15.stop("Cliente Prisma generado ✓");
+        s15.stop("Prisma client generated ✓");
       } catch (err) {
-        s15.stop("Error al generar cliente Prisma");
+        s15.stop("Failed to generate Prisma client");
         p.log.error(String(err));
-        p.log.warn("Reinstala el CLI y vuelve a intentar.");
+        p.log.warn("Reinstall the CLI and try again.");
         process.exit(1);
       }
 
       // ── 5. Seed automático en base de datos nueva ─────────────────────────
       if (isNewDb && existsSync(seedPath)) {
         const s2 = p.spinner();
-        s2.start("Ejecutando seed inicial (usuario admin)");
+        s2.start("Running initial seed (admin user)");
         try {
           const enginePath = getPrismaEngineLibraryPath();
           const seedEnv: NodeJS.ProcessEnv = {
@@ -111,11 +111,11 @@ export function registerUp(program: Command): void {
             timeout: 30_000,
             shell: process.platform === "win32" ? "cmd.exe" : "/bin/sh",
           });
-          s2.stop("Seed ejecutado ✓");
+          s2.stop("Seed completed ✓");
         } catch (err) {
-          s2.stop("Advertencia: no se pudo ejecutar el seed inicial");
+          s2.stop("Warning: could not run the initial seed");
           p.log.warn(String(err));
-          p.log.warn("Puedes crear el usuario admin manualmente desde la UI.");
+          p.log.warn("You can create the admin user manually from the UI.");
         }
       }
 
@@ -138,16 +138,16 @@ export function registerUp(program: Command): void {
       const assistConfigured = isAssistLlmConfigured(auth);
       if (!assistConfigured && !serverEnv["ASSIST_LLM_API_KEY"] && !serverEnv["OPENAI_API_KEY"]) {
         p.log.warn(
-          "El modo asistido con IA no está configurado. Para habilitarlo ejecuta:\n" +
+          "AI-assisted mode is not configured. To enable it, run:\n" +
             "  ghostly config",
         );
       } else if (isCliLlmProvider(auth.llm?.provider)) {
-        p.log.info("Modo asistido: Cursor Agent CLI (auth local)");
+        p.log.info("Assisted mode: Cursor Agent CLI (local auth)");
       }
 
       // ── 8. Lanzar servidor (API + Frontend estático) ──────────────────────
       const apiEntry = `${apiDist}/index.js`;
-      p.log.info(`Iniciando servidor en http://localhost:${port}`);
+      p.log.info(`Starting server at http://localhost:${port}`);
 
       const server = spawn(process.execPath, [apiEntry], {
         env: serverEnv,
@@ -156,13 +156,13 @@ export function registerUp(program: Command): void {
       });
 
       server.on("error", (err) => {
-        p.log.error(`Error al iniciar el servidor: ${err.message}`);
+        p.log.error(`Failed to start the server: ${err.message}`);
         process.exit(1);
       });
 
       server.on("close", (code) => {
         if (code !== 0 && code !== null) {
-          p.log.error(`El servidor finalizó con código: ${code}`);
+          p.log.error(`The server exited with code: ${code}`);
         }
         process.exit(code ?? 0);
       });
@@ -182,17 +182,17 @@ export function registerUp(program: Command): void {
       }
 
       p.outro(`
-✅  Ghostly en ejecución
+✅  Ghostly is running
 
-  Servicios:
+  Services:
   • Dashboard + API:   http://localhost:${port}
   • Healthcheck:       http://localhost:${port}/health
 
-  Acceso inicial (seed):
+  Initial login (seed):
   • Email:             ${DEFAULT_ADMIN_EMAIL}
   • Password:          ${DEFAULT_ADMIN_PASSWORD}
 
-  Presiona Ctrl+C para detener.
+  Press Ctrl+C to stop.
       `.trim());
     });
 }

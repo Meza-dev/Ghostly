@@ -8,7 +8,12 @@
  * HALLAZGO ("el test hizo su trabajo, encontró un bug") — usa el tono
  * `primary` (marca), no `error`, para que el dashboard no lo presente como
  * vergüenza.
+ *
+ * El texto NO vive acá: la meta expone keys i18n (`labelKey`/`shortKey`) que
+ * cada componente resuelve con `t()` en el render.
  */
+
+import type { MessageKey } from "../i18n/en";
 
 export type Verdict =
   | "success"
@@ -21,9 +26,10 @@ export type Verdict =
 export type VerdictTone = "success" | "primary" | "warning" | "muted";
 
 export type VerdictMeta = {
-  label: string;
-  /** Frase corta para listados/badges. */
-  shortLabel: string;
+  /** Key i18n de la etiqueta larga (tooltip del badge). */
+  labelKey: MessageKey;
+  /** Key i18n de la frase corta para listados/badges. */
+  shortKey: MessageKey;
   tone: VerdictTone;
   /** true solo para `fail-app-bug` — dispara la presentación de "hallazgo". */
   isFinding: boolean;
@@ -31,46 +37,46 @@ export type VerdictMeta = {
 
 const VERDICT_META: Record<Verdict, VerdictMeta> = {
   success: {
-    label: "Objetivo cumplido y verificado",
-    shortLabel: "Éxito",
+    labelKey: "verdict.success.label",
+    shortKey: "verdict.success.short",
     tone: "success",
     isFinding: false,
   },
   "fail-app-bug": {
-    label: "Ghostly encontró un problema en tu app",
-    shortLabel: "Bug encontrado",
+    labelKey: "verdict.failAppBug.label",
+    shortKey: "verdict.failAppBug.short",
     tone: "primary",
     isFinding: true,
   },
   "fail-test-broken": {
-    label: "El plan o la condición de victoria están mal definidos",
-    shortLabel: "Test mal armado",
+    labelKey: "verdict.failTestBroken.label",
+    shortKey: "verdict.failTestBroken.short",
     tone: "warning",
     isFinding: false,
   },
   "fail-agent-lost": {
-    label: "Ghostly no encontró el camino aunque existía",
-    shortLabel: "Ghostly se perdió",
+    labelKey: "verdict.failAgentLost.label",
+    shortKey: "verdict.failAgentLost.short",
     tone: "warning",
     isFinding: false,
   },
   "inconclusive-environment": {
-    label: "El entorno falló (timeout, red, app caída)",
-    shortLabel: "Entorno inestable",
+    labelKey: "verdict.inconclusiveEnvironment.label",
+    shortKey: "verdict.inconclusiveEnvironment.short",
     tone: "muted",
     isFinding: false,
   },
   inconclusive: {
-    label: "La evidencia no alcanza para afirmar nada",
-    shortLabel: "Sin evidencia suficiente",
+    labelKey: "verdict.inconclusive.label",
+    shortKey: "verdict.inconclusive.short",
     tone: "muted",
     isFinding: false,
   },
 };
 
 const UNCLASSIFIED_META: VerdictMeta = {
-  label: "Sin clasificar (run anterior a v0.2)",
-  shortLabel: "Sin clasificar",
+  labelKey: "verdict.unclassified.label",
+  shortKey: "verdict.unclassified.short",
   tone: "muted",
   isFinding: false,
 };

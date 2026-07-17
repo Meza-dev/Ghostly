@@ -5,6 +5,7 @@ import type { ResolvedLlmConfig } from "./config.js";
 import { CLI_AGENT_REGISTRY } from "./providers/cli-registry.js";
 import { resolveCliBin, resolveDefaultCliWorkspace } from "./resolve-cli-bin.js";
 import type { UserLlmSettingsRecord } from "../store/llm-settings.js";
+import { msg, type Lang } from "../i18n/pick.js";
 
 function parseIntOr(raw: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(raw ?? "", 10);
@@ -46,6 +47,7 @@ export type LlmStatus = {
 export async function getLlmStatus(
   config: ResolvedLlmConfig,
   source: LlmStatus["source"] = "env",
+  lang: Lang = "en",
 ): Promise<LlmStatus> {
   const provider = createLlmProvider(config);
   const catalog = getCatalogEntry(
@@ -54,7 +56,7 @@ export async function getLlmStatus(
 
   let cursorCli: LlmStatus["cursorCli"];
   if (config.providerId === "cursor-cli") {
-    cursorCli = await probeCursorCli(config);
+    cursorCli = await probeCursorCli(config, lang);
   }
 
   return {
@@ -76,25 +78,26 @@ function inferCatalogId(config: ResolvedLlmConfig): string {
 
 async function probeCursorCli(
   config: ResolvedLlmConfig,
+  lang: Lang,
 ): Promise<NonNullable<LlmStatus["cursorCli"]>> {
   if (process.env.CURSOR_API_KEY?.trim()) {
     return {
       installed: true,
       loggedIn: true,
-      message: "CURSOR_API_KEY configurada",
+      message: msg("llm.cursorApiKeyConfigured", lang),
     };
   }
   const provider = createLlmProvider(config);
   if (!provider) {
-    return { installed: false, loggedIn: false, message: "Cursor CLI no configurado" };
+    return { installed: false, loggedIn: false, message: msg("llm.cursorCliNotConfigured", lang) };
   }
   const available = await provider.isAvailable();
   return {
     installed: available,
     loggedIn: available,
     message: available
-      ? "Cursor Agent CLI listo"
-      : `Instala Cursor Agent o ejecuta 'agent login' (${config.cliBin})`,
+      ? msg("llm.cursorCliReady", lang)
+      : msg("llm.cursorCliInstallHint", lang, { cliBin: config.cliBin }),
   };
 }
 

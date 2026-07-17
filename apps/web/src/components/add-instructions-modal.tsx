@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLanguage } from "../context/language-context";
 import { ModalShell } from "./modal-shell";
 
 type Props = {
@@ -9,6 +10,7 @@ type Props = {
 
 /** Modal "Añadir instrucciones": textarea libre que se appendea al goal asistido. */
 export function AddInstructionsModal({ submitting, onClose, onSubmit }: Props) {
+  const { t } = useLanguage();
   const [text, setText] = useState("");
 
   function handleClose() {
@@ -24,11 +26,11 @@ export function AddInstructionsModal({ submitting, onClose, onSubmit }: Props) {
 
   return (
     <ModalShell onClose={handleClose} className="w-[440px]">
-      <span className="font-nav-active text-body text-foreground">Añadir instrucciones</span>
+      <span className="font-nav-active text-body text-foreground">{t("rerun.addInstructions.title")}</span>
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
           <label className="text-caption text-muted-fg" htmlFor="rerun-extra-instructions">
-            Instrucción adicional
+            {t("rerun.addInstructions.label")}
           </label>
           <textarea
             id="rerun-extra-instructions"
@@ -37,7 +39,7 @@ export function AddInstructionsModal({ submitting, onClose, onSubmit }: Props) {
             required
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Ejemplo: también validar el mensaje de bienvenida al finalizar."
+            placeholder={t("rerun.addInstructions.placeholder")}
             className="rounded-control-md border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
@@ -48,14 +50,14 @@ export function AddInstructionsModal({ submitting, onClose, onSubmit }: Props) {
             disabled={submitting}
             className="rounded-pill border border-border px-4 py-2 text-small font-button text-foreground hover:bg-accent disabled:opacity-50"
           >
-            Cancelar
+            {t("modal.cancel")}
           </button>
           <button
             type="submit"
             disabled={submitting || !text.trim()}
             className="rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95 disabled:opacity-50"
           >
-            {submitting ? "Reejecutando…" : "Aplicar y reejecutar"}
+            {submitting ? t("rerun.rerunning") : t("rerun.applyAndRerun")}
           </button>
         </div>
       </form>

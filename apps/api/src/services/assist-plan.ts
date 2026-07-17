@@ -6,6 +6,7 @@ import {
 import { z } from "zod";
 import { completeJson, getLlmDisplayModel, isLlmConfigured } from "../llm/client.js";
 import { LlmError } from "../llm/errors.js";
+import { msg, type Lang } from "../i18n/pick.js";
 
 export class AssistPlanError extends Error {
   status: number;
@@ -32,6 +33,7 @@ export type AssistPlanRequest = {
   maxSteps: number;
   maxTimeoutMs: number;
   timeoutMs: number;
+  lang?: Lang;
 };
 
 export type AssistPlanResult = {
@@ -249,6 +251,7 @@ async function callAssistLlm(
   goal: string,
   baseUrl: string,
   timeoutMs: number,
+  lang: Lang,
   retryHint?: string,
 ): Promise<unknown> {
   const configured = await isLlmConfigured();
@@ -281,7 +284,7 @@ async function callAssistLlm(
       { timeoutMs, label: "assist-plan", model: getLlmDisplayModel() },
     );
     if (Object.keys(parsed).length === 0) {
-      throw new AssistPlanError("Respuesta LLM vacía", 502);
+      throw new AssistPlanError(msg("assist.emptyLlmResponse", lang), 502);
     }
     const validated = z.unknown().parse(parsed);
     // eslint-disable-next-line no-console
@@ -292,17 +295,18 @@ async function callAssistLlm(
   } catch (error) {
     if (error instanceof AssistPlanError) throw error;
     if (error instanceof LlmError && error.status === 504) {
-      throw new AssistPlanError("Timeout al generar plan asistido", 504);
+      throw new AssistPlanError(msg("assist.planTimeout", lang), 504);
     }
     if (error instanceof LlmError) {
-      throw new AssistPlanError("No se pudo generar plan asistido", 502);
+      throw new AssistPlanError(msg("assist.planGenerationFailed", lang), 502);
     }
-    throw new AssistPlanError("Error al procesar respuesta del plan asistido", 502);
+    throw new AssistPlanError(msg("assist.planProcessingError", lang), 502);
   }
 }
 
 export async function generateAssistPlan(input: AssistPlanRequest): Promise<AssistPlanResult> {
   const model = getLlmDisplayModel();
+  const lang: Lang = input.lang ?? "en";
   logAssist("Inicio de generación de plan asistido", {
     baseUrl: input.baseUrl,
     maxSteps: input.maxSteps,
@@ -314,7 +318,7 @@ export async function generateAssistPlan(input: AssistPlanRequest): Promise<Assi
     maxTimeoutMs: input.maxTimeoutMs,
     enforceSameOrigin: true,
   };
-  let candidate = await callAssistLlm(input.goal, input.baseUrl, input.timeoutMs);
+  let candidate = await callAssistLlm(input.goal, input.baseUrl, input.timeoutMs, lang);
   let parsed = safeParseRunInput(candidate, guardrails);
 
   // Reintento: si los steps no validan, pedimos al modelo que corrija con el detalle del error
@@ -326,7 +330,7 @@ export async function generateAssistPlan(input: AssistPlanRequest): Promise<Assi
       .join(" | ");
     logAssist("Plan inválido, reintentando con feedback al modelo", { issueSummary });
     try {
-      candidate = await callAssistLlm(input.goal, input.baseUrl, input.timeoutMs, issueSummary);
+      candidate = await callAssistLlm(input.goal, input.baseUrl, input.timeoutMs, lang, issueSummary);
       parsed = safeParseRunInput(candidate, guardrails);
     } catch (error) {
       logAssist("Reintento al modelo falló", {
@@ -356,7 +360,7 @@ export async function generateAssistPlan(input: AssistPlanRequest): Promise<Assi
         message: issue.message,
       })),
     });
-    throw new AssistPlanError("Plan inválido según guardrails", 400);
+    throw new AssistPlanError(msg("assist.invalidPlan", lang), 400);
   }
 
   logAssist("Plan asistido validado", {

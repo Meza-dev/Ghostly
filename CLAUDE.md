@@ -94,8 +94,12 @@ Provider-agnostic. `factory.ts` + `providers/` select between `http-openai.ts` (
 - **ESM everywhere** (`"type": "module"`). Intra-repo imports use `.js` extensions in TS source (NodeNext resolution) — keep that even when importing `.ts` files.
 - Workspace deps use `workspace:*`; the runner is consumed by api and mcp-server as a built package (`dist/`), so **rebuild the runner** (`pnpm --filter @ghostly-io/runner build`) after changing it if a consumer imports from `dist`.
 - The runner is the only package with tests (vitest). Prefer adding pipeline/schema tests there.
-- Spanish is the product language — UI strings, prompts and comments are Spanish. Follow suit.
+- **The user-facing surface is bilingual EN/ES, English-first** — never hardcode UI strings. Web: call `t("key")` from `useLanguage()` (`apps/web/src/context/language-context.tsx`); add the English text to `apps/web/src/i18n/en.ts` (source of truth) and the Spanish to `es.ts`. `es.ts` is typed `Record<MessageKey, string>`, so a missing translation is a **compile error**. API error messages come from `apps/api/src/i18n/messages.ts` selected via the `Accept-Language` header. The CLI is English-only.
+  - Module-level maps can't call the hook — hold `MessageKey`s and resolve with `t()` at the render site (see `verdict.ts`).
+  - **LLM prompts and code comments stay Spanish** (repo convention). Never translate strings scraped from the target app (aria-label, placeholder) — they're the user's data, not our copy.
 - SQLite `dev.db` is local; `DATABASE_URL` in `.env` may be blank in dev (schema hardcodes `file:./dev.db`).
+- **`main` is protected**: direct pushes are rejected (*"Changes must be made through a pull request"*). Land everything via PR — push a branch, then `gh pr create --base main`. The repo is **public**: `docs/security-audit-*.md` and `docs/docker-deployment.md` are gitignored and must never be committed.
+- `pnpm typecheck` covers the whole monorepo and is green — keep it that way. `packages/tsconfig/base.json` sets `noUncheckedIndexedAccess`, so indexed access (`m[1]`, `arr[i]`) is `T | undefined`: guard it, don't assert it away with `!` or `as`.
 
 ## AI workflow conventions
 

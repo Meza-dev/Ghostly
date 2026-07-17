@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { authMiddleware } from "../middleware/auth.js";
 import { createProject, deleteProject, getAllProjects } from "../store/projects.js";
+import { msg, pickLang } from "../i18n/pick.js";
 
 export const projectsRouter = new Hono();
 
@@ -13,16 +14,17 @@ projectsRouter.get("/projects", async (c) => {
 });
 
 projectsRouter.post("/projects", async (c) => {
+  const lang = pickLang(c.req.header("Accept-Language"));
   const user = c.get("user");
   let body: { label?: unknown; color?: unknown };
   try {
     body = (await c.req.json()) as { label?: unknown; color?: unknown };
   } catch {
-    return c.json({ ok: false, error: "cuerpo JSON inválido" }, 400);
+    return c.json({ ok: false, error: msg("common.invalidJsonBody", lang) }, 400);
   }
 
   if (typeof body.label !== "string" || !body.label.trim()) {
-    return c.json({ ok: false, error: "label requerido" }, 400);
+    return c.json({ ok: false, error: msg("common.labelRequired", lang) }, 400);
   }
 
   const color = typeof body.color === "string" ? body.color : undefined;
@@ -31,11 +33,12 @@ projectsRouter.post("/projects", async (c) => {
 });
 
 projectsRouter.delete("/projects/:id", async (c) => {
+  const lang = pickLang(c.req.header("Accept-Language"));
   const user = c.get("user");
   try {
     await deleteProject(c.req.param("id"), user.id);
     return c.json({ ok: true });
   } catch {
-    return c.json({ ok: false, error: "not found" }, 404);
+    return c.json({ ok: false, error: msg("common.notFound", lang) }, 404);
   }
 });

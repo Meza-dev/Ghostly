@@ -1,6 +1,8 @@
 import { useLocation, useNavigate } from "react-router-dom";
+import { useLanguage } from "../context/language-context";
 
 export function StatusBar() {
+  const { t } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -17,7 +19,7 @@ export function StatusBar() {
   return (
     <footer className="flex min-h-9 shrink-0 items-center justify-between border-t border-border bg-bg-shell px-6 py-2.5 font-mono text-micro text-muted-fg">
       <div className="flex items-center gap-3">
-        <span>runner: ready</span>
+        <span>{t("statusBar.runnerReady")}</span>
       </div>
       <div className="flex items-center gap-2">
         <button
@@ -25,11 +27,11 @@ export function StatusBar() {
           onClick={() => window.dispatchEvent(new CustomEvent("ghostly:open-command-palette"))}
           className="transition-colors hover:text-foreground"
         >
-          Ctrl + Shift + K: buscar
+          {t("statusBar.search")}
         </button>
         <span>·</span>
         <button type="button" onClick={runQuickAction} className="transition-colors hover:text-foreground">
-          Ctrl + Shift + N: nueva ejecución
+          {t("statusBar.newRun")}
         </button>
       </div>
     </footer>

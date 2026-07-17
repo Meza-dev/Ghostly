@@ -8,6 +8,7 @@ import { AssistPlanError, generateAssistPlan } from "../services/assist-plan.js"
 import { buildTargetUnreachableMessage, isTargetUnreachableError } from "../lib/target-unreachable.js";
 import { createStrategist } from "../services/assist-orchestrator.js";
 import { projectExistsForUser } from "../store/projects.js";
+import { msg, pickLang } from "../i18n/pick.js";
 
 const planRequestSchema = z.object({
   project: z.string().min(1),
@@ -21,8 +22,9 @@ const appConfig = loadConfig();
 export const planRouter = new Hono();
 
 planRouter.post("/plan", async (c) => {
+  const lang = pickLang(c.req.header("Accept-Language"));
   if (!appConfig.assist.enabled) {
-    return c.json({ ok: false, error: "not found" }, 404);
+    return c.json({ ok: false, error: msg("common.notFound", lang) }, 404);
   }
 
   const user = c.get("user");
@@ -30,12 +32,12 @@ planRouter.post("/plan", async (c) => {
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ ok: false, error: "cuerpo JSON inválido" }, 400);
+    return c.json({ ok: false, error: msg("common.invalidJsonBody", lang) }, 400);
   }
 
   const parsedReq = planRequestSchema.safeParse(body);
   if (!parsedReq.success) {
-    return c.json({ ok: false, error: "validación", details: parsedReq.error.flatten() }, 400);
+    return c.json({ ok: false, error: msg("common.validationError", lang), details: parsedReq.error.flatten() }, 400);
   }
 
   const project = parsedReq.data.project.trim();
@@ -49,19 +51,19 @@ planRouter.post("/plan", async (c) => {
   });
   if (goal.length > appConfig.assist.maxGoalChars) {
     return c.json(
-      { ok: false, error: `goal excede el máximo permitido (${appConfig.assist.maxGoalChars})` },
+      { ok: false, error: msg("plan.goalTooLong", lang, { max: appConfig.assist.maxGoalChars }) },
       400,
     );
   }
 
   const projectIsValid = await projectExistsForUser(project, user.id);
   if (!projectIsValid) {
-    return c.json({ ok: false, error: "project inválido" }, 400);
+    return c.json({ ok: false, error: msg("plan.invalidProject", lang) }, 400);
   }
 
   const mode = parsedReq.data.mode ?? "v1";
   if (mode === "v2" && !appConfig.assistV2.enabled) {
-    return c.json({ ok: false, error: "assist v2 deshabilitado" }, 409);
+    return c.json({ ok: false, error: msg("plan.assistV2Disabled", lang) }, 409);
   }
 
   try {
@@ -89,7 +91,7 @@ planRouter.post("/plan", async (c) => {
             baseUrl: parsedReq.data.baseUrl,
             error: detail,
           });
-          throw new AssistPlanError(buildTargetUnreachableMessage(parsedReq.data.baseUrl), 502);
+          throw new AssistPlanError(buildTargetUnreachableMessage(parsedReq.data.baseUrl, lang), 502);
         }
         throw reconError;
       }
@@ -130,6 +132,7 @@ planRouter.post("/plan", async (c) => {
       maxSteps: appConfig.assist.maxSteps,
       maxTimeoutMs: appConfig.assist.maxTimeoutMs,
       timeoutMs: appConfig.assist.llmTimeoutMs,
+      lang,
     });
     // eslint-disable-next-line no-console
     console.log("[assist-plan] Plan enviado al cliente", {
@@ -158,6 +161,6 @@ planRouter.post("/plan", async (c) => {
       project,
       error: error instanceof Error ? error.message : String(error),
     });
-    return c.json({ ok: false, error: "Error interno al generar plan" }, 500);
+    return c.json({ ok: false, error: msg("plan.internalError", lang) }, 500);
   }
 });

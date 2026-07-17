@@ -46,7 +46,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     if (!res.ok) {
       const data = (await res.json()) as { error?: string };
-      return data.error ?? "Error de login";
+      // El context no puede usar useLanguage(); devolvemos una key estable y la traducimos en el render de pages/login.
+      return data.error ?? "auth.login.error";
     }
     const data = (await res.json()) as { token: string; user: AuthUser };
     setToken(data.token);

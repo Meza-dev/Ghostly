@@ -2,10 +2,12 @@ import { Ghost, Loader2, Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/auth-context";
+import { useLanguage } from "../context/language-context";
 import { useTheme } from "../context/theme-context";
 
 export function LoginPage() {
   const { login } = useAuth();
+  const { t } = useLanguage();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
@@ -50,8 +52,8 @@ export function LoginPage() {
         type="button"
         onClick={toggleTheme}
         className="absolute right-4 top-4 z-20 flex h-9 w-9 items-center justify-center rounded-control-sm border border-border bg-card text-muted-fg shadow-sm transition-colors hover:bg-muted hover:text-foreground"
-        aria-label={theme === "dark" ? "Activar modo claro" : "Activar modo oscuro"}
-        title={theme === "dark" ? "Modo claro" : "Modo oscuro"}
+        aria-label={theme === "dark" ? t("login.theme.toLight") : t("login.theme.toDark")}
+        title={theme === "dark" ? t("login.theme.lightTitle") : t("login.theme.darkTitle")}
       >
         {theme === "dark" ? <Sun className="h-4 w-4" strokeWidth={1.8} /> : <Moon className="h-4 w-4" strokeWidth={1.8} />}
       </button>
@@ -124,10 +126,10 @@ export function LoginPage() {
             </div>
           </div>
           <h1 className="font-serif text-[30px] font-medium leading-[1.1] tracking-[-0.02em] text-foreground">
-            El fantasma <em className="text-primary not-italic">prueba por ti</em>.
+            {t("login.hero.titleLead")}<em className="text-primary not-italic">{t("login.hero.titleEmphasis")}</em>.
           </h1>
           <p className="mt-3 text-small text-muted-fg">
-            Describe el objetivo. Ghostly navega, interactúa y te avisa cuando algo se rompe.
+            {t("login.hero.subtitle")}
           </p>
         </div>
         <div className="relative flex items-center justify-between text-caption text-muted-fg">
@@ -139,9 +141,9 @@ export function LoginPage() {
         <form onSubmit={handleSubmit} className="w-full max-w-[380px]">
           <div className="mb-5">
             <span className="text-overline font-overline uppercase text-muted-fg" style={{ letterSpacing: "var(--tracking-label)" }}>
-              Acceder
+              {t("login.form.overline")}
             </span>
-            <h2 className="mt-2 text-[26px] font-title leading-tight tracking-[-0.02em] text-foreground">Bienvenida de vuelta</h2>
+            <h2 className="mt-2 text-[26px] font-title leading-tight tracking-[-0.02em] text-foreground">{t("login.form.title")}</h2>
           </div>
 
           <div className="flex flex-col gap-4">
@@ -151,7 +153,7 @@ export function LoginPage() {
               htmlFor="email"
               style={{ fontSize: "var(--text-caption)", letterSpacing: "var(--tracking-label)" }}
             >
-              Email
+              {t("login.form.emailLabel")}
             </label>
             <div
               style={{
@@ -175,7 +177,7 @@ export function LoginPage() {
                 autoFocus
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="tu@correo.dev"
+                placeholder={t("login.form.emailPlaceholder")}
                 className="login-auth-input w-full bg-transparent text-foreground placeholder:text-muted-fg focus:outline-none"
                 onFocus={() => setEmailFocused(true)}
                 onBlur={() => setEmailFocused(false)}
@@ -196,7 +198,7 @@ export function LoginPage() {
                 htmlFor="password"
                 style={{ fontSize: "var(--text-caption)", letterSpacing: "var(--tracking-label)" }}
               >
-                Contraseña
+                {t("login.form.passwordLabel")}
               </label>
             </div>
             <div
@@ -236,7 +238,7 @@ export function LoginPage() {
 
           {error && (
             <p className="rounded-control-lg bg-error px-3 py-2 text-caption text-error-fg">
-              {error}
+              {error === "auth.login.error" ? t("auth.login.error") : error}
             </p>
           )}
 
@@ -281,17 +283,17 @@ export function LoginPage() {
             {loading ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-                Materializando…
+                {t("login.form.submitLoading")}
               </>
             ) : (
-              <>Entrar</>
+              <>{t("login.form.submit")}</>
             )}
           </button>
 
           <p className="text-center text-caption text-muted-fg">
-            ¿Sin cuenta?{" "}
+            {t("login.form.noAccount")}{" "}
             <button type="button" className="font-button text-foreground hover:text-primary">
-              Registrarse
+              {t("login.form.signUp")}
             </button>
           </p>
           </div>

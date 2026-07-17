@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/auth-context";
 import { AppProvider } from "./context/app-context";
+import { useLanguage } from "./context/language-context";
 import { CommandPalette } from "./components/command-palette";
 import { Header } from "./components/header";
 import { NewProjectModal } from "./components/new-project-modal";
@@ -26,11 +27,12 @@ function GlobalNewProjectModal() {
 
 function ProtectedLayout() {
   const { user, loading } = useAuth();
+  const { t } = useLanguage();
 
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center text-muted-fg text-small">
-        Cargando…
+        {t("common.loading")}
       </div>
     );
   }
@@ -52,7 +54,7 @@ function ProtectedLayout() {
                   <Route path="/" element={<Overview />} />
                   <Route path="/runs" element={<RunsPanel />} />
                   <Route path="/runs/:id" element={<RunDetail />} />
-                  <Route path="/flows" element={<PlaceholderPage title="Flujos & casos" />} />
+                  <Route path="/flows" element={<PlaceholderPage title={t("app.nav.flows")} />} />
                   <Route path="/settings" element={<SettingsPage />} />
                 </Routes>
               </main>
@@ -77,9 +79,10 @@ export function App() {
 }
 
 function PlaceholderPage({ title }: { title: string }) {
+  const { t } = useLanguage();
   return (
     <div className="flex h-full items-center justify-center text-muted-fg text-small">
-      {title} — próximamente
+      {t("app.placeholder.comingSoon", { title })}
     </div>
   );
 }

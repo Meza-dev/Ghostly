@@ -46,7 +46,7 @@ export async function checkCursorCliAvailable(): Promise<{
   message: string;
 }> {
   if (process.env.CURSOR_API_KEY?.trim()) {
-    return { ok: true, message: "CURSOR_API_KEY configurada" };
+    return { ok: true, message: "CURSOR_API_KEY is set" };
   }
   const bin = resolveCursorAgentBin();
   try {
@@ -54,7 +54,7 @@ export async function checkCursorCliAvailable(): Promise<{
   } catch {
     return {
       ok: false,
-      message: `No se encontró '${bin}'. Instala Cursor Agent CLI o define CURSOR_AGENT_BIN.`,
+      message: `'${bin}' not found. Install the Cursor Agent CLI or set CURSOR_AGENT_BIN.`,
     };
   }
   try {
@@ -62,9 +62,9 @@ export async function checkCursorCliAvailable(): Promise<{
     if (/logged in|✓/i.test(stdout)) {
       return { ok: true, message: stdout.trim() };
     }
-    return { ok: false, message: "Cursor Agent no autenticado. Ejecuta: agent login" };
+    return { ok: false, message: "Cursor Agent is not authenticated. Run: agent login" };
   } catch {
-    return { ok: false, message: "No se pudo verificar la sesión de Cursor Agent (agent status)" };
+    return { ok: false, message: "Could not verify the Cursor Agent session (agent status)" };
   }
 }
 

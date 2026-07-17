@@ -1,3 +1,4 @@
+import { useLanguage } from "../context/language-context";
 import { getEffectiveVerdictMeta, type VerdictTone } from "../lib/verdict";
 
 const TONE_CLASSES: Record<VerdictTone, string> = {
@@ -22,14 +23,15 @@ type Props = {
 
 /** Badge de veredicto (spec §5/§6 — taxonomía de 6 estados + "sin clasificar"). */
 export function VerdictBadge({ verdict, status, size = "md" }: Props) {
+  const { t } = useLanguage();
   const meta = getEffectiveVerdictMeta(verdict, status);
   const sizing = size === "sm" ? "h-5 px-2 text-badge" : "h-6 px-2.5 text-caption";
   return (
     <span
       className={`inline-flex items-center rounded-pill font-button ${sizing} ${TONE_CLASSES[meta.tone]}`}
-      title={meta.label}
+      title={t(meta.labelKey)}
     >
-      {meta.shortLabel}
+      {t(meta.shortKey)}
     </span>
   );
 }

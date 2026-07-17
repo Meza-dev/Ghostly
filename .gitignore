@@ -28,3 +28,12 @@ Ghostly.zip
 # Documentos sensibles — no publicar en repo público (mapa de vulnerabilidades / deployment)
 docs/security-audit-2026-07.md
 docs/docker-deployment.md
+
+# Tooling local de agentes/IA — config y caches de la máquina, no del proyecto
+.agents/
+.atl/
+.claude/
+.codebase-memory/
+skills-lock.json
+scripts/setup-claude-code.ps1
+dev-logs.txt

@@ -14,7 +14,11 @@ import {
   XCircle,
 } from "lucide-react";
 import { useState, type ComponentType, type SVGProps } from "react";
+import { useLanguage } from "../context/language-context";
+import type { MessageKey } from "../i18n/en";
 import { getVerdictMeta } from "../lib/verdict";
+
+type TranslateFn = ReturnType<typeof useLanguage>["t"];
 
 export type AssistEventType =
   | "recon"
@@ -44,29 +48,29 @@ export type AssistEvent = {
 };
 
 type EventMeta = {
-  label: string;
+  labelKey: MessageKey;
   tone: "info" | "success" | "warn" | "error" | "muted";
   icon: ComponentType<SVGProps<SVGSVGElement>>;
 };
 
 const EVENT_META: Record<AssistEventType, EventMeta> = {
-  recon: { label: "Reconocimiento", tone: "info", icon: Eye },
-  plan_chunk: { label: "Plan propuesto", tone: "info", icon: ClipboardList },
-  loop_state: { label: "Estado del loop", tone: "info", icon: Bot },
-  horizon_start: { label: "Horizonte iniciado", tone: "info", icon: Play },
-  horizon_end: { label: "Horizonte finalizado", tone: "info", icon: CheckCircle2 },
-  victory_check: { label: "Chequeo de victoria", tone: "warn", icon: ShieldAlert },
-  memory_hit: { label: "Memoria reutilizada", tone: "success", icon: Heart },
-  memory_miss: { label: "Sin memoria utilizable", tone: "muted", icon: HeartCrack },
-  step_start: { label: "Paso iniciado", tone: "muted", icon: Play },
-  step_success: { label: "Paso OK", tone: "success", icon: CheckCircle2 },
-  step_failure: { label: "Paso falló", tone: "error", icon: XCircle },
-  heal_start: { label: "Healer analizando", tone: "warn", icon: ShieldAlert },
-  heal_action: { label: "Healer aplicando acción", tone: "warn", icon: Bot },
-  heal_success: { label: "Healer recuperó", tone: "success", icon: Heart },
-  heal_failure: { label: "Healer falló", tone: "error", icon: HeartCrack },
-  judge_verdict: { label: "Veredicto del juez", tone: "warn", icon: Gavel },
-  run_end: { label: "Fin de ejecución", tone: "info", icon: FlagTriangleRight },
+  recon: { labelKey: "timeline.event.recon", tone: "info", icon: Eye },
+  plan_chunk: { labelKey: "timeline.event.planChunk", tone: "info", icon: ClipboardList },
+  loop_state: { labelKey: "timeline.event.loopState", tone: "info", icon: Bot },
+  horizon_start: { labelKey: "timeline.event.horizonStart", tone: "info", icon: Play },
+  horizon_end: { labelKey: "timeline.event.horizonEnd", tone: "info", icon: CheckCircle2 },
+  victory_check: { labelKey: "timeline.event.victoryCheck", tone: "warn", icon: ShieldAlert },
+  memory_hit: { labelKey: "timeline.event.memoryHit", tone: "success", icon: Heart },
+  memory_miss: { labelKey: "timeline.event.memoryMiss", tone: "muted", icon: HeartCrack },
+  step_start: { labelKey: "timeline.event.stepStart", tone: "muted", icon: Play },
+  step_success: { labelKey: "timeline.event.stepSuccess", tone: "success", icon: CheckCircle2 },
+  step_failure: { labelKey: "timeline.event.stepFailure", tone: "error", icon: XCircle },
+  heal_start: { labelKey: "timeline.event.healStart", tone: "warn", icon: ShieldAlert },
+  heal_action: { labelKey: "timeline.event.healAction", tone: "warn", icon: Bot },
+  heal_success: { labelKey: "timeline.event.healSuccess", tone: "success", icon: Heart },
+  heal_failure: { labelKey: "timeline.event.healFailure", tone: "error", icon: HeartCrack },
+  judge_verdict: { labelKey: "timeline.event.judgeVerdict", tone: "warn", icon: Gavel },
+  run_end: { labelKey: "timeline.event.runEnd", tone: "info", icon: FlagTriangleRight },
 };
 
 const TONE_CLASSES: Record<EventMeta["tone"], string> = {
@@ -77,15 +81,15 @@ const TONE_CLASSES: Record<EventMeta["tone"], string> = {
   muted: "text-muted-fg",
 };
 
-function formatPayload(type: AssistEventType, payload: Record<string, unknown>): string {
+function formatPayload(t: TranslateFn, type: AssistEventType, payload: Record<string, unknown>): string {
   if (type === "recon") {
     const nodes = payload.nodeCount ?? 0;
     const url = typeof payload.url === "string" ? payload.url : "";
-    return `url=${url} · nodos=${nodes}`;
+    return t("timeline.payload.recon", { url, nodes: String(nodes) });
   }
   if (type === "plan_chunk") {
     const steps = Array.isArray(payload.steps) ? payload.steps.length : 0;
-    return `${steps} pasos propuestos${payload.hasMore ? " (hay más)" : ""}`;
+    return `${t("timeline.payload.planChunk", { steps })}${payload.hasMore ? t("timeline.payload.hasMore") : ""}`;
   }
   if (type === "loop_state") {
     const state = typeof payload.state === "string" ? payload.state : "?";
@@ -95,7 +99,7 @@ function formatPayload(type: AssistEventType, payload: Record<string, unknown>):
   if (type === "horizon_start" || type === "horizon_end") {
     const h = payload.horizon ?? "?";
     const pending = payload.pendingSteps ?? "?";
-    return `horizonte=${h} · pendientes=${pending}`;
+    return t("timeline.payload.horizon", { horizon: String(h), pending: String(pending) });
   }
   if (type === "victory_check") {
     // `objectiveLikelyCompleted`/`terminalStep` fueron eliminados del motor en
@@ -111,13 +115,16 @@ function formatPayload(type: AssistEventType, payload: Record<string, unknown>):
     const verdict = typeof payload.verdict === "string" ? payload.verdict : "?";
     const confidence = typeof payload.confidence === "string" ? payload.confidence : "?";
     const meta = getVerdictMeta(verdict);
-    return `motivo=${reason} · veredicto=${meta.shortLabel} · confianza=${confidence}`;
+    return t("timeline.payload.judge", { reason, verdict: t(meta.shortKey), confidence });
   }
   if (type === "memory_hit") {
-    return `horizonte=${payload.horizon ?? "?"} · candidatos=${payload.candidates ?? "?"}`;
+    return t("timeline.payload.memoryHit", {
+      horizon: String(payload.horizon ?? "?"),
+      candidates: String(payload.candidates ?? "?"),
+    });
   }
   if (type === "memory_miss") {
-    return `horizonte=${payload.horizon ?? "?"}`;
+    return t("timeline.payload.memoryMiss", { horizon: String(payload.horizon ?? "?") });
   }
   if (type === "step_start" || type === "step_success" || type === "step_failure") {
     const step = payload.step;
@@ -131,13 +138,20 @@ function formatPayload(type: AssistEventType, payload: Record<string, unknown>):
     return `${step ? JSON.stringify(step) : ""}${rationale}`;
   }
   if (type === "heal_start") {
-    return `intento ${payload.attempt ?? "?"}/${payload.maxAttempts ?? "?"}`;
+    return t("timeline.payload.healStart", {
+      attempt: String(payload.attempt ?? "?"),
+      max: String(payload.maxAttempts ?? "?"),
+    });
   }
   if (type === "heal_failure") {
     return typeof payload.error === "string" ? payload.error : typeof payload.reason === "string" ? payload.reason : "";
   }
   if (type === "run_end") {
-    return `ok=${payload.ok} · pasos=${payload.totalSteps} · fallados=${payload.failedSteps}`;
+    return t("timeline.payload.runEnd", {
+      ok: String(payload.ok),
+      steps: String(payload.totalSteps),
+      failed: String(payload.failedSteps),
+    });
   }
   return "";
 }
@@ -145,6 +159,7 @@ function formatPayload(type: AssistEventType, payload: Record<string, unknown>):
 type Props = { events: AssistEvent[] };
 
 export function AssistTimeline({ events }: Props) {
+  const { t, lang } = useLanguage();
   const [open, setOpen] = useState(false);
   if (!events || events.length === 0) return null;
   return (
@@ -160,8 +175,8 @@ export function AssistTimeline({ events }: Props) {
           <ChevronRight className="h-3.5 w-3.5 text-muted-fg" strokeWidth={2} />
         )}
         <Bot className="h-4 w-4 text-primary" strokeWidth={2} />
-        <span className="font-nav-active text-small text-foreground">Timeline asistido (v2)</span>
-        <span className="text-caption text-muted-fg">· {events.length} eventos</span>
+        <span className="font-nav-active text-small text-foreground">{t("timeline.title")}</span>
+        <span className="text-caption text-muted-fg">{t("timeline.eventCount", { count: events.length })}</span>
       </button>
       {open && (
       <ol className="flex max-h-80 flex-col gap-1 overflow-y-auto pr-1">
@@ -169,7 +184,7 @@ export function AssistTimeline({ events }: Props) {
           const meta = EVENT_META[evt.type] ?? EVENT_META.run_end;
           const Icon = meta.icon;
           const tone = TONE_CLASSES[meta.tone];
-          const payloadSummary = formatPayload(evt.type, evt.payload);
+          const payloadSummary = formatPayload(t, evt.type, evt.payload);
           return (
             <li
               key={evt.seq}
@@ -178,14 +193,14 @@ export function AssistTimeline({ events }: Props) {
               <Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${tone}`} strokeWidth={2} />
               <div className="flex min-w-0 flex-1 flex-col">
                 <div className="flex items-center gap-2 text-foreground">
-                  <span className="font-button">{meta.label}</span>
+                  <span className="font-button">{t(meta.labelKey)}</span>
                   {evt.stepIndex !== undefined && (
                     <span className="rounded-pill bg-card px-1.5 py-0.5 text-micro text-muted-fg">
-                      paso {evt.stepIndex + 1}
+                      {t("timeline.step", { n: evt.stepIndex + 1 })}
                     </span>
                   )}
                   <span className="ml-auto text-micro text-muted-fg">
-                    {new Date(evt.at).toLocaleTimeString("es")}
+                    {new Date(evt.at).toLocaleTimeString(lang)}
                   </span>
                 </div>
                 {payloadSummary && (
