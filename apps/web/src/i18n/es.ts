@@ -347,4 +347,13 @@ export const es: Record<MessageKey, string> = {
   "app.nav.flows": "Flujos & casos",
   "app.placeholder.comingSoon": "{title} — próximamente",
   "auth.login.error": "Error de login",
+  // final-sweep — field labels
+  "field.email": "Email",
+  "field.tel": "Teléfono",
+  "field.password": "Contraseña",
+  "field.text": "Texto",
+  "field.number": "Número",
+  "field.search": "Búsqueda",
+  "field.url": "URL",
+  "field.date": "Fecha",
 };

@@ -345,6 +345,15 @@ export const en = {
   "app.nav.flows": "Flows & cases",
   "app.placeholder.comingSoon": "{title} — coming soon",
   "auth.login.error": "Login error",
+  // final-sweep — field labels
+  "field.email": "Email",
+  "field.tel": "Phone",
+  "field.password": "Password",
+  "field.text": "Text",
+  "field.number": "Number",
+  "field.search": "Search",
+  "field.url": "URL",
+  "field.date": "Date",
 } as const;
 
 export type MessageKey = keyof typeof en;

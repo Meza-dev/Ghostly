@@ -1,11 +1,19 @@
 import type { Step } from "../../../../packages/runner/src/schema.js";
+import type { MessageKey } from "../i18n/en";
+
+/**
+ * Etiqueta de un campo editable. `key` cuando se derivó del `type` del input
+ * (texto nuestro ⇒ traducible); `text` cuando salió del selector
+ * (aria-label/placeholder/name/id de la app del usuario ⇒ NO traducible).
+ */
+export type FieldLabel = { key: MessageKey } | { text: string };
 
 /** Campo `fill` editable derivado de un run ya ejecutado, listo para el modal "Cambiar datos". */
 export type EditableFillField = {
   /** Posición del step dentro de `rerunnableSteps` — clave determinista para overridear. */
   replayIndex: number;
-  /** Etiqueta legible derivada del selector. */
-  label: string;
+  /** Etiqueta legible derivada del selector — se resuelve con `t()` en el render. */
+  label: FieldLabel;
   sensitive: boolean;
   /** Solo presente cuando el campo NO es sensible (nunca se expone un valor previo sensible). */
   currentValue?: string;
@@ -20,15 +28,16 @@ const NAME_RE = /\[name=["']([^"']+)["']\]/i;
 const ID_RE = /#([A-Za-z0-9_-]+)/;
 const TYPE_RE = /input\[type=["']?([a-z]+)["']?\]|\[type=["']?([a-z]+)["']?\]/i;
 
-const TYPE_LABELS: Record<string, string> = {
-  email: "Email",
-  tel: "Teléfono",
-  password: "Contraseña",
-  text: "Texto",
-  number: "Número",
-  search: "Búsqueda",
-  url: "URL",
-  date: "Fecha",
+/** Keys i18n por `input[type]` — el texto vive en i18n, se resuelve en el render. */
+const TYPE_LABEL_KEYS: Record<string, MessageKey> = {
+  email: "field.email",
+  tel: "field.tel",
+  password: "field.password",
+  text: "field.text",
+  number: "field.number",
+  search: "field.search",
+  url: "field.url",
+  date: "field.date",
 };
 
 const MAX_LABEL_LENGTH = 40;
@@ -54,24 +63,25 @@ function truncateSelector(selector: string, max = MAX_LABEL_LENGTH): string {
  * aria/placeholder estructurados en los eventos persistidos — ver ADR-2 del diseño).
  * Prioridad: aria-label > placeholder > name > #id > input[type] > selector crudo truncado.
  */
-function deriveFieldLabel(selector: string): string {
+function deriveFieldLabel(selector: string): FieldLabel {
   const ariaMatch = ARIA_LABEL_RE.exec(selector);
-  if (ariaMatch?.[1]) return ariaMatch[1];
+  if (ariaMatch?.[1]) return { text: ariaMatch[1] };
 
   const placeholderMatch = PLACEHOLDER_RE.exec(selector);
-  if (placeholderMatch?.[1]) return placeholderMatch[1];
+  if (placeholderMatch?.[1]) return { text: placeholderMatch[1] };
 
   const nameMatch = NAME_RE.exec(selector);
-  if (nameMatch?.[1]) return humanize(nameMatch[1]);
+  if (nameMatch?.[1]) return { text: humanize(nameMatch[1]) };
 
   const idMatch = ID_RE.exec(selector);
-  if (idMatch?.[1]) return humanize(idMatch[1]);
+  if (idMatch?.[1]) return { text: humanize(idMatch[1]) };
 
   const typeMatch = TYPE_RE.exec(selector);
   const type = (typeMatch?.[1] ?? typeMatch?.[2])?.toLowerCase();
-  if (type && TYPE_LABELS[type]) return TYPE_LABELS[type];
+  const typeKey = type ? TYPE_LABEL_KEYS[type] : undefined;
+  if (typeKey) return { key: typeKey };
 
-  return truncateSelector(selector);
+  return { text: truncateSelector(selector) };
 }
 
 /**

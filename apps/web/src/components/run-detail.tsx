@@ -177,7 +177,7 @@ function timelineDetail(evt: AssistEvent, t: TFn): string {
     const reason = typeof payload.reason === "string" ? payload.reason : "?";
     const verdict = typeof payload.verdict === "string" ? payload.verdict : "?";
     const meta = getVerdictMeta(verdict);
-    return t("runDetail.detail.judgeVerdict", { reason, label: meta.shortLabel });
+    return t("runDetail.detail.judgeVerdict", { reason, label: t(meta.shortKey) });
   }
   return JSON.stringify(payload).slice(0, 140);
 }

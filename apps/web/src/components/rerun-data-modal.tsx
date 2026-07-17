@@ -41,7 +41,7 @@ export function RerunDataModal({ fields, submitting, onClose, onSubmit }: Props)
         {fields.map((field) => (
           <div key={field.replayIndex} className="flex flex-col gap-1">
             <label className="text-caption text-muted-fg" htmlFor={`rerun-field-${field.replayIndex}`}>
-              {field.label}
+              {"key" in field.label ? t(field.label.key) : field.label.text}
             </label>
             <input
               id={`rerun-field-${field.replayIndex}`}

@@ -115,7 +115,7 @@ function formatPayload(t: TranslateFn, type: AssistEventType, payload: Record<st
     const verdict = typeof payload.verdict === "string" ? payload.verdict : "?";
     const confidence = typeof payload.confidence === "string" ? payload.confidence : "?";
     const meta = getVerdictMeta(verdict);
-    return t("timeline.payload.judge", { reason, verdict: meta.shortLabel, confidence });
+    return t("timeline.payload.judge", { reason, verdict: t(meta.shortKey), confidence });
   }
   if (type === "memory_hit") {
     return t("timeline.payload.memoryHit", {
