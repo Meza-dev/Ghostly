@@ -183,7 +183,7 @@ export function RunsPanel() {
               <option value="all">{t("runs.verdict.all")}</option>
               {ALL_VERDICTS.map((v) => (
                 <option key={v} value={v}>
-                  {getVerdictMeta(v).shortLabel}
+                  {t(getVerdictMeta(v).shortKey)}
                 </option>
               ))}
             </select>
