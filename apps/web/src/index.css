@@ -5,13 +5,28 @@
 @tailwind utilities;
 
 @layer base {
+  /*
+   * Zoom global de la UI — perilla única. `rem` se resuelve contra el root, así
+   * que este valor escala TODO lo que use rem: texto y también spacing/anchos/
+   * altos de Tailwind (p-4, w-64, h-14).
+   *
+   *   100% (16px) → escala 1:1 con el diseño (w-64 = 256px, text-body = 14px)
+   *    93.75% (15px) → actual: compacto pero legible
+   *    87.5% (14px) → densidad original del proyecto
+   *
+   * Antes acá vivía `font-size: var(--text-body)`, que ataba el zoom al tamaño
+   * del texto base: los tokens mentían (text-body declaraba 14px y renderizaba
+   * 12.25px) y ningún valor en rem coincidía con el diseño. Separar ambas cosas
+   * deja el zoom acá y el tamaño del texto base en `body`.
+   */
   html {
     font-family: var(--font-sans);
-    font-size: var(--text-body);
+    font-size: 93.75%;
     line-height: var(--leading-body);
   }
   body {
     @apply bg-background text-foreground antialiased;
+    font-size: var(--text-body);
     margin: 0;
     min-height: 100vh;
   }
@@ -116,6 +131,16 @@
     transform: translateX(3px);
   }
 
+  /*
+   * Barra de progreso indeterminada. El preflight no puede medir avance real
+   * (el plan es una sola request sin telemetría de fases), así que se anima en
+   * loop en vez de mostrar un % inventado.
+   */
+  .ghostly-indeterminate {
+    animation: ghostly-indeterminate 1.5s var(--motion-standard) infinite;
+    will-change: transform;
+  }
+
   .ghostly-scrollbar {
     scrollbar-width: thin;
     scrollbar-color: var(--color-border-strong) transparent;
@@ -139,6 +164,15 @@
 
   .ghostly-scrollbar::-webkit-scrollbar-thumb:hover {
     background-color: var(--color-border-strong);
+  }
+}
+
+@keyframes ghostly-indeterminate {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(410%);
   }
 }
 

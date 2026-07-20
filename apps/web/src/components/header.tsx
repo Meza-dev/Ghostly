@@ -1,5 +1,5 @@
 import { Plus, Search } from "lucide-react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useLanguage } from "../context/language-context";
 import type { MessageKey } from "../i18n/en";
 
@@ -19,8 +19,22 @@ const SUBTITLE_KEYS: Record<string, MessageKey> = {
 
 export function Header() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { t } = useLanguage();
   const isRunsPage = location.pathname.startsWith("/runs");
+
+  // La acción primaria del header. En el detalle de una run (/runs/:id) RunsPanel
+  // NO está montado, así que disparar el evento no abre nada: hay que navegar al
+  // listado con `openNewRun` para que RunsPanel abra el modal al montar.
+  function runPrimaryAction() {
+    if (location.pathname === "/runs") {
+      window.dispatchEvent(new CustomEvent("ghostly:new-run"));
+    } else if (isRunsPage) {
+      navigate("/runs", { state: { openNewRun: true } });
+    } else {
+      window.dispatchEvent(new CustomEvent("ghostly:new-project"));
+    }
+  }
 
   const matched = Object.entries(TITLE_KEYS).find(([path]) =>
     path === "/" ? location.pathname === "/" : location.pathname.startsWith(path),
@@ -60,11 +74,7 @@ export function Header() {
         </button>
         <button
           type="button"
-          onClick={() =>
-            window.dispatchEvent(
-              new CustomEvent(isRunsPage ? "ghostly:new-run" : "ghostly:new-project"),
-            )
-          }
+          onClick={runPrimaryAction}
           className="inline-flex items-center gap-2 rounded-control-sm bg-primary px-3 py-1.5 text-small font-button text-primary-fg hover:opacity-95"
         >
           <Plus className="h-3.5 w-3.5" strokeWidth={2} />

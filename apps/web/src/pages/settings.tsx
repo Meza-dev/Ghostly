@@ -1,33 +1,16 @@
-import { Copy, Key, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { LlmSettingsPanel } from "../components/llm-settings-panel";
 import { useLanguage, type Lang } from "../context/language-context";
 import { useTheme, type Theme } from "../context/theme-context";
-import { apiFetch } from "../lib/api";
-
-type ApiKeyRecord = {
-  id: string;
-  label: string;
-  key: string;
-  createdAt: string;
-};
 
 const PREFS_STORAGE_KEY = "ghostly-ui-prefs";
 
 type UiPrefs = {
-  gitWatch: boolean;
-  heal: boolean;
   video: boolean;
-  slack: boolean;
-  workspaceName: string;
 };
 
 const defaultUiPrefs: UiPrefs = {
-  gitWatch: true,
-  heal: true,
   video: true,
-  slack: false,
-  workspaceName: "acme",
 };
 
 function loadUiPrefs(): UiPrefs {
@@ -49,28 +32,17 @@ function saveUiPrefs(prefs: UiPrefs) {
   }
 }
 
-function SettingsSection({
-  title,
-  desc,
-  children,
-  bare,
-}: {
-  title: string;
-  desc: string;
-  children: React.ReactNode;
-  bare?: boolean;
-}) {
+/** Etiqueta overline morada del diseño; las filas traen su propia línea superior. */
+function SettingsSection({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <section className="flex min-h-0 flex-col overflow-hidden rounded-surface border border-border bg-card shadow-surface">
-      <header className="border-b border-border bg-muted/50 px-4 py-3 sm:px-5">
-        <h2 className="text-body font-nav-active text-foreground">{title}</h2>
-        <p className="mt-0.5 text-caption text-muted-fg">{desc}</p>
-      </header>
-      {bare ? children : <div className="divide-y divide-border">{children}</div>}
+    <section className="mt-8 first:mt-0">
+      <p className="mb-1 text-overline font-overline uppercase tracking-[0.08em] text-primary">{label}</p>
+      <div>{children}</div>
     </section>
   );
 }
 
+/** Fila plana separada por línea superior (diseño). */
 function SettingsRow({
   title,
   desc,
@@ -81,10 +53,10 @@ function SettingsRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3 sm:gap-6 sm:px-5 sm:py-3.5">
-      <div className="min-w-0 flex-1">
-        <div className="text-small font-nav-active text-foreground">{title}</div>
-        <div className="mt-0.5 text-caption leading-snug text-muted-fg">{desc}</div>
+    <div className="flex items-center justify-between gap-6 border-t border-bg-muted py-4">
+      <div className="min-w-0">
+        <div className="text-md font-nav-active text-foreground">{title}</div>
+        <div className="mt-0.5 text-small leading-snug text-muted-fg">{desc}</div>
       </div>
       <div className="shrink-0">{children}</div>
     </div>
@@ -116,11 +88,6 @@ export function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const { lang, setLang, t } = useLanguage();
   const [prefs, setPrefs] = useState<UiPrefs>(defaultUiPrefs);
-  const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
-  const [label, setLabel] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [newKey, setNewKey] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     setPrefs(loadUiPrefs());
@@ -134,44 +101,6 @@ export function SettingsPage() {
     });
   }, []);
 
-  async function loadKeys() {
-    const res = await apiFetch("/v1/api-keys");
-    if (res.ok) setKeys((await res.json()) as ApiKeyRecord[]);
-  }
-
-  useEffect(() => {
-    void loadKeys();
-  }, []);
-
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!label.trim()) return;
-    setCreating(true);
-    const res = await apiFetch("/v1/api-keys", {
-      method: "POST",
-      body: JSON.stringify({ label: label.trim() }),
-    });
-    setCreating(false);
-    if (!res.ok) return;
-    const data = (await res.json()) as ApiKeyRecord;
-    setNewKey(data.key);
-    setLabel("");
-    void loadKeys();
-  }
-
-  async function handleDelete(id: string) {
-    if (!confirm(t("settings.apiKeys.revokeConfirm"))) return;
-    await apiFetch(`/v1/api-keys/${id}`, { method: "DELETE" });
-    void loadKeys();
-  }
-
-  function copyKey(k: string) {
-    void navigator.clipboard.writeText(k).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }
-
   function setMode(m: Theme) {
     setTheme(m);
   }
@@ -181,185 +110,59 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl min-h-0 flex-1 flex-col gap-6 overflow-auto pb-4">
-      <div className="border-b border-border pb-4">
-        <h1 className="text-title font-title tracking-tight text-foreground">{t("settings.title")}</h1>
-        <p className="mt-1 text-small text-muted-fg">{t("settings.subtitle")}</p>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="flex min-h-0 flex-col gap-6">
-          <SettingsSection title={t("settings.appearance.title")} desc={t("settings.appearance.desc")}>
-            <SettingsRow title={t("settings.theme.title")} desc={t("settings.theme.desc")}>
-              <div className="flex gap-1 rounded-control-md border border-border bg-muted/80 p-0.5">
-                {(["light", "dark"] as const).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setMode(m)}
-                    className={`rounded-control-sm px-3 py-1 text-caption font-button transition-colors ${
-                      theme === m
-                        ? "bg-card text-foreground shadow-sm ring-1 ring-border/60"
-                        : "text-muted-fg hover:text-foreground"
-                    }`}
-                  >
-                    {m === "light" ? t("settings.theme.light") : t("settings.theme.dark")}
-                  </button>
-                ))}
-              </div>
-            </SettingsRow>
-            <SettingsRow title={t("settings.language.title")} desc={t("settings.language.desc")}>
-              <div className="flex gap-1 rounded-control-md border border-border bg-muted/80 p-0.5">
-                {(["en", "es"] as const).map((l) => (
-                  <button
-                    key={l}
-                    type="button"
-                    onClick={() => setLangMode(l)}
-                    className={`rounded-control-sm px-3 py-1 text-caption font-button uppercase transition-colors ${
-                      lang === l
-                        ? "bg-card text-foreground shadow-sm ring-1 ring-border/60"
-                        : "text-muted-fg hover:text-foreground"
-                    }`}
-                  >
-                    {l}
-                  </button>
-                ))}
-              </div>
-            </SettingsRow>
-          </SettingsSection>
-
-          <SettingsSection title={t("settings.runner.title")} desc={t("settings.runner.desc")}>
-            <SettingsRow title={t("settings.runner.gitWatch.title")} desc={t("settings.runner.gitWatch.desc")}>
-              <PrefToggle on={prefs.gitWatch} onChange={(v) => patchPrefs({ gitWatch: v })} />
-            </SettingsRow>
-            <SettingsRow title={t("settings.runner.heal.title")} desc={t("settings.runner.heal.desc")}>
-              <PrefToggle on={prefs.heal} onChange={(v) => patchPrefs({ heal: v })} />
-            </SettingsRow>
-            <SettingsRow title={t("settings.runner.video.title")} desc={t("settings.runner.video.desc")}>
-              <PrefToggle on={prefs.video} onChange={(v) => patchPrefs({ video: v })} />
-            </SettingsRow>
-          </SettingsSection>
-        </div>
-
-        <div className="flex min-h-0 flex-col gap-6">
-          <SettingsSection
-            title={t("settings.assist.title")}
-            desc={t("settings.assist.desc")}
-            bare
-          >
-            <LlmSettingsPanel />
-          </SettingsSection>
-
-          <SettingsSection title={t("settings.integrations.title")} desc={t("settings.integrations.desc")}>
-            <SettingsRow title={t("settings.integrations.mcp.title")} desc={t("settings.integrations.mcp.desc")}>
-              <span className="font-mono text-caption text-muted-fg">{t("settings.integrations.mcp.connected", { count: 3 })}</span>
-            </SettingsRow>
-            <SettingsRow title={t("settings.integrations.slack.title")} desc={t("settings.integrations.slack.desc")}>
-              <PrefToggle on={prefs.slack} onChange={(v) => patchPrefs({ slack: v })} />
-            </SettingsRow>
-            <SettingsRow title={t("settings.integrations.github.title")} desc={t("settings.integrations.github.desc")}>
+    <div className="mx-auto min-h-0 w-full max-w-5xl flex-1 overflow-auto pb-12 pt-2">
+      <div className="grid gap-x-10 gap-y-0 lg:grid-cols-2">
+      <div>
+      <SettingsSection label={t("settings.appearance.title")}>
+        <SettingsRow title={t("settings.theme.title")} desc={t("settings.theme.desc")}>
+          <div className="flex gap-1 rounded-control-md border border-border bg-bg-subtle p-0.5">
+            {(["light", "dark"] as const).map((m) => (
               <button
+                key={m}
                 type="button"
-                className="rounded-control-sm border border-border bg-muted px-2.5 py-1 text-caption text-muted-fg transition-colors hover:border-border-strong hover:text-foreground"
+                onClick={() => setMode(m)}
+                className={`rounded-control-sm px-3.5 py-1 text-caption font-button transition-colors ${
+                  theme === m ? "bg-bg-muted text-foreground" : "text-muted-fg hover:text-foreground"
+                }`}
               >
-                {t("settings.integrations.github.reconfigure")}
+                {m === "light" ? t("settings.theme.light") : t("settings.theme.dark")}
               </button>
-            </SettingsRow>
-          </SettingsSection>
-
-          <SettingsSection title={t("settings.workspace.title")} desc={t("settings.workspace.desc")}>
-            <SettingsRow title={t("settings.workspace.name.title")} desc={t("settings.workspace.name.desc")}>
-              <input
-                value={prefs.workspaceName}
-                onChange={(e) => patchPrefs({ workspaceName: e.target.value })}
-                className="min-w-[10rem] max-w-full rounded-control-sm border border-border-strong bg-background px-2.5 py-1.5 text-small text-foreground outline-none ring-primary focus:ring-2 sm:w-44"
-                aria-label={t("settings.workspace.name.aria")}
-              />
-            </SettingsRow>
-            <SettingsRow title={t("settings.workspace.plan.title")} desc={t("settings.workspace.plan.desc")}>
-              <span className="text-small text-muted-fg">Team</span>
-            </SettingsRow>
-          </SettingsSection>
-        </div>
-      </div>
-
-      <section className="flex flex-col gap-4 overflow-hidden rounded-surface border border-border bg-card shadow-surface">
-        <header className="border-b border-border bg-muted/50 px-4 py-3 sm:px-5">
-          <h2 className="text-body font-nav-active text-foreground">{t("settings.apiKeys.title")}</h2>
-          <p className="mt-0.5 text-caption text-muted-fg">
-            {t("settings.apiKeys.descLead")}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-caption">@ghostly-io/client</code>
-            {t("settings.apiKeys.descMid")}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-caption">X-Api-Key</code>
-            {t("settings.apiKeys.descTail")}
-          </p>
-        </header>
-
-        <div className="flex flex-col gap-4 px-4 pb-4 pt-1 sm:px-5 sm:pb-5">
-        {newKey && (
-          <div className="flex items-center gap-3 rounded-ui border border-success/40 bg-success/10 px-4 py-3">
-            <Key className="h-4 w-4 shrink-0 text-success" strokeWidth={2} />
-            <div className="min-w-0 flex-1">
-              <p className="text-caption font-button text-success">{t("settings.apiKeys.copyWarning")}</p>
-              <p className="mt-1 break-all font-mono text-caption text-foreground">{newKey}</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => copyKey(newKey)}
-              className="shrink-0 rounded border border-border p-1.5 text-muted-fg hover:text-foreground"
-            >
-              <Copy className="h-3.5 w-3.5" strokeWidth={2} />
-            </button>
-            {copied && <span className="text-caption text-success">{t("settings.apiKeys.copied")}</span>}
-          </div>
-        )}
-
-        <form onSubmit={handleCreate} className="flex gap-2">
-          <input
-            type="text"
-            placeholder={t("settings.apiKeys.namePlaceholder")}
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            className="flex-1 rounded-control-lg border border-border bg-background px-3 py-2 text-small text-foreground placeholder:text-muted-fg focus:outline-none focus:ring-2 focus:ring-primary"
-          />
-          <button
-            type="submit"
-            disabled={creating || !label.trim()}
-            className="inline-flex items-center gap-2 rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95 disabled:opacity-50"
-          >
-            <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-            {creating ? t("settings.apiKeys.creating") : t("settings.apiKeys.create")}
-          </button>
-        </form>
-
-        {keys.length === 0 ? (
-          <p className="text-small text-muted-fg">{t("settings.apiKeys.empty")}</p>
-        ) : (
-          <div className="flex flex-col divide-y divide-border rounded-ui border border-border bg-card">
-            {keys.map((k) => (
-              <div key={k.id} className="flex items-center gap-3 px-5 py-3">
-                <Key className="h-4 w-4 shrink-0 text-muted-fg" strokeWidth={2} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-small font-button text-foreground">{k.label}</p>
-                  <p className="font-mono text-caption text-muted-fg">{k.key}</p>
-                </div>
-                <span className="shrink-0 text-caption text-muted-fg">
-                  {new Date(k.createdAt).toLocaleDateString(lang)}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleDelete(k.id)}
-                  className="shrink-0 rounded p-1 text-muted-fg hover:text-error-fg"
-                  aria-label={t("settings.apiKeys.revokeAria")}
-                >
-                  <Trash2 className="h-4 w-4" strokeWidth={2} />
-                </button>
-              </div>
             ))}
           </div>
-        )}
+        </SettingsRow>
+        <SettingsRow title={t("settings.language.title")} desc={t("settings.language.desc")}>
+          <div className="flex gap-1 rounded-control-md border border-border bg-bg-subtle p-0.5">
+            {(["en", "es"] as const).map((l) => (
+              <button
+                key={l}
+                type="button"
+                onClick={() => setLangMode(l)}
+                className={`rounded-control-sm px-3.5 py-1 text-caption font-button uppercase transition-colors ${
+                  lang === l ? "bg-bg-muted text-foreground" : "text-muted-fg hover:text-foreground"
+                }`}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+        </SettingsRow>
+      </SettingsSection>
+
+      <SettingsSection label={t("settings.runner.title")}>
+        <SettingsRow title={t("settings.runner.video.title")} desc={t("settings.runner.video.desc")}>
+          <PrefToggle on={prefs.video} onChange={(v) => patchPrefs({ video: v })} />
+        </SettingsRow>
+      </SettingsSection>
+      </div>
+
+      <div>
+      <SettingsSection label={t("settings.assist.title")}>
+        <div className="border-t border-bg-muted pt-4">
+          <LlmSettingsPanel />
         </div>
-      </section>
+      </SettingsSection>
+      </div>
+      </div>
     </div>
   );
 }

@@ -9,7 +9,7 @@ import { attachUserLlmMiddleware } from "./middleware/llm-config.js";
 import { runWithLlmConfigAsync } from "./llm/context.js";
 import { settingsToResolvedConfig } from "./llm/user-config.js";
 import { getUserLlmSettings } from "./store/llm-settings.js";
-import { getLlmDisplayModel, getLlmProviderId, isLlmConfigured } from "./llm/client.js";
+import { getLlmDisplayModel, getLlmProviderId, isLlmProviderConfigured } from "./llm/client.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { apiKeyMiddleware } from "./middleware/api-key.js";
 import { apiKeysRouter } from "./routes/api-keys.js";
@@ -63,20 +63,23 @@ export function createApp(): Hono {
     const user = c.get("user");
     const stored = user ? await getUserLlmSettings(user.id) : null;
     const config = settingsToResolvedConfig(stored);
-    return runWithLlmConfigAsync(config, async () =>
-      c.json({
+    return runWithLlmConfigAsync(config, async () => {
+      // Chequeo barato (sin probe en vivo): el modal solo necesita saber si hay
+      // una IA configurada, no si está disponible ahora mismo (GHOST perf).
+      const configured = isLlmProviderConfigured();
+      return c.json({
         ok: true,
         service: "ghostly-api",
         env: process.env.NODE_ENV ?? "development",
-        assistConfigured: await isLlmConfigured(),
+        assistConfigured: configured,
         llm: {
           provider: getLlmProviderId(),
           model: getLlmDisplayModel(),
-          available: await isLlmConfigured(),
+          available: configured,
           source: stored ? "user" : "env",
         },
-      }),
-    );
+      });
+    });
   });
 
   app.use("/v1/*", attachUserLlmMiddleware);

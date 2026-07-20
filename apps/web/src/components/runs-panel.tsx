@@ -5,37 +5,19 @@ import type { RunRecord } from "../../../../packages/runner/src/schema.js";
 import { useAppContext } from "../context/app-context";
 import { useLanguage } from "../context/language-context";
 import { apiFetch } from "../lib/api";
-import { ALL_VERDICTS, getVerdictMeta, type Verdict } from "../lib/verdict";
+import {
+  getUserGroupMeta,
+  getUserVerdictGroup,
+  type UserVerdictGroup,
+} from "../lib/verdict";
 import { NewRunModal } from "./new-run-modal";
-import { VerdictBadge } from "./verdict-badge";
 
-function StatusBadge({
-  status,
-  t,
-}: {
-  status: RunRecord["status"];
-  t: ReturnType<typeof useLanguage>["t"];
-}) {
-  if (status === "pass") {
-    return (
-      <span className="inline-flex h-5 items-center rounded-pill bg-success px-2 py-0 text-badge font-badge text-success-fg">
-        {t("runs.status.pass")}
-      </span>
-    );
-  }
-  if (status === "fail") {
-    return (
-      <span className="inline-flex h-5 items-center rounded-pill bg-error px-2 py-0 text-badge font-badge text-error-fg">
-        {t("runs.status.fail")}
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex h-5 items-center rounded-pill bg-warning px-2 py-0 text-badge font-badge text-warning-fg">
-      {t("runs.status.running")}
-    </span>
-  );
-}
+/**
+ * Columnas de la tabla (diseño Runs.dc). El objetivo tiene un mínimo de 200px,
+ * así que la grilla nunca baja de ~900px: por debajo de eso la tabla scrollea
+ * en horizontal en vez de aplastar las celdas.
+ */
+const GRID_COLUMNS = "110px 120px 185px minmax(200px,1.4fr) 130px 74px 82px";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -48,7 +30,7 @@ export function RunsPanel() {
   const [showModal, setShowModal] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"all" | "pass" | "fail" | "running">("all");
   const [projectFilter, setProjectFilter] = useState<string | "all">("all");
-  const [verdictFilter, setVerdictFilter] = useState<"all" | Verdict>("all");
+  const [groupFilter, setGroupFilter] = useState<"all" | UserVerdictGroup>("all");
   const { t, lang } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
@@ -59,7 +41,7 @@ export function RunsPanel() {
   const visibleRuns = runs.filter((r) => {
     if (projectFilter !== "all" && r.project !== projectFilter) return false;
     if (statusFilter !== "all" && r.status !== statusFilter) return false;
-    if (verdictFilter !== "all" && r.verdict !== verdictFilter) return false;
+    if (groupFilter !== "all" && getUserVerdictGroup(r.verdict, r.status) !== groupFilter) return false;
     return true;
   });
 
@@ -175,15 +157,15 @@ export function RunsPanel() {
             ))}
             </div>
             <select
-              value={verdictFilter}
-              onChange={(e) => setVerdictFilter(e.target.value as "all" | Verdict)}
+              value={groupFilter}
+              onChange={(e) => setGroupFilter(e.target.value as "all" | UserVerdictGroup)}
               className="h-9 rounded-control-sm border border-border bg-card px-2.5 text-small text-foreground outline-none ring-primary focus:ring-2"
               title={t("runs.verdict.filterTitle")}
             >
               <option value="all">{t("runs.verdict.all")}</option>
-              {ALL_VERDICTS.map((v) => (
-                <option key={v} value={v}>
-                  {t(getVerdictMeta(v).shortKey)}
+              {(["success", "fail", "ghostly"] as const).map((g) => (
+                <option key={g} value={g}>
+                  {t(getUserGroupMeta(g).labelKey)}
                 </option>
               ))}
             </select>
@@ -199,23 +181,22 @@ export function RunsPanel() {
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-surface border border-border bg-card">
-          <div
-            className="grid h-11 shrink-0 items-center border-b border-border bg-muted px-3 text-caption font-overline uppercase tracking-wide text-muted-fg"
-            style={{ gridTemplateColumns: "120px 110px 88px 130px minmax(0,1.35fr) 140px 84px 84px" }}
-          >
-            <span className="px-1.5">{t("runs.col.id")}</span>
-            <span className="px-1.5">{t("runs.col.project")}</span>
-            <span className="px-1.5 text-center">{t("runs.col.status")}</span>
-            <span className="px-1.5">{t("runs.col.verdict")}</span>
-            <span className="px-1.5">{t("runs.col.goal")}</span>
-            <span className="px-1.5">{t("runs.col.start")}</span>
-            <span className="px-1.5">{t("runs.col.steps")}</span>
-            <span className="px-1.5">{t("runs.col.time")}</span>
-          </div>
-
           <div className="ghostly-scrollbar min-h-0 flex-1 overflow-auto">
+            <div
+              className="sticky top-0 z-10 grid h-11 min-w-[900px] items-center border-b border-border bg-muted px-4 text-caption font-overline uppercase tracking-wider text-muted-fg"
+              style={{ gridTemplateColumns: GRID_COLUMNS }}
+            >
+              <span className="px-1.5">{t("runs.col.id")}</span>
+              <span className="px-1.5">{t("runs.col.project")}</span>
+              <span className="px-1.5">{t("runs.col.status")}</span>
+              <span className="px-1.5">{t("runs.col.goal")}</span>
+              <span className="px-1.5">{t("runs.col.start")}</span>
+              <span className="px-1.5">{t("runs.col.steps")}</span>
+              <span className="px-1.5">{t("runs.col.time")}</span>
+            </div>
+
             {visibleRuns.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-small text-muted-fg">
+              <div className="flex h-full flex-col items-center justify-center gap-2 px-6 py-10 text-center text-small text-muted-fg">
                 <p>{t("runs.empty.title")}</p>
                 <p className="max-w-md text-caption">
                   {t("runs.empty.hintBefore")} <span className="font-nav-active text-foreground">{t("runs.empty.newRun")}</span> {t("runs.empty.hintAfter")}
@@ -228,13 +209,18 @@ export function RunsPanel() {
                 const objetivo = r.assisted?.goal?.trim()
                   || (failedStep?.error?.split("\n")[0]?.trim() ?? "")
                   || t("runs.goal.flowRun", { count: r.steps.length });
+                // Señal fusionada cara al usuario: 3 grupos (Éxito / Fallo /
+                // Fallo de Ghostly). `running` se resuelve aparte.
+                const running = r.status === "running";
+                const gm = getUserGroupMeta(getUserVerdictGroup(r.verdict, r.status));
+                const state = running ? t("runs.status.running") : t(gm.labelKey);
 
                 return (
                   <div
                     key={r.id}
                     onClick={() => navigate(`/runs/${r.id}`)}
-                    className="grid h-12 cursor-pointer items-center border-b border-border px-3 text-body transition-colors hover:bg-muted"
-                    style={{ gridTemplateColumns: "120px 110px 88px 130px minmax(0,1.35fr) 140px 84px 84px" }}
+                    className="grid h-14 min-w-[900px] cursor-pointer items-center border-b border-border px-4 text-body transition-colors hover:bg-muted"
+                    style={{ gridTemplateColumns: GRID_COLUMNS }}
                   >
                     <span className="truncate px-1.5 font-mono text-small text-muted-fg">
                       {r.id.slice(0, 8)}…
@@ -242,13 +228,17 @@ export function RunsPanel() {
                     <span className="truncate px-1.5 text-body text-foreground">
                       {r.project ? (projectLabelById.get(r.project) ?? r.project) : t("runs.noProject")}
                     </span>
-                    <span className="flex justify-center px-1.5">
-                      <StatusBadge status={r.status} t={t} />
+                    <span className="flex min-w-0 items-center gap-2.5 px-1.5">
+                      <span
+                        className={`h-2 w-2 shrink-0 rounded-pill ${running ? "bg-primary animate-pulse" : gm.dot}`}
+                      />
+                      <span className={`truncate text-body font-nav-active ${running ? "text-foreground" : gm.text}`}>
+                        {state}
+                      </span>
                     </span>
-                    <span className="px-1.5">
-                      {r.status !== "running" && <VerdictBadge verdict={r.verdict} status={r.status} size="sm" />}
+                    <span className="truncate px-1.5 text-body text-foreground" title={objetivo}>
+                      {objetivo}
                     </span>
-                    <span className="truncate px-1.5 text-small text-foreground">{objetivo}</span>
                     <span className="truncate px-1.5 font-mono text-small text-muted-fg">
                       {new Date(r.startedAt).toLocaleString(lang, {
                         day: "2-digit", month: "2-digit",

@@ -37,6 +37,7 @@ const config: Config = {
         "success-fg": "var(--color-success-foreground)",
         error: "var(--color-error)",
         "error-fg": "var(--color-error-foreground)",
+        "error-border": "var(--color-error-border)",
         warning: "var(--color-warning)",
         "warning-fg": "var(--color-warning-foreground)",
         accent: "var(--color-accent)",
