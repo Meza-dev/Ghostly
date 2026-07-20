@@ -2,7 +2,7 @@
 
 > Histórico y estado único de TODO el trabajo de v0.2, como checklist por área.
 > **Triage de cosas nuevas:** ¿compromete "Ghostly nunca miente"? → v0.2 · ¿capacidad nueva/mejora? → v0.3+
-> Última actualización: 2026-07-10
+> Última actualización: 2026-07-20 (ver sección «Post-v0.2» abajo)
 
 ## 🏁 ESTADO: v0.2 CERRADA (funcionalidad/back)
 
@@ -16,6 +16,21 @@ El corazón "Trust" está **construido, arreglado y probado**: 3 capas + healer 
 - 2 restos hardcode del healer (`MODAL_LOADER_TEXT_PATTERNS`, `victoryTargetVisible` en pipeline.ts) — deuda menor
 
 **Próximo:** seguridad → (otro día) rediseño.
+
+---
+
+## 🆕 Post-v0.2 — enviado a `main` (2026-07-20)
+
+Trabajo posterior al cierre de v0.2 (el track «rediseño» ya se entregó):
+
+- [x] **Rediseño del dashboard** a Claude Design: sidebar, tabla de runs, RunDetail (hilo unificado pasos+cronología), Configuración (GHOST-48, PR #32).
+- [x] **Veredictos agrupados** de cara al usuario en 3 estados (Éxito / Fallo / Fallo de Ghostly) sobre la taxonomía interna de 6.
+- [x] **Resumen del veredicto en lenguaje natural** del juez, con el detalle técnico colapsado (GHOST-51, PR #34).
+- [x] **Dashboard bilingüe EN/ES** (i18n, `en.ts` fuente de verdad + `es.ts` tipado) + sweep de claves huérfanas y dead code (GHOST-50, PR #33).
+- [x] **Re-ejecución arreglada**: replay del plan más completo en vez de re-planificar; grabación de video configurable desde Configuración (PR #33).
+- [x] **Auto-update (MVP)**: botón en el dashboard que detecta versión nueva y actualiza con un click + modal de reinicio (GHOST-52, PR #35). Falta el auto-restart estilo Claude Desktop (roadmap `next`).
+
+Pendiente de raíz: **atribución de victoria diff-based** para cortar falsos éxitos por datos residuales (GHOST-49).
 
 ---
 
