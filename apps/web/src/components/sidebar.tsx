@@ -1,9 +1,12 @@
 import {
+  ArrowUpCircle,
   CirclePlay,
   Ghost,
   LayoutDashboard,
+  Loader2,
   LogOut,
   Moon,
+  RotateCw,
   SlidersHorizontal,
   Sun,
 } from "lucide-react";
@@ -57,11 +60,33 @@ export function Sidebar() {
   const location = useLocation();
   const [projectStats, setProjectStats] = useState<Record<string, { total: number; pass: number }>>({});
   const [recentRuns, setRecentRuns] = useState<RunRecord[]>([]);
+  const [versionInfo, setVersionInfo] = useState<{
+    current: string | null;
+    latest: string | null;
+    updateAvailable: boolean;
+  } | null>(null);
+  const [updateState, setUpdateState] = useState<"idle" | "updating" | "done" | "error">("idle");
+  const [restartModalOpen, setRestartModalOpen] = useState(false);
   const projectLabelById = new Map(projects.map((p) => [p.id, p.label] as const));
 
   function handleLogout() {
     logout();
     navigate("/login", { replace: true });
+  }
+
+  async function handleUpdate() {
+    setUpdateState("updating");
+    try {
+      const res = await apiFetch("/v1/update", { method: "POST" });
+      if (res.ok) {
+        setUpdateState("done");
+        setRestartModalOpen(true);
+      } else {
+        setUpdateState("error");
+      }
+    } catch {
+      setUpdateState("error");
+    }
   }
 
   const w = sidebarCollapsed ? "w-[72px]" : "w-64";
@@ -102,7 +127,35 @@ export function Sidebar() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch("/v1/version");
+        if (!res.ok) return;
+        const body = (await res.json()) as {
+          current?: string | null;
+          latest?: string | null;
+          updateAvailable?: boolean;
+        };
+        if (!cancelled) {
+          setVersionInfo({
+            current: body.current ?? null,
+            latest: body.latest ?? null,
+            updateAvailable: Boolean(body.updateAvailable),
+          });
+        }
+      } catch {
+        /* sin red / registry caído: no ofrecemos update */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
+    <>
     <aside
       className={`flex min-h-0 shrink-0 flex-col self-stretch bg-bg-subtle transition-all duration-200 ${w}`}
     >
@@ -219,6 +272,41 @@ export function Sidebar() {
         )}
       </nav>
 
+      {!sidebarCollapsed && versionInfo?.updateAvailable && (
+        <div className="px-4 pb-1">
+          {updateState === "done" ? (
+            <button
+              type="button"
+              onClick={() => setRestartModalOpen(true)}
+              className="flex w-full items-center gap-2.5 rounded-control-sm border border-border px-2.5 py-2 text-caption text-success-fg hover:bg-sidebar-accent"
+            >
+              <RotateCw className="h-[18px] w-[18px] shrink-0" strokeWidth={1.5} aria-hidden />
+              <span className="truncate">{t("sidebar.update.done")}</span>
+            </button>
+          ) : updateState === "error" ? (
+            <p className="px-2.5 py-1.5 text-caption text-error-fg">{t("sidebar.update.error")}</p>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void handleUpdate()}
+              disabled={updateState === "updating"}
+              className="flex w-full items-center gap-2.5 rounded-control-sm border border-border px-2.5 py-2 text-sidebar-fg hover:bg-sidebar-accent hover:text-sidebar-emphasis disabled:opacity-60"
+            >
+              {updateState === "updating" ? (
+                <Loader2 className="h-[18px] w-[18px] shrink-0 animate-spin" strokeWidth={1.5} aria-hidden />
+              ) : (
+                <ArrowUpCircle className="h-[18px] w-[18px] shrink-0" strokeWidth={1.5} aria-hidden />
+              )}
+              <span className="truncate text-caption">
+                {updateState === "updating"
+                  ? t("sidebar.update.updating")
+                  : t("sidebar.update.available", { version: versionInfo.latest ?? "" })}
+              </span>
+            </button>
+          )}
+        </div>
+      )}
+
       <div className={`border-t border-bg-muted py-4 ${sidebarCollapsed ? "px-2" : "px-6"}`}>
         {user && !sidebarCollapsed && (
           <div className="flex items-center gap-3">
@@ -230,7 +318,10 @@ export function Sidebar() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-body font-nav-active text-sidebar-emphasis">{user.email}</p>
-              <p className="truncate text-small capitalize text-text-tertiary">{user.role}</p>
+              <p className="truncate text-small text-text-tertiary">
+                <span className="capitalize">{user.role}</span>
+                {versionInfo?.current && <span> · v{versionInfo.current}</span>}
+              </p>
             </div>
             <button
               type="button"
@@ -254,5 +345,43 @@ export function Sidebar() {
         )}
       </div>
     </aside>
+
+    {restartModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="w-full max-w-[420px] rounded-ui border border-border bg-card p-6 shadow-xl">
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control-md bg-brand-primary-soft text-primary">
+              <RotateCw className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-md font-title text-foreground">{t("sidebar.update.modal.title")}</h2>
+              <p className="mt-1 text-small text-muted-fg">{t("sidebar.update.modal.body")}</p>
+            </div>
+          </div>
+
+          <ol className="mt-5 flex flex-col gap-3">
+            {[t("sidebar.update.modal.step1"), t("sidebar.update.modal.step2")].map((step, idx) => (
+              <li key={idx} className="flex items-start gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-pill bg-muted text-caption font-badge text-foreground">
+                  {idx + 1}
+                </span>
+                <p className="pt-0.5 text-small leading-snug text-foreground">{step}</p>
+              </li>
+            ))}
+          </ol>
+
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setRestartModalOpen(false)}
+              className="rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95"
+            >
+              {t("sidebar.update.modal.close")}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

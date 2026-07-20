@@ -18,6 +18,7 @@ import { planRouter } from "./routes/plan.js";
 import { projectsRouter } from "./routes/projects.js";
 import { runRouter } from "./routes/run.js";
 import { runEventsRouter } from "./routes/run-events.js";
+import { fetchLatestVersion, getCurrentVersion, isNewerVersion, runUpdate } from "./services/updater.js";
 
 const ARTIFACTS_ROOT = resolve(process.cwd(), "artifacts");
 
@@ -80,6 +81,27 @@ export function createApp(): Hono {
         },
       });
     });
+  });
+
+  // Auto-update (MVP): estado de versión + disparo del npm install. No necesitan
+  // la config de LLM, por eso van antes de attachUserLlmMiddleware.
+  app.get("/v1/version", async (c) => {
+    const current = getCurrentVersion();
+    const latest = await fetchLatestVersion();
+    return c.json({
+      current,
+      latest,
+      updateAvailable: Boolean(current && latest && isNewerVersion(latest, current)),
+    });
+  });
+
+  app.post("/v1/update", async (c) => {
+    const result = await runUpdate();
+    if (!result.ok) {
+      return c.json({ ok: false, error: result.error ?? "update failed" }, 500);
+    }
+    // El reinicio con el código nuevo es manual en el MVP (ghostly up).
+    return c.json({ ok: true, restartRequired: true });
   });
 
   app.use("/v1/*", attachUserLlmMiddleware);
