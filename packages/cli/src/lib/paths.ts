@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +25,17 @@ export function getCliRoot(): string {
   const distDir = dirname(fileURLToPath(import.meta.url));
   // En el build final, import.meta.url apunta a dist/index.js
   return resolve(distDir, "..");
+}
+
+/** Versión del CLI instalado (desde su package.json, junto a dist/). */
+export function getCliVersion(): string {
+  try {
+    const raw = readFileSync(resolve(getCliRoot(), "package.json"), "utf8");
+    const pkg = JSON.parse(raw) as { version?: string };
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
 }
 
 /** <cliRoot>/dist/assets/api/dist  */

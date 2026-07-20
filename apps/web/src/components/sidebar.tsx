@@ -1,7 +1,9 @@
 import {
+  ArrowUpCircle,
   CirclePlay,
   Ghost,
   LayoutDashboard,
+  Loader2,
   LogOut,
   Moon,
   SlidersHorizontal,
@@ -57,11 +59,23 @@ export function Sidebar() {
   const location = useLocation();
   const [projectStats, setProjectStats] = useState<Record<string, { total: number; pass: number }>>({});
   const [recentRuns, setRecentRuns] = useState<RunRecord[]>([]);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [updateState, setUpdateState] = useState<"idle" | "updating" | "done" | "error">("idle");
   const projectLabelById = new Map(projects.map((p) => [p.id, p.label] as const));
 
   function handleLogout() {
     logout();
     navigate("/login", { replace: true });
+  }
+
+  async function handleUpdate() {
+    setUpdateState("updating");
+    try {
+      const res = await apiFetch("/v1/update", { method: "POST" });
+      setUpdateState(res.ok ? "done" : "error");
+    } catch {
+      setUpdateState("error");
+    }
   }
 
   const w = sidebarCollapsed ? "w-[72px]" : "w-64";
@@ -95,6 +109,23 @@ export function Sidebar() {
           setProjectStats({});
           setRecentRuns([]);
         }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch("/v1/version");
+        if (!res.ok) return;
+        const body = (await res.json()) as { updateAvailable?: boolean };
+        if (!cancelled) setUpdateAvailable(Boolean(body.updateAvailable));
+      } catch {
+        /* sin red / registry caído: no ofrecemos update */
       }
     })();
     return () => {
@@ -218,6 +249,36 @@ export function Sidebar() {
           </>
         )}
       </nav>
+
+      {!sidebarCollapsed && updateAvailable && (
+        <div className="px-6 pb-3">
+          {updateState === "done" ? (
+            <p className="rounded-control-sm bg-success px-3 py-2 text-caption text-success-fg">
+              {t("sidebar.update.done")}
+            </p>
+          ) : updateState === "error" ? (
+            <p className="rounded-control-sm border border-error-border bg-error px-3 py-2 text-caption text-error-fg">
+              {t("sidebar.update.error")}
+            </p>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void handleUpdate()}
+              disabled={updateState === "updating"}
+              className="flex w-full items-center gap-2 rounded-control-sm border border-primary/40 bg-brand-primary-soft px-3 py-2 text-caption font-button text-primary hover:opacity-90 disabled:opacity-60"
+            >
+              {updateState === "updating" ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" strokeWidth={2} aria-hidden />
+              ) : (
+                <ArrowUpCircle className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden />
+              )}
+              <span className="truncate">
+                {updateState === "updating" ? t("sidebar.update.updating") : t("sidebar.update.available")}
+              </span>
+            </button>
+          )}
+        </div>
+      )}
 
       <div className={`border-t border-bg-muted py-4 ${sidebarCollapsed ? "px-2" : "px-6"}`}>
         {user && !sidebarCollapsed && (
