@@ -44,6 +44,17 @@ export async function isLlmConfigured(): Promise<boolean> {
   return provider.isAvailable();
 }
 
+/**
+ * "¿Hay un proveedor configurado?" — chequeo barato y síncrono, SIN el probe en
+ * vivo de `isAvailable()` (que para el CLI spawnea el binario y es lento).
+ * Un proveedor existe si HTTP tiene endpoint+apiKey o si se eligió un CLI
+ * conocido. Sirve para gates de UI donde importa "configurado", no "disponible
+ * ahora mismo" (p. ej. el modal de nueva ejecución).
+ */
+export function isLlmProviderConfigured(): boolean {
+  return getProvider().provider !== null;
+}
+
 export function getLlmDisplayModel(): string {
   return resolveLlmConfig().model;
 }

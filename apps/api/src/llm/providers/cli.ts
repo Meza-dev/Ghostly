@@ -18,15 +18,17 @@ export class CliLlmProvider implements LlmProvider {
   }
 
   async isAvailable(): Promise<boolean> {
+    // El atajo por API key evita spawnear el CLI (login no interactivo).
+    if (process.env[this.def.authEnvVar]?.trim()) return true;
     const cwd = this.config.cliWorkspace;
     try {
-      await runCli(this.config.cliBin, ["--version"], { cwd, timeoutMs: 5_000 });
-    } catch {
-      return false;
-    }
-    if (process.env[this.def.authEnvVar]?.trim()) return true;
-    try {
-      const { stdout } = await runCli(this.config.cliBin, ["status"], { cwd, timeoutMs: 8_000 });
+      // Antes se corría `--version` (5s) y luego `status` (8s). El `--version`
+      // era redundante —`status` ya prueba que el binario arranca y el login— y
+      // su timeout de 5s reventaba en frío: el arranque de cursor-agent es lento
+      // y muy variable (medido 3.5–11.5s), así que el check daba false flaky y
+      // Ghostly reportaba el CLI como "no conectado" aunque `agent status`
+      // dijera "logged in". Un solo `status` con timeout holgado lo cubre.
+      const { stdout } = await runCli(this.config.cliBin, ["status"], { cwd, timeoutMs: 20_000 });
       return this.def.isStatusOk(stdout);
     } catch {
       return false;
