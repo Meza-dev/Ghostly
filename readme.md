@@ -63,11 +63,9 @@ No config files to hand-edit.
 
 ## See it in action
 
-|  |  |
-| --- | --- |
-| ![Dashboard with grouped run verdicts](docs/media/dashboard.png) | ![Run detail with the unified thread and verdict](docs/media/run-detail.png) |
-
-▶ **[Watch the 2-minute demo](https://youtu.be/REPLACE_WITH_VIDEO_ID)**
+| Home | Runs | Run detail |
+| --- | --- | --- |
+| ![Home overview](docs/media/home.png) | ![Runs list with grouped verdicts](docs/media/runs.png) | ![Run detail with the unified thread and verdict](docs/media/run-detail.png) |
 
 ## Features
 
