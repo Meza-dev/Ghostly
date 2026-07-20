@@ -12,7 +12,7 @@ Two built-in Windows tools cover everything — no installs needed:
 
 | File | What it shows | How |
 | --- | --- | --- |
-| `ghostly-demo.gif` | ~12s loop of one assisted run: open **New run** → goal → steps stream with green checks → a selector self-heals → **Success** verdict. | Record the run with `Win + G`, then trim ~12s and convert to GIF at [ezgif.com](https://ezgif.com) (keep it 2–8 MB, ~15 fps). Optional — if you skip it, use `dashboard.png` as the hero. |
+| `ghostly-demo.gif` | **The hero.** ~12s loop of one assisted run: open **New run** → goal → steps stream with green checks → a selector self-heals → **Success** verdict. | Record the run with `Win + G`, then trim ~12s and convert to GIF at [ezgif.com](https://ezgif.com) (keep it 2–8 MB, ~15 fps). |
 | `dashboard.png` | Runs list showing the three states (Success / Failure / Ghostly issue). | `Win + Shift + S` |
 | `run-detail.png` | A run's detail: the unified step thread + snapshot + the verdict panel with its natural-language summary. | `Win + Shift + S` |
 
