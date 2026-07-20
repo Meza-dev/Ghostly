@@ -6,6 +6,7 @@ import {
   Loader2,
   LogOut,
   Moon,
+  RotateCw,
   SlidersHorizontal,
   Sun,
 } from "lucide-react";
@@ -65,6 +66,7 @@ export function Sidebar() {
     updateAvailable: boolean;
   } | null>(null);
   const [updateState, setUpdateState] = useState<"idle" | "updating" | "done" | "error">("idle");
+  const [restartModalOpen, setRestartModalOpen] = useState(false);
   const projectLabelById = new Map(projects.map((p) => [p.id, p.label] as const));
 
   function handleLogout() {
@@ -76,7 +78,12 @@ export function Sidebar() {
     setUpdateState("updating");
     try {
       const res = await apiFetch("/v1/update", { method: "POST" });
-      setUpdateState(res.ok ? "done" : "error");
+      if (res.ok) {
+        setUpdateState("done");
+        setRestartModalOpen(true);
+      } else {
+        setUpdateState("error");
+      }
     } catch {
       setUpdateState("error");
     }
@@ -148,6 +155,7 @@ export function Sidebar() {
   }, []);
 
   return (
+    <>
     <aside
       className={`flex min-h-0 shrink-0 flex-col self-stretch bg-bg-subtle transition-all duration-200 ${w}`}
     >
@@ -267,7 +275,14 @@ export function Sidebar() {
       {!sidebarCollapsed && versionInfo?.updateAvailable && (
         <div className="px-4 pb-1">
           {updateState === "done" ? (
-            <p className="px-2.5 py-1.5 text-caption text-success-fg">{t("sidebar.update.done")}</p>
+            <button
+              type="button"
+              onClick={() => setRestartModalOpen(true)}
+              className="flex w-full items-center gap-2.5 rounded-control-sm border border-border px-2.5 py-2 text-caption text-success-fg hover:bg-sidebar-accent"
+            >
+              <RotateCw className="h-[18px] w-[18px] shrink-0" strokeWidth={1.5} aria-hidden />
+              <span className="truncate">{t("sidebar.update.done")}</span>
+            </button>
           ) : updateState === "error" ? (
             <p className="px-2.5 py-1.5 text-caption text-error-fg">{t("sidebar.update.error")}</p>
           ) : (
@@ -275,7 +290,7 @@ export function Sidebar() {
               type="button"
               onClick={() => void handleUpdate()}
               disabled={updateState === "updating"}
-              className="flex w-full items-center gap-2.5 rounded-control-sm px-2.5 py-2 text-sidebar-fg hover:bg-sidebar-accent hover:text-sidebar-emphasis disabled:opacity-60"
+              className="flex w-full items-center gap-2.5 rounded-control-sm border border-border px-2.5 py-2 text-sidebar-fg hover:bg-sidebar-accent hover:text-sidebar-emphasis disabled:opacity-60"
             >
               {updateState === "updating" ? (
                 <Loader2 className="h-[18px] w-[18px] shrink-0 animate-spin" strokeWidth={1.5} aria-hidden />
@@ -330,5 +345,43 @@ export function Sidebar() {
         )}
       </div>
     </aside>
+
+    {restartModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="w-full max-w-[420px] rounded-ui border border-border bg-card p-6 shadow-xl">
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control-md bg-brand-primary-soft text-primary">
+              <RotateCw className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-md font-title text-foreground">{t("sidebar.update.modal.title")}</h2>
+              <p className="mt-1 text-small text-muted-fg">{t("sidebar.update.modal.body")}</p>
+            </div>
+          </div>
+
+          <ol className="mt-5 flex flex-col gap-3">
+            {[t("sidebar.update.modal.step1"), t("sidebar.update.modal.step2")].map((step, idx) => (
+              <li key={idx} className="flex items-start gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-pill bg-muted text-caption font-badge text-foreground">
+                  {idx + 1}
+                </span>
+                <p className="pt-0.5 text-small leading-snug text-foreground">{step}</p>
+              </li>
+            ))}
+          </ol>
+
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setRestartModalOpen(false)}
+              className="rounded-pill bg-primary px-4 py-2 text-small font-button text-primary-fg hover:opacity-95"
+            >
+              {t("sidebar.update.modal.close")}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
