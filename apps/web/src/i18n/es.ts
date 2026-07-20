@@ -25,6 +25,7 @@ export const es: Record<MessageKey, string> = {
   "verdict.unclassified.label": "Sin clasificar (run anterior a v0.2)",
   "verdict.unclassified.short": "Sin clasificar",
   "verdict.why.evidence": "Evidencia",
+  "verdict.why.technical": "Detalle técnico",
   "statusBar.runnerReady": "runner: listo",
   "statusBar.search": "Ctrl + Shift + K: buscar",
   "statusBar.newRun": "Ctrl + Shift + N: nueva ejecución",

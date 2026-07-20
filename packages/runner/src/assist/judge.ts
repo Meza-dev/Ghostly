@@ -50,6 +50,7 @@ export const judgeVerdictSchema: z.ZodType<JudgeVerdict> = z.object({
     "inconclusive",
   ]),
   confidence: z.enum(["high", "medium", "low"]),
+  summary: z.string().min(1).optional(),
   reasoning: z.string().min(1),
   evidence: z.array(z.string()),
   hint: z.string().min(1).optional(),
@@ -264,8 +265,9 @@ export const JUDGE_SYSTEM_PROMPT = [
   "REGLA 5 — 'continue' es legítimo solo ante un obstáculo RECUPERABLE con una `hint` concreta y accionable para el strategist (ej. 'hay un modal de confirmación tapando el botón; cerralo primero'). Límite estricto: máximo 2 intervenciones 'continue' del motor por el MISMO motivo dentro de un run — a la 3ra invocación por el mismo motivo, el motor fuerza un veredicto terminal sin importar tu respuesta. No insistas con 'continue' si ya diste una hint similar antes sin resultado.",
   "",
   "FORMATO DE RESPUESTA — SOLO un objeto JSON, sin markdown ni texto extra, con forma EXACTA:",
-  '{ "verdict": string, "confidence": "high" | "medium" | "low", "reasoning": string, "evidence": string[], "hint"?: string }',
-  "- `reasoning`: explicación citando evidencia CONCRETA del dossier (qué check, qué error, qué diff) — nunca una afirmación genérica sin respaldo.",
+  '{ "verdict": string, "confidence": "high" | "medium" | "low", "summary": string, "reasoning": string, "evidence": string[], "hint"?: string }',
+  "- `summary`: una o dos frases en LENGUAJE NATURAL para el USUARIO FINAL (no técnico) — qué pasó y por qué, tanto en éxito como en fallo. Describí la evidencia en palabras (el texto que apareció en pantalla, la URL, el dato que se guardó o no). PROHIBIDO mencionar nombres de señales internas ('victory.met', 'victory.configured', 'pageErrors', 'deterministicChecks'), banderas booleanas, ni selectores/'data-testid' crudos. Ej correcto: «Se creó el pedido: apareció el mensaje 'Pedido creado con éxito' y la fila quedó en la tabla de Pedidos.» — NO «victory.met=true, sin pageErrors».",
+  "- `reasoning`: explicación TÉCNICA citando evidencia CONCRETA del dossier (qué check, qué error, qué diff) — nunca una afirmación genérica sin respaldo. Acá SÍ podés usar nombres de señales internas; este campo es para diagnóstico, no para el usuario final.",
   "- `evidence`: array de referencias puntuales al dossier (ej. 'deterministicChecks: victory.met=false', 'pageErrors[0]: 500 en POST /save').",
   "- `hint`: SOLO presente cuando `verdict` es 'continue'.",
 ].join("\n");
@@ -416,6 +418,12 @@ export function summarizeJudgeEventForPersistence(event: JudgeEvent): Record<str
     },
     verdict: event.verdict.verdict,
     confidence: event.verdict.confidence,
+    // `summary` es texto libre del juez orientado al usuario — puede citar
+    // contenido de página (el texto/dato que apareció), así que sigue el mismo
+    // choke point de redacción que `reasoning`/`evidence` antes de persistir.
+    ...(event.verdict.summary
+      ? { summary: redactOrTruncateText(event.verdict.summary) }
+      : {}),
     reasoning: redactOrTruncateText(event.verdict.reasoning),
     evidence: redactOrTruncateList(event.verdict.evidence),
     // `hint` es texto libre AUTORADO POR EL JUEZ (LLM), emitido solo en
