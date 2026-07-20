@@ -333,6 +333,13 @@ export type JudgeVerdict = {
     | "inconclusive-environment"
     | "inconclusive";
   confidence: JudgeConfidence;
+  /**
+   * Resumen en lenguaje natural para el USUARIO FINAL (no técnico): qué pasó y
+   * por qué, en éxito o fallo, sin nombres de señales internas ni selectores.
+   * Es el titular que ve el usuario; `reasoning` queda para el detalle técnico.
+   * Opcional por compatibilidad: runs/mocks previos no lo traen.
+   */
+  summary?: string;
   reasoning: string;
   evidence: string[];
   /** Solo relevante cuando `verdict === "continue"`. */

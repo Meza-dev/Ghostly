@@ -2026,7 +2026,9 @@ export async function runAssistedFlow(
     const applyTerminalJudgeVerdict = (outcome: JudgeVerdict): void => {
       runOk = outcome.verdict === "success";
       verdict = outcome.verdict as Verdict;
-      verdictReason = outcome.reasoning;
+      // El titular que ve el usuario prefiere el resumen en lenguaje natural;
+      // `reasoning` (técnico) queda para el detalle en el evento judge_verdict.
+      verdictReason = outcome.summary ?? outcome.reasoning;
       stopReason = "judge-terminal-verdict";
       pendingSteps.length = 0;
       strategistHasMore = false;
@@ -2974,7 +2976,7 @@ export async function runAssistedFlow(
         verdict = "inconclusive";
         verdictReason =
           "El juez propuso continuar, pero el presupuesto del run (maxLoopMs/maxHorizons) ya se agotó — " +
-          `no hay más horizontes disponibles para actuar sobre el hint. Motivo original: ${outcome.reasoning}`;
+          `no hay más horizontes disponibles para actuar sobre el hint. Motivo original: ${outcome.summary ?? outcome.reasoning}`;
         stopReason = "judge-terminal-verdict";
       } else {
         applyTerminalJudgeVerdict(outcome);

@@ -23,6 +23,7 @@ export const en = {
   "verdict.unclassified.label": "Unclassified (run predates v0.2)",
   "verdict.unclassified.short": "Unclassified",
   "verdict.why.evidence": "Evidence",
+  "verdict.why.technical": "Technical detail",
   "statusBar.runnerReady": "runner: ready",
   "statusBar.search": "Ctrl + Shift + K: search",
   "statusBar.newRun": "Ctrl + Shift + N: new run",
