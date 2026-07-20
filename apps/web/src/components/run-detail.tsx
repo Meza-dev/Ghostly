@@ -3,16 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { RunRecord, Step } from "../../../../packages/runner/src/schema.js";
 import { useLanguage } from "../context/language-context";
-import type { MessageKey } from "../i18n/en";
 import { useRunStream } from "../hooks/use-run-stream";
 import { apiFetch, getToken } from "../lib/api";
 import { appendInstructionsToGoal, buildOverriddenSteps, deriveEditableFillFields } from "../lib/rerun-fields";
-import { getVerdictMeta } from "../lib/verdict";
+import { getUserGroupMeta, getUserVerdictGroup } from "../lib/verdict";
 import { AddInstructionsModal } from "./add-instructions-modal";
 import type { AssistEvent } from "./assist-timeline";
 import { RerunDataModal } from "./rerun-data-modal";
 import { RerunSplitButton } from "./rerun-split-button";
-import { VerdictBadge } from "./verdict-badge";
 import { VerdictWhyPanel } from "./verdict-why-panel";
 
 type RunRecordWithEvents = RunRecord & { events?: AssistEvent[] };
@@ -33,19 +31,58 @@ function asStep(raw: unknown): Step | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
   const action = obj.action;
+  const selector = typeof obj.selector === "string" ? obj.selector : null;
   if (action === "goto" && typeof obj.url === "string") return { action: "goto", url: obj.url };
-  if (action === "click" && typeof obj.selector === "string") return { action: "click", selector: obj.selector };
-  if (action === "fill" && typeof obj.selector === "string" && typeof obj.value === "string") {
-    return { action: "fill", selector: obj.selector, value: obj.value };
+  if (action === "click" && selector) return { action: "click", selector };
+  if (action === "fill" && selector && typeof obj.value === "string") {
+    return { action: "fill", selector, value: obj.value };
+  }
+  // selectOption / check / hover / setInputFiles: sin estos, un plan con un
+  // <select> u otros verbos perdía pasos al reejecutar (plan incompleto → falla).
+  if (action === "selectOption" && selector) {
+    if (typeof obj.value === "string") return { action: "selectOption", selector, value: obj.value };
+    if (Array.isArray(obj.value) && obj.value.every((v) => typeof v === "string")) {
+      return { action: "selectOption", selector, value: obj.value as string[] };
+    }
+    return null;
+  }
+  if (action === "check" && selector) return { action: "check", selector };
+  if (action === "uncheck" && selector) return { action: "uncheck", selector };
+  if (action === "hover" && selector) return { action: "hover", selector };
+  if (
+    action === "setInputFiles" &&
+    selector &&
+    Array.isArray(obj.files) &&
+    obj.files.length > 0 &&
+    obj.files.every((f) => typeof f === "string")
+  ) {
+    return { action: "setInputFiles", selector, files: obj.files as string[] };
   }
   if (action === "press" && typeof obj.key === "string") return { action: "press", key: obj.key };
-  if (action === "waitForSelector" && typeof obj.selector === "string") {
+  if (action === "waitForSelector" && selector) {
     return typeof obj.timeoutMs === "number"
-      ? { action: "waitForSelector", selector: obj.selector, timeoutMs: obj.timeoutMs }
-      : { action: "waitForSelector", selector: obj.selector };
+      ? { action: "waitForSelector", selector, timeoutMs: obj.timeoutMs }
+      : { action: "waitForSelector", selector };
   }
   if (action === "snapshot") return { action: "snapshot" };
   return null;
+}
+
+/**
+ * Reconstruye los pasos ejecutados de un run desde sus eventos, preferiendo
+ * `rawStep` (sin redactar) sobre `step` (redactado). Usado por el memo del run
+ * actual y por la resolución del plan canónico (último run exitoso).
+ */
+function parseRerunnableSteps(events: AssistEvent[]): Step[] {
+  const byIndex = new Map<number, Step>();
+  for (const ev of events) {
+    if (typeof ev.stepIndex !== "number") continue;
+    if (ev.type !== "step_start" && ev.type !== "step_success" && ev.type !== "step_failure") continue;
+    const payload = ev.payload as Record<string, unknown>;
+    const parsed = asStep(payload.rawStep) ?? asStep(payload.step);
+    if (parsed) byIndex.set(ev.stepIndex, parsed);
+  }
+  return [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, step]) => step);
 }
 
 function getInitialGotoFromBaseUrl(baseUrl: string): string {
@@ -118,6 +155,10 @@ function formatStepSummary(step: Record<string, unknown>): string {
   if (action === "fill") return `fill ${String(step.selector ?? "")}`;
   if (action === "press") return `press ${String(step.key ?? "")}`;
   if (action === "waitForSelector") return `waitForSelector ${String(step.selector ?? "")}`;
+  if (action === "selectOption") return `selectOption ${String(step.selector ?? "")}`;
+  if (action === "check" || action === "uncheck" || action === "hover" || action === "setInputFiles") {
+    return `${action} ${String(step.selector ?? "")}`;
+  }
   if (action === "snapshot") return "snapshot";
   return JSON.stringify(step);
 }
@@ -126,60 +167,6 @@ function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
-}
-
-type TFn = (key: MessageKey, vars?: Record<string, string | number>) => string;
-
-function timelineLabel(type: AssistEvent["type"], t: TFn): string {
-  const labels: Record<AssistEvent["type"], string> = {
-    recon: "recon",
-    plan_chunk: t("runDetail.timeline.planChunk"),
-    loop_state: t("runDetail.timeline.loopState"),
-    horizon_start: t("runDetail.timeline.horizonStart"),
-    horizon_end: t("runDetail.timeline.horizonEnd"),
-    victory_check: "victory check",
-    memory_hit: "memory hit",
-    memory_miss: "memory miss",
-    step_start: "navigate",
-    step_success: "step ok",
-    step_failure: "fail",
-    heal_start: "self-heal",
-    heal_action: "heal action",
-    heal_success: "heal success",
-    heal_failure: "heal fail",
-    judge_verdict: t("runDetail.timeline.judgeVerdict"),
-    run_end: "run end",
-  };
-  return labels[type] ?? type;
-}
-
-function timelineDetail(evt: AssistEvent, t: TFn): string {
-  const payload = evt.payload as Record<string, unknown>;
-  if (evt.type === "plan_chunk") {
-    const steps = Array.isArray(payload.steps) ? payload.steps.length : 0;
-    return t("runDetail.detail.planChunk", { count: steps });
-  }
-  if (evt.type === "step_start" || evt.type === "step_success" || evt.type === "step_failure") {
-    if (payload.step && typeof payload.step === "object") {
-      return formatStepSummary(payload.step as Record<string, unknown>);
-    }
-  }
-  if (evt.type === "heal_start") return t("runDetail.detail.healStart");
-  if (evt.type === "step_failure" && typeof payload.error === "string") {
-    return payload.error.split("\n")[0] ?? payload.error;
-  }
-  if (evt.type === "victory_check") {
-    // `objectiveLikelyCompleted`/`terminalStep` fueron eliminados del motor en
-    // GHOST-28 (spec §4.2b) — la victoria ya no se declara por heurística.
-    return payload.met === true ? t("runDetail.detail.victoryMet") : t("runDetail.detail.victoryMissing");
-  }
-  if (evt.type === "judge_verdict") {
-    const reason = typeof payload.reason === "string" ? payload.reason : "?";
-    const verdict = typeof payload.verdict === "string" ? payload.verdict : "?";
-    const meta = getVerdictMeta(verdict);
-    return t("runDetail.detail.judgeVerdict", { reason, label: t(meta.shortKey) });
-  }
-  return JSON.stringify(payload).slice(0, 140);
 }
 
 export function RunDetail() {
@@ -192,7 +179,7 @@ export function RunDetail() {
   const [rerunning, setRerunning] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [rerunError, setRerunError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"steps" | "timeline" | "code" | "artifacts">("steps");
+  const [tab, setTab] = useState<"timeline" | "code" | "artifacts">("timeline");
   const [selectedStepIndex, setSelectedStepIndex] = useState(0);
   const [artifactLoading, setArtifactLoading] = useState(false);
   const [copiedPlan, setCopiedPlan] = useState(false);
@@ -243,6 +230,39 @@ export function RunDetail() {
       setCancelError(e instanceof Error ? e.message : t("runDetail.error.cancelFailed"));
     } finally {
       setCancelling(false);
+    }
+  }
+
+  /**
+   * Opción A: resuelve el plan GENUINO y más COMPLETO entre los runs exitosos de
+   * este objetivo (goal + baseUrl + proyecto), no el del run que se está mirando
+   * (que puede ser fallido/incompleto) ni el pass más reciente (que puede ser un
+   * "éxito falso" con plan incompleto — menos pasos porque no creó la evidencia,
+   * pasó por data residual). Señal: entre los pass, el de MÁS pasos es el que
+   * hizo el flujo completo. Desempate: el más reciente. Devuelve null si no hay
+   * pass → el caller cae a los pasos del run actual.
+   */
+  async function resolveCanonicalSteps(goal: string): Promise<Step[] | null> {
+    if (!run?.project) return null;
+    try {
+      const res = await apiFetch(`/v1/runs?project=${encodeURIComponent(run.project)}`);
+      if (!res.ok) return null;
+      const all = (await res.json()) as RunRecord[]; // la API ordena newest-first
+      const passes = all.filter(
+        (r) => r.status === "pass" && r.baseUrl === run.baseUrl && r.assisted?.goal?.trim() === goal,
+      );
+      if (passes.length === 0) return null;
+      // Más pasos = plan más completo; `>` estricto conserva el primero (más
+      // reciente, porque `passes` viene newest-first) en caso de empate.
+      const canonical = passes.reduce((best, r) => (r.steps.length > best.steps.length ? r : best));
+      if (canonical.id === run.id) return rerunnableSteps; // el run actual ES el canónico
+      const det = await apiFetch(`/v1/runs/${canonical.id}`);
+      if (!det.ok) return null;
+      const detBody = (await det.json()) as RunRecordWithEvents;
+      const steps = parseRerunnableSteps(detBody.events ?? []);
+      return steps.length > 0 ? steps : null;
+    } catch {
+      return null;
     }
   }
 
@@ -306,18 +326,35 @@ export function RunDetail() {
             ...(assistConfig?.maxLoopMs !== undefined ? { maxLoopMs: assistConfig.maxLoopMs } : {}),
           };
         } else if (canUseAssistGoal) {
-          // "Reejecutar igual" (comportamiento actual, sin cambios).
+          // "Reejecutar igual": replaya el plan YA ejecutado como full-plan. Con
+          // un plan presente y sin replayFromMemory, el pipeline NO re-planifica
+          // (strategistHasMore=false, pipeline.ts:1768) pero SÍ mantiene el loop
+          // de observación + self-heal + juez. Así reusa el plan (rápido, no los
+          // 7 horizontes del strategist) y sigue siendo resiliente (a diferencia
+          // de un replay literal pelado).
+          // Opción B: el plan a replayar es el del ÚLTIMO run EXITOSO para este
+          // objetivo (no el del run actual, que puede ser fallido/incompleto).
+          // Fallback: pasos del run actual → plan propuesto → goto.
           const firstStep: Step = { action: "goto", url: getInitialGotoFromBaseUrl(run.baseUrl) };
-          const stepsForAssist = inheritedIsFullPlan && plannedSteps.length > 0
-            ? plannedSteps
-            : [firstStep];
-          body.steps = stepsForAssist;
+          const canonical = goal ? await resolveCanonicalSteps(goal) : null;
+          const replayPlan = canonical && canonical.length > 0
+            ? canonical
+            : replaySteps.length > 0
+              ? replaySteps
+              : plannedSteps.length > 0
+                ? plannedSteps
+                : [firstStep];
+          const hasPlan = replayPlan.length > 1; // más que solo el goto inicial
+          body.steps = replayPlan;
           body.assisted = run.assisted;
           body.assist = {
             v2: true,
             goal,
-            isFullPlan: inheritedIsFullPlan,
-            memoryMode: inheritedMemoryMode,
+            // Con plan capturado forzamos full-plan (replay+heal, sin re-planear).
+            // Sin plan (run que falló antes de generar pasos), caemos al modo
+            // heredado → recién ahí re-planifica desde cero.
+            isFullPlan: hasPlan ? true : inheritedIsFullPlan,
+            memoryMode: hasPlan ? "runtime" : inheritedMemoryMode,
             ...(assistConfig?.victory ? { victory: assistConfig.victory } : {}),
             ...(assistConfig?.maxHorizons !== undefined ? { maxHorizons: assistConfig.maxHorizons } : {}),
             ...(assistConfig?.stepsPerHorizon !== undefined ? { stepsPerHorizon: assistConfig.stepsPerHorizon } : {}),
@@ -422,19 +459,7 @@ export function RunDetail() {
       .map(([, s]) => s);
   }, [mergedEvents]);
 
-  const rerunnableSteps = useMemo<Step[]>(() => {
-    const byIndex = new Map<number, Step>();
-    for (const ev of mergedEvents) {
-      if (typeof ev.stepIndex !== "number") continue;
-      if (ev.type !== "step_start" && ev.type !== "step_success" && ev.type !== "step_failure") continue;
-      const payload = ev.payload as Record<string, unknown>;
-      const fromRaw = asStep(payload.rawStep);
-      const fromRedacted = asStep(payload.step);
-      const parsed = fromRaw ?? fromRedacted;
-      if (parsed) byIndex.set(ev.stepIndex, parsed);
-    }
-    return [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, step]) => step);
-  }, [mergedEvents]);
+  const rerunnableSteps = useMemo<Step[]>(() => parseRerunnableSteps(mergedEvents), [mergedEvents]);
 
   const editableFillFields = useMemo(() => deriveEditableFillFields(rerunnableSteps), [rerunnableSteps]);
 
@@ -458,6 +483,8 @@ export function RunDetail() {
   type DisplayStep = {
     index: number;
     action: string;
+    /** Detalle técnico "goto /login" / "click .saved-card" (línea de cronología). */
+    detail: string;
     ok: boolean | null;
     error?: string;
     screenshotPath?: string;
@@ -468,6 +495,7 @@ export function RunDetail() {
       return run.steps.map((s) => ({
         index: s.index,
         action: s.action,
+        detail: formatStepSummary(s as unknown as Record<string, unknown>),
         ok: s.ok,
         ...(s.error ? { error: s.error } : {}),
         ...(s.screenshotPath ? { screenshotPath: s.screenshotPath } : {}),
@@ -476,15 +504,20 @@ export function RunDetail() {
     const byIndex = new Map<number, DisplayStep>();
     for (const ev of mergedEvents) {
       if (typeof ev.stepIndex !== "number") continue;
+      // Solo eventos de PASO: victory_check/loop_state también traen stepIndex y,
+      // sin objeto `step`, sobrescribían la acción a "victory_check".
+      if (ev.type !== "step_start" && ev.type !== "step_success" && ev.type !== "step_failure") continue;
       const p = ev.payload as Record<string, unknown>;
       const step = p.step as { action?: string } | undefined;
       const action = typeof step?.action === "string" ? step.action : ev.type;
       const current = byIndex.get(ev.stepIndex) ?? {
         index: ev.stepIndex,
         action,
+        detail: "",
         ok: null,
       };
       current.action = action;
+      if (step && typeof step === "object") current.detail = formatStepSummary(step as Record<string, unknown>);
       if (ev.type === "step_success") {
         current.ok = true;
         if (typeof p.screenshotPath === "string") current.screenshotPath = p.screenshotPath;
@@ -512,6 +545,23 @@ export function RunDetail() {
   }, [displaySteps]);
 
   const selectedStep = displaySteps.find((s) => s.index === selectedStepIndex) ?? displaySteps[0] ?? null;
+
+  /**
+   * Tiempo relativo por paso para el hilo (cronología). Se deriva del primer
+   * evento con ese `stepIndex`; en runs sin eventos (avanzado) queda vacío y el
+   * hilo cae al número de paso.
+   */
+  const stepRelSeconds = useMemo<Map<number, number>>(() => {
+    const firstAt = mergedEvents[0]?.at ? new Date(mergedEvents[0].at).getTime() : null;
+    const byIndex = new Map<number, number>();
+    if (firstAt === null) return byIndex;
+    for (const ev of mergedEvents) {
+      if (typeof ev.stepIndex !== "number" || !ev.at) continue;
+      if (byIndex.has(ev.stepIndex)) continue;
+      byIndex.set(ev.stepIndex, Math.max(0, new Date(ev.at).getTime() - firstAt) / 1000);
+    }
+    return byIndex;
+  }, [mergedEvents]);
 
   useEffect(() => {
     setArtifactLoading(Boolean(selectedStep?.screenshotPath));
@@ -576,20 +626,29 @@ export function RunDetail() {
       <div className="rounded-surface border border-border bg-card p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-[260px] space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`inline-flex h-6 items-center rounded-pill px-2.5 text-caption font-button ${
-                run.status === "pass"
-                  ? "bg-success text-success-fg"
-                  : run.status === "fail"
-                  ? "bg-error text-error-fg"
-                  : "bg-warning text-warning-fg"
-              }`}>
-                {run.status === "pass" ? "Pass" : run.status === "fail" ? "Fail" : "Run"}
-              </span>
-              {run.status !== "running" && <VerdictBadge verdict={run.verdict} status={run.status} />}
-              <span className="text-caption uppercase tracking-wide text-muted-fg">{run.project ?? t("runDetail.noProject")}</span>
+            <div className="flex flex-wrap items-center gap-2.5">
+              {(() => {
+                const running = run.status === "running";
+                const group = getUserVerdictGroup(run.verdict, run.status);
+                const gm = getUserGroupMeta(group);
+                const label = running ? t("runs.status.running") : t(gm.labelKey);
+                const pill = running
+                  ? "border-primary/30 bg-brand-primary-soft text-primary"
+                  : group === "success"
+                  ? "border-success-fg/30 bg-success text-success-fg"
+                  : group === "fail"
+                  ? "border-error-fg/30 bg-error text-error-fg"
+                  : "border-warning-fg/30 bg-warning text-warning-fg";
+                return (
+                  <span className={`inline-flex items-center gap-2 rounded-pill border px-3 py-1 text-small font-button ${pill}`}>
+                    <span className={`h-2 w-2 rounded-pill ${running ? "bg-primary animate-pulse" : gm.dot}`} />
+                    {label}
+                  </span>
+                );
+              })()}
+              <span className="text-caption uppercase tracking-[0.04em] text-muted-fg">{run.project ?? t("runDetail.noProject")}</span>
             </div>
-            <h1 className="text-xl font-title tracking-tight text-foreground">{objective || `Run ${run.id.slice(0, 9)}`}</h1>
+            <h1 className="font-serif text-2xl font-title leading-tight tracking-[-0.01em] text-foreground">{objective || `Run ${run.id.slice(0, 9)}`}</h1>
             <div className="flex flex-wrap items-center gap-2 font-mono text-caption text-muted-fg">
               <span>{run.baseUrl}</span>
               <span>·</span>
@@ -629,11 +688,11 @@ export function RunDetail() {
             )}
           </div>
         </div>
-        <div className="mt-4 grid grid-cols-2 gap-5 border-t border-border pt-4 sm:grid-cols-4">
-          <div><p className="text-overline text-muted-fg">{t("runDetail.stat.duration")}</p><p className="text-2xl font-title leading-none">{formatDuration(run.durationMs)}</p></div>
-          <div><p className="text-overline text-muted-fg">{t("runDetail.stat.steps")}</p><p className="text-2xl font-title leading-none">{run.steps.filter((s) => s.ok).length}/{run.steps.length}</p></div>
-          <div><p className="text-overline text-muted-fg">{t("runDetail.stat.selfHeals")}</p><p className="text-2xl font-title leading-none">{displaySteps.filter((s) => s.healed).length}</p></div>
-          <div><p className="text-overline text-muted-fg">{t("runDetail.stat.started")}</p><p className="text-md font-mono text-muted-fg">{new Date(run.startedAt).toLocaleString(lang)}</p></div>
+        <div className="mt-5 grid grid-cols-2 gap-5 border-t border-border pt-5 sm:grid-cols-4">
+          <div><p className="text-overline text-muted-fg">{t("runDetail.stat.duration")}</p><p className="mt-2 font-serif text-2xl font-title leading-none tracking-[-0.01em]">{formatDuration(run.durationMs)}</p></div>
+          <div><p className="text-overline text-muted-fg">{t("runDetail.stat.steps")}</p><p className="mt-2 font-serif text-2xl font-title leading-none tracking-[-0.01em]">{run.steps.filter((s) => s.ok).length}/{run.steps.length}</p></div>
+          <div><p className="text-overline text-muted-fg">{t("runDetail.stat.selfHeals")}</p><p className="mt-2 font-serif text-2xl font-title leading-none tracking-[-0.01em]">{displaySteps.filter((s) => s.healed).length}</p></div>
+          <div><p className="text-overline text-muted-fg">{t("runDetail.stat.started")}</p><p className="mt-2 text-md font-mono text-muted-fg">{new Date(run.startedAt).toLocaleString(lang)}</p></div>
         </div>
       </div>
 
@@ -642,12 +701,11 @@ export function RunDetail() {
       )}
 
       {run.status !== "running" && (
-        <VerdictWhyPanel verdict={run.verdict} verdictReason={run.verdictReason} judgeEvents={judgeEvents} />
+        <VerdictWhyPanel verdict={run.verdict} verdictReason={run.verdictReason} status={run.status} judgeEvents={judgeEvents} />
       )}
 
       <div className="flex items-end gap-1 border-b border-border">
         {[
-          { id: "steps", label: t("runDetail.tab.steps") },
           { id: "timeline", label: t("runDetail.tab.timeline") },
           { id: "code", label: t("runDetail.tab.plan") },
           { id: "artifacts", label: t("runDetail.tab.artifacts") },
@@ -666,28 +724,56 @@ export function RunDetail() {
         ))}
       </div>
 
-      {tab === "steps" && (
-        <div className="grid min-h-[min(72vh,720px)] gap-5 lg:grid-cols-[minmax(0,1.85fr)_minmax(340px,1fr)]">
-          <div className="ghostly-scrollbar flex max-h-[min(72vh,720px)] min-h-0 flex-col overflow-y-auto rounded-surface border border-border bg-card">
-            {displaySteps.map((step) => (
-              <button
-                key={step.index}
-                type="button"
-                onClick={() => {
-                  setSelectedStepIndex(step.index);
-                  if (step.screenshotPath) setArtifactLoading(true);
-                }}
-                className={`grid w-full grid-cols-[32px_16px_96px_1fr_64px] items-center gap-3 border-b border-border px-4 py-3 text-left hover:bg-muted ${
-                  selectedStep?.index === step.index ? "bg-muted" : ""
-                }`}
-              >
-                <span className="font-mono text-caption text-muted-fg">{String(step.index + 1).padStart(2, "0")}</span>
-                <span className={`h-3.5 w-3.5 rounded-full ${step.ok === false ? "bg-error-fg" : step.ok === true ? "bg-success-fg" : "bg-primary"}`} />
-                <span className="font-mono text-small text-primary">{step.action}</span>
-                <span className="truncate font-mono text-small text-muted-fg">{step.error ?? t("runDetail.stepExecuted")}</span>
-                <span className="text-right font-mono text-caption text-muted-fg">{step.ok === null ? "..." : step.ok ? "ok" : "fail"}</span>
-              </button>
-            ))}
+      {tab === "timeline" && (
+        <div className="grid min-h-[min(72vh,720px)] gap-5 lg:grid-cols-[minmax(280px,0.9fr)_minmax(0,2fr)]">
+          {/* Hilo cronológico: los pasos como timeline vertical (Pasos + Cronología fusionados). */}
+          <div className="ghostly-scrollbar max-h-[min(72vh,720px)] min-h-0 overflow-y-auto rounded-surface border border-border bg-card px-5 py-1.5">
+            {displaySteps.length === 0 ? (
+              <p className="py-6 text-small text-muted-fg">{t("runDetail.thread.empty")}</p>
+            ) : (
+              displaySteps.map((step) => {
+                const selected = selectedStep?.index === step.index;
+                const rel = stepRelSeconds.get(step.index);
+                const timeLabel = rel !== undefined ? `+${rel.toFixed(1)}s` : String(step.index + 1).padStart(2, "0");
+                const dot = step.ok === false ? "bg-error-fg" : step.ok === true ? "bg-success-fg" : "bg-text-tertiary";
+                // Título legible por tipo de acción; el detalle técnico va debajo (cronología).
+                const title =
+                  step.action === "goto" ? t("runDetail.action.goto")
+                  : step.action === "click" ? t("runDetail.action.click")
+                  : step.action === "fill" ? t("runDetail.action.fill")
+                  : step.action === "press" ? t("runDetail.action.press")
+                  : step.action === "waitForSelector" ? t("runDetail.action.wait")
+                  : step.action === "snapshot" ? t("runDetail.action.snapshot")
+                  : step.action;
+                const detail = step.healed
+                  ? `${step.detail} · ${t("runDetail.thread.healedInline")}`
+                  : step.detail;
+                return (
+                  <button
+                    key={step.index}
+                    type="button"
+                    onClick={() => {
+                      setSelectedStepIndex(step.index);
+                      if (step.screenshotPath) setArtifactLoading(true);
+                    }}
+                    className="grid w-full grid-cols-[52px_1fr] gap-3.5 rounded-control-sm text-left"
+                  >
+                    <span className="pt-3 text-right font-mono text-caption text-muted-fg">{timeLabel}</span>
+                    <div className={`relative border-l-2 py-2.5 pl-6 ${selected ? "border-primary" : "border-border"}`}>
+                      <span
+                        className={`absolute -left-[7px] top-3 h-3 w-3 rounded-pill border-[3px] ${dot} ${
+                          selected ? "border-bg-muted ring-4 ring-brand-primary-soft" : "border-card"
+                        }`}
+                      />
+                      <p className={`truncate text-small font-nav-active ${step.ok === false ? "text-error-fg" : "text-foreground"}`}>
+                        {title}
+                      </p>
+                      {detail && <p className="mt-0.5 truncate font-mono text-caption text-muted-fg">{detail}</p>}
+                    </div>
+                  </button>
+                );
+              })
+            )}
           </div>
 
           <div className="flex min-h-0 flex-col gap-2 lg:sticky lg:top-3 lg:self-start">
@@ -716,42 +802,6 @@ export function RunDetail() {
               <p className="rounded-control-sm bg-error px-3 py-2 text-caption text-error-fg">{selectedStep.error}</p>
             )}
           </div>
-        </div>
-      )}
-
-      {tab === "timeline" && (
-        <div className="overflow-hidden rounded-surface border border-border bg-card">
-          {mergedEvents.length === 0 ? (
-            <p className="p-4 text-small text-muted-fg">{t("runDetail.noEvents")}</p>
-          ) : (
-            <ol className="ghostly-scrollbar max-h-[560px] overflow-auto">
-              {mergedEvents.map((evt, idx) => {
-                const firstAt = mergedEvents[0]?.at ? new Date(mergedEvents[0].at).getTime() : 0;
-                const currentAt = evt.at ? new Date(evt.at).getTime() : firstAt;
-                const rel = Math.max(0, currentAt - firstAt);
-                return (
-                  <li
-                    key={`${evt.seq}-${evt.type}`}
-                    className={`grid grid-cols-[72px_1fr] gap-4 px-4 py-3 ${idx < mergedEvents.length - 1 ? "border-b border-border" : ""}`}
-                  >
-                    <span className="pt-0.5 text-right font-mono text-caption text-muted-fg">+{(rel / 1000).toFixed(2)}s</span>
-                    <div className="min-w-0">
-                      <p className={`text-small font-button ${
-                        evt.type === "step_failure" || evt.type === "heal_failure"
-                          ? "text-error-fg"
-                          : evt.type === "step_success" || evt.type === "heal_success"
-                          ? "text-success-fg"
-                          : "text-foreground"
-                      }`}>
-                        {timelineLabel(evt.type, t)}
-                      </p>
-                      <p className="mt-0.5 break-words font-mono text-small text-muted-fg">{timelineDetail(evt, t)}</p>
-                    </div>
-                  </li>
-                );
-              })}
-            </ol>
-          )}
         </div>
       )}
 

@@ -109,6 +109,76 @@ export function getEffectiveVerdictMeta(
   return getVerdictMeta(verdict);
 }
 
+/**
+ * Color del punto en la señal fusionada estado+veredicto (sidebar y tabla de
+ * runs). El rediseño admite solo 2 acentos —verde = éxito, morado = hallazgo—
+ * y deja el resto neutro, por eso `warning` colapsa en el mismo gris que
+ * `muted` en vez de usar ámbar. El tamaño lo decide cada call site.
+ */
+export const VERDICT_DOT_BY_TONE: Record<VerdictTone, string> = {
+  success: "bg-success-fg",
+  primary: "bg-primary",
+  warning: "bg-text-tertiary",
+  muted: "bg-text-tertiary",
+};
+
+/**
+ * true si el tono merece énfasis tipográfico en listados: solo los dos acentos
+ * (éxito y hallazgo) van en color primario y peso medio; el resto queda apagado.
+ */
+export function isEmphasisTone(tone: VerdictTone): boolean {
+  return tone === "success" || tone === "primary";
+}
+
+/**
+ * Agrupación CARA AL USUARIO (3 estados). La taxonomía de 6 veredictos sigue
+ * viva por debajo (panel "por qué" / `verdictReason`), pero los badges y pills
+ * que ve el usuario solo muestran estos tres:
+ *  - success: objetivo cumplido y verificado.
+ *  - fail: falló TU app o TU test — bug encontrado + test mal armado.
+ *  - ghostly: Ghostly no pudo dar un veredicto limpio (se perdió, entorno
+ *    inestable, sin evidencia, sin clasificar). Es "un fail pero distinto":
+ *    no es tu app la que falló, es la ejecución la que no concluyó.
+ */
+export type UserVerdictGroup = "success" | "fail" | "ghostly";
+
+export type UserGroupMeta = {
+  labelKey: MessageKey;
+  /** Clase Tailwind del punto de color. */
+  dot: string;
+  /** Clase de texto de la etiqueta. */
+  text: string;
+};
+
+const USER_GROUP_META: Record<UserVerdictGroup, UserGroupMeta> = {
+  success: { labelKey: "verdict.group.success", dot: "bg-success-fg", text: "text-success-fg" },
+  fail: { labelKey: "verdict.group.fail", dot: "bg-error-fg", text: "text-error-fg" },
+  ghostly: { labelKey: "verdict.group.ghostly", dot: "bg-warning-fg", text: "text-warning-fg" },
+};
+
+const VERDICT_TO_GROUP: Record<Verdict, UserVerdictGroup> = {
+  success: "success",
+  "fail-app-bug": "fail",
+  "fail-test-broken": "fail",
+  "fail-agent-lost": "ghostly",
+  "inconclusive-environment": "ghostly",
+  inconclusive: "ghostly",
+};
+
+/** Grupo cara al usuario. `status="pass"` sin veredicto cuenta como éxito. */
+export function getUserVerdictGroup(
+  verdict: string | null | undefined,
+  status?: string | null,
+): UserVerdictGroup {
+  if ((!verdict || !isKnownVerdict(verdict)) && status === "pass") return "success";
+  if (verdict && isKnownVerdict(verdict)) return VERDICT_TO_GROUP[verdict];
+  return "ghostly"; // null / sin clasificar / desconocido
+}
+
+export function getUserGroupMeta(group: UserVerdictGroup): UserGroupMeta {
+  return USER_GROUP_META[group];
+}
+
 export const ALL_VERDICTS: Verdict[] = [
   "success",
   "fail-app-bug",

@@ -1,4 +1,4 @@
-import { Loader2, X } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, ChevronUp, Circle, Loader2, Target, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AssistedMeta, RunRecord, Step } from "../../../../packages/runner/src/schema.js";
 import { useAppContext } from "../context/app-context";
@@ -27,6 +27,15 @@ function parseStartUrl(raw: string, t: TFn): { ok: true; baseUrl: string; gotoPa
 
 /** JSON = solo pasos después del primer `goto` (la URL de inicio ya abre la página). */
 const DEFAULT_STEPS_JSON = JSON.stringify([{ action: "waitForSelector", selector: "h1" }], null, 2);
+
+/**
+ * Límites del objetivo (modo asistido). Mínimo: obliga a un objetivo concreto,
+ * no una palabra suelta. Máximo: acota la superficie de prompt injection —
+ * un goal es una frase, no un prompt pegado. El servidor revalida (no confiar
+ * solo en el cliente).
+ */
+const GOAL_MIN_LENGTH = 10;
+const GOAL_MAX_LENGTH = 500;
 
 type Props = {
   onClose: () => void;
@@ -61,6 +70,11 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
   const [victorySelector, setVictorySelector] = useState("");
   const [victoryUrl, setVictoryUrl] = useState("");
   const [victoryMustAll, setVictoryMustAll] = useState(false);
+  const [victoryOpen, setVictoryOpen] = useState(true);
+
+  // El preflight es exclusivo del modo asistido: en avanzado los pasos ya vienen
+  // dados, no hay plan que armar, así que se va directo al detalle de la run.
+  const showPreflight = tab === "assisted" && (planning || loading);
 
   const submitDisabledReason = (() => {
     if (loading) return t("newRun.disabled.starting");
@@ -70,7 +84,17 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
     if (tab === "assisted" && !assistAvailable) {
       return t("newRun.disabled.assistUnavailable");
     }
-    if (tab === "assisted" && !assistGoal.trim()) return t("newRun.disabled.goalRequired");
+    if (tab === "assisted") {
+      const goal = assistGoal.trim();
+      if (!goal) return t("newRun.disabled.goalRequired");
+      if (goal.length < GOAL_MIN_LENGTH) return t("newRun.goal.tooShort", { min: GOAL_MIN_LENGTH });
+      if (goal.length > GOAL_MAX_LENGTH) return t("newRun.goal.tooLong", { max: GOAL_MAX_LENGTH });
+      // Victoria obligatoria: sin ella el juez no puede declarar éxito y el run
+      // termina "sin clasificar"/"inconclusivo". Exigimos al menos una señal.
+      if (!victoryText.trim() && !victorySelector.trim() && !victoryUrl.trim()) {
+        return t("newRun.victory.required");
+      }
+    }
     return null;
   })();
   const isSubmitDisabled = submitDisabledReason !== null;
@@ -150,6 +174,19 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
       const goal = assistGoal.trim();
       if (!goal) {
         setError(t("newRun.disabled.goalRequired"));
+        return;
+      }
+      if (goal.length < GOAL_MIN_LENGTH) {
+        setError(t("newRun.goal.tooShort", { min: GOAL_MIN_LENGTH }));
+        return;
+      }
+      if (goal.length > GOAL_MAX_LENGTH) {
+        setError(t("newRun.goal.tooLong", { max: GOAL_MAX_LENGTH }));
+        return;
+      }
+      if (!victoryText.trim() && !victorySelector.trim() && !victoryUrl.trim()) {
+        setVictoryOpen(true);
+        setError(t("newRun.victory.required"));
         return;
       }
       setPlanning(true);
@@ -258,18 +295,31 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
     <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="flex max-h-[90vh] w-full max-w-[640px] flex-col gap-4 overflow-hidden rounded-ui border border-border bg-card p-6 shadow-xl">
-        <div className="flex shrink-0 items-center justify-between">
-          <span className="font-nav-active text-body text-foreground">{t("newRun.title")}</span>
+        <div className="flex shrink-0 items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h2 className="text-lg font-title text-foreground">{t("newRun.title")}</h2>
+            <p className="mt-1 text-small text-muted-fg">{t("newRun.subtitle")}</p>
+          </div>
           <button
             type="button"
             onClick={() => { if (!loading && !planning) onClose(); }}
             disabled={loading || planning}
-            className="flex h-7 w-7 items-center justify-center rounded-control-md text-muted-fg hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control-md text-muted-fg hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
             aria-label={t("newRun.close")}
           >
             <X className="h-4 w-4" strokeWidth={2} />
           </button>
         </div>
+
+        {error && (
+          <div className="flex shrink-0 items-start gap-3 rounded-control-lg border border-error-border bg-error px-4 py-3">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-error-fg" strokeWidth={2} aria-hidden />
+            <div className="min-w-0">
+              <p className="text-small font-button text-error-fg">{t("newRun.error.title")}</p>
+              <p className="mt-0.5 break-words text-caption text-muted-fg">{error}</p>
+            </div>
+          </div>
+        )}
 
         <div className="flex shrink-0 flex-col gap-2">
           <div className="flex gap-1 rounded-control-lg bg-muted p-1">
@@ -313,9 +363,11 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
 
         <form
           onSubmit={(e) => void handleSubmit(e)}
-          className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
           aria-describedby="run-mode-hint"
         >
+          {/* Región de scroll única: todos los campos flotan acá; el footer queda fijo. */}
+          <div className="ghostly-scrollbar flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
           <div className="flex flex-col gap-1">
             <label className="text-caption text-muted-fg" htmlFor="proj-select">
               {t("newRun.field.project")}
@@ -359,7 +411,7 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
           </div>
 
           {tab === "advanced" ? (
-            <div className="flex min-h-0 flex-1 flex-col gap-1">
+            <div className="flex flex-col gap-1">
               <label className="text-caption text-muted-fg" htmlFor="stepsJson">
                 {t("newRun.field.stepsJson")}
               </label>
@@ -373,11 +425,11 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
                 required
                 value={stepsJson}
                 onChange={(e) => setStepsJson(e.target.value)}
-                className="min-h-[200px] flex-1 rounded-control-md border border-border bg-background px-3 py-2 font-mono text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                className="min-h-[200px] rounded-control-md border border-border bg-background px-3 py-2 font-mono text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
           ) : (
-            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+            <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-1">
                 <label className="text-caption text-muted-fg" htmlFor="assist-goal">
                   {t("newRun.field.goal")}
@@ -387,48 +439,114 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
                   rows={3}
                   value={assistGoal}
                   onChange={(e) => setAssistGoal(e.target.value)}
+                  maxLength={GOAL_MAX_LENGTH}
                   placeholder={t("newRun.field.goalPlaceholder")}
                   className="rounded-control-md border border-border bg-background px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 />
+                <p className="flex items-center justify-between text-caption text-muted-fg">
+                  <span>{t("newRun.goal.minHint", { min: GOAL_MIN_LENGTH })}</span>
+                  <span className={assistGoal.trim().length > GOAL_MAX_LENGTH ? "text-error-fg" : ""}>
+                    {assistGoal.trim().length}/{GOAL_MAX_LENGTH}
+                  </span>
+                </p>
               </div>
 
-              <div className="rounded-control-lg border border-border bg-background p-3">
-                <p className="mb-2 text-caption font-button text-foreground">{t("newRun.victory.title")}</p>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <input
-                    value={victoryText}
-                    onChange={(e) => setVictoryText(e.target.value)}
-                    placeholder={t("newRun.victory.textPlaceholder")}
-                    className="rounded-control-md border border-border bg-card px-2 py-1.5 text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <input
-                    value={victorySelector}
-                    onChange={(e) => setVictorySelector(e.target.value)}
-                    placeholder={t("newRun.victory.selectorPlaceholder")}
-                    className="rounded-control-md border border-border bg-card px-2 py-1.5 font-mono text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <input
-                    value={victoryUrl}
-                    onChange={(e) => setVictoryUrl(e.target.value)}
-                    placeholder={t("newRun.victory.urlPlaceholder")}
-                    className="rounded-control-md border border-border bg-card px-2 py-1.5 text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <label className="flex items-center gap-2 text-caption text-muted-fg">
-                    <input
-                      type="checkbox"
-                      checked={victoryMustAll}
-                      onChange={(e) => setVictoryMustAll(e.target.checked)}
-                    />
-                    {t("newRun.victory.mustAll")}
-                  </label>
-                </div>
+              <div className="overflow-hidden rounded-control-lg border border-border bg-background">
+                <button
+                  type="button"
+                  onClick={() => setVictoryOpen((v) => !v)}
+                  aria-expanded={victoryOpen}
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted"
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control-md bg-brand-primary-soft text-primary">
+                    <Target className="h-4 w-4" strokeWidth={2} aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-small font-button text-foreground">{t("newRun.victory.title")}</span>
+                    <span className="mt-0.5 block text-caption text-muted-fg">{t("newRun.victory.subtitle")}</span>
+                  </span>
+                  {victoryOpen ? (
+                    <ChevronUp className="h-4 w-4 shrink-0 text-muted-fg" strokeWidth={2} aria-hidden />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-fg" strokeWidth={2} aria-hidden />
+                  )}
+                </button>
+
+                {victoryOpen && (
+                  <div className="flex flex-col gap-4 border-t border-border p-4">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-caption font-button text-foreground" htmlFor="victory-text">
+                        {t("newRun.victory.textLabel")}
+                      </label>
+                      <input
+                        id="victory-text"
+                        value={victoryText}
+                        onChange={(e) => setVictoryText(e.target.value)}
+                        placeholder={t("newRun.victory.textPlaceholder")}
+                        className="rounded-control-md border border-border bg-card px-3 py-2 text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                      <p className="text-caption text-muted-fg">{t("newRun.victory.textHelp")}</p>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-caption font-button text-foreground" htmlFor="victory-selector">
+                        {t("newRun.victory.selectorLabel")}
+                      </label>
+                      <input
+                        id="victory-selector"
+                        value={victorySelector}
+                        onChange={(e) => setVictorySelector(e.target.value)}
+                        placeholder={t("newRun.victory.selectorPlaceholder")}
+                        className="rounded-control-md border border-border bg-card px-3 py-2 font-mono text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                      <p className="text-caption text-muted-fg">{t("newRun.victory.selectorHelp")}</p>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-caption font-button text-foreground" htmlFor="victory-url">
+                        {t("newRun.victory.urlLabel")}
+                      </label>
+                      <input
+                        id="victory-url"
+                        value={victoryUrl}
+                        onChange={(e) => setVictoryUrl(e.target.value)}
+                        placeholder={t("newRun.victory.urlPlaceholder")}
+                        className="rounded-control-md border border-border bg-card px-3 py-2 font-mono text-small text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                      <p className="text-caption text-muted-fg">{t("newRun.victory.urlHelp")}</p>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
+                      <span className="text-caption text-muted-fg">{t("newRun.victory.matchLabel")}</span>
+                      <div className="flex shrink-0 gap-0.5 rounded-control-md bg-muted p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setVictoryMustAll(false)}
+                          aria-pressed={!victoryMustAll}
+                          className={`rounded-control-sm px-3 py-1 text-caption font-button ${
+                            victoryMustAll ? "text-muted-fg hover:text-foreground" : "bg-primary text-primary-fg"
+                          }`}
+                        >
+                          {t("newRun.victory.any")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setVictoryMustAll(true)}
+                          aria-pressed={victoryMustAll}
+                          className={`rounded-control-sm px-3 py-1 text-caption font-button ${
+                            victoryMustAll ? "bg-primary text-primary-fg" : "text-muted-fg hover:text-foreground"
+                          }`}
+                        >
+                          {t("newRun.victory.all")}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
-
-          {error && (
-            <p className="shrink-0 rounded-control-sm bg-error px-3 py-2 text-caption text-error-fg">{error}</p>
-          )}
+          </div>
 
           <div className="flex shrink-0 justify-end gap-2 border-t border-border pt-3">
             <button
@@ -454,25 +572,71 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
       </div>
     </div>
 
-    {(loading || planning) && (
+    {showPreflight && (
       <div
-        className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 backdrop-blur-sm"
+        className="fixed inset-0 z-[60] flex items-center justify-center bg-background p-6"
         role="status"
         aria-live="polite"
         aria-busy="true"
       >
-        <div className="flex max-w-[min(360px,calc(100vw-2rem))] flex-col items-center gap-4 rounded-ui border border-border bg-card px-8 py-7 shadow-xl">
-          <Loader2 className="h-10 w-10 animate-spin text-primary" strokeWidth={2} aria-hidden />
-          <div className="text-center">
-            <p className="text-body font-nav-active text-foreground">
-              {planning && !loading ? t("newRun.overlay.planningTitle") : t("newRun.overlay.runningTitle")}
-            </p>
-            <p className="mt-2 text-caption text-muted-fg">
-              {planning && !loading
-                ? t("newRun.overlay.planningDesc")
-                : t("newRun.overlay.runningDesc")}
-            </p>
+        <div className="w-full max-w-[440px] rounded-ui border border-border bg-card p-6 shadow-overlay">
+          <p className="text-body font-title text-foreground">{t("newRun.preflight.title")}</p>
+
+          {/* Indeterminada a propósito: /v1/plan es una sola request, no publica avance. */}
+          <div className="mt-4 h-1.5 overflow-hidden rounded-pill bg-muted">
+            <div className="ghostly-indeterminate h-full w-1/4 rounded-pill bg-primary" />
           </div>
+
+          <div className="mt-5 flex flex-col gap-1">
+            {[
+              {
+                key: "plan",
+                label: t("newRun.preflight.plan.label"),
+                detail: t("newRun.preflight.plan.detail", { url: startUrl.trim() }),
+                done: !planning,
+                active: planning,
+              },
+              {
+                key: "start",
+                label: t("newRun.preflight.start.label"),
+                detail: t("newRun.preflight.start.detail"),
+                done: false,
+                active: !planning && loading,
+              },
+            ].map((phase) => (
+              <div key={phase.key} className="flex items-start gap-3 py-2">
+                <span
+                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-pill ${
+                    phase.done
+                      ? "bg-success text-success-fg"
+                      : phase.active
+                      ? "bg-brand-primary-soft text-primary"
+                      : "bg-muted text-muted-fg"
+                  }`}
+                >
+                  {phase.done ? (
+                    <Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />
+                  ) : phase.active ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} aria-hidden />
+                  ) : (
+                    <Circle className="h-2.5 w-2.5" strokeWidth={2} aria-hidden />
+                  )}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p
+                    className={`text-small ${
+                      phase.done || phase.active ? "font-button text-foreground" : "text-muted-fg"
+                    }`}
+                  >
+                    {phase.label}
+                  </p>
+                  <p className="mt-0.5 break-words text-caption text-muted-fg">{phase.detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <p className="mt-4 text-center text-caption text-muted-fg">{t("newRun.preflight.footer")}</p>
         </div>
       </div>
     )}

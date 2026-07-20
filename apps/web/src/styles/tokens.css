@@ -122,6 +122,9 @@
   --color-status-success-soft: rgb(93 193 133 / 0.12);
   --color-status-error: #ff6b6b;
   --color-status-error-soft: rgb(227 107 107 / 0.12);
+  /* Borde de tarjetas de error. Existe como token porque Tailwind v3 no puede
+     aplicar modificadores de opacidad (border-error-fg/35) sobre colores var(). */
+  --color-status-error-border: rgb(227 107 107 / 0.35);
   --color-status-warning: #ffb454;
   --color-status-warning-soft: rgb(219 169 85 / 0.12);
   --color-status-running: #7d6cff;
@@ -151,6 +154,7 @@
   --color-success-foreground: var(--color-status-success);
   --color-error: var(--color-status-error-soft);
   --color-error-foreground: var(--color-status-error);
+  --color-error-border: var(--color-status-error-border);
   --color-warning: var(--color-status-warning-soft);
   --color-warning-foreground: var(--color-status-warning);
 
@@ -203,6 +207,7 @@ html[data-theme="light"] {
   --color-status-success-soft: rgb(22 163 74 / 0.1);
   --color-status-error: #dc2626;
   --color-status-error-soft: rgb(220 38 38 / 0.1);
+  --color-status-error-border: rgb(220 38 38 / 0.3);
   --color-status-warning: #ca8a04;
   --color-status-warning-soft: rgb(202 138 4 / 0.1);
   --color-status-running: #5e4ce0;
@@ -230,6 +235,7 @@ html[data-theme="light"] {
   --color-success-foreground: var(--color-status-success);
   --color-error: var(--color-status-error-soft);
   --color-error-foreground: var(--color-status-error);
+  --color-error-border: var(--color-status-error-border);
   --color-warning: var(--color-status-warning-soft);
   --color-warning-foreground: var(--color-status-warning);
 
