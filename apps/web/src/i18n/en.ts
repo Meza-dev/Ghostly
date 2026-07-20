@@ -242,7 +242,7 @@ export const en = {
   "sidebar.activity": "Recent activity",
   "sidebar.noActivity": "No runs yet",
   "sidebar.logout": "Log out",
-  "sidebar.update.available": "New version available",
+  "sidebar.update.available": "New version {version}",
   "sidebar.update.updating": "Updating…",
   "sidebar.update.done": "Updated — restart with ghostly up",
   "sidebar.update.error": "Update failed — run ghostly update",

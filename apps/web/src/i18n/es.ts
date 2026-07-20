@@ -244,7 +244,7 @@ export const es: Record<MessageKey, string> = {
   "sidebar.activity": "Actividad reciente",
   "sidebar.noActivity": "Todavía no hay ejecuciones",
   "sidebar.logout": "Cerrar sesión",
-  "sidebar.update.available": "Hay una nueva versión",
+  "sidebar.update.available": "Nueva versión {version}",
   "sidebar.update.updating": "Actualizando…",
   "sidebar.update.done": "Actualizado — reiniciá ghostly up",
   "sidebar.update.error": "Falló — corré ghostly update",

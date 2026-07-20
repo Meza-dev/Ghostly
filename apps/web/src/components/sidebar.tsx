@@ -59,7 +59,11 @@ export function Sidebar() {
   const location = useLocation();
   const [projectStats, setProjectStats] = useState<Record<string, { total: number; pass: number }>>({});
   const [recentRuns, setRecentRuns] = useState<RunRecord[]>([]);
-  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [versionInfo, setVersionInfo] = useState<{
+    current: string | null;
+    latest: string | null;
+    updateAvailable: boolean;
+  } | null>(null);
   const [updateState, setUpdateState] = useState<"idle" | "updating" | "done" | "error">("idle");
   const projectLabelById = new Map(projects.map((p) => [p.id, p.label] as const));
 
@@ -122,8 +126,18 @@ export function Sidebar() {
       try {
         const res = await apiFetch("/v1/version");
         if (!res.ok) return;
-        const body = (await res.json()) as { updateAvailable?: boolean };
-        if (!cancelled) setUpdateAvailable(Boolean(body.updateAvailable));
+        const body = (await res.json()) as {
+          current?: string | null;
+          latest?: string | null;
+          updateAvailable?: boolean;
+        };
+        if (!cancelled) {
+          setVersionInfo({
+            current: body.current ?? null,
+            latest: body.latest ?? null,
+            updateAvailable: Boolean(body.updateAvailable),
+          });
+        }
       } catch {
         /* sin red / registry caído: no ofrecemos update */
       }
@@ -250,30 +264,28 @@ export function Sidebar() {
         )}
       </nav>
 
-      {!sidebarCollapsed && updateAvailable && (
-        <div className="px-6 pb-3">
+      {!sidebarCollapsed && versionInfo?.updateAvailable && (
+        <div className="px-4 pb-1">
           {updateState === "done" ? (
-            <p className="rounded-control-sm bg-success px-3 py-2 text-caption text-success-fg">
-              {t("sidebar.update.done")}
-            </p>
+            <p className="px-2.5 py-1.5 text-caption text-success-fg">{t("sidebar.update.done")}</p>
           ) : updateState === "error" ? (
-            <p className="rounded-control-sm border border-error-border bg-error px-3 py-2 text-caption text-error-fg">
-              {t("sidebar.update.error")}
-            </p>
+            <p className="px-2.5 py-1.5 text-caption text-error-fg">{t("sidebar.update.error")}</p>
           ) : (
             <button
               type="button"
               onClick={() => void handleUpdate()}
               disabled={updateState === "updating"}
-              className="flex w-full items-center gap-2 rounded-control-sm border border-primary/40 bg-brand-primary-soft px-3 py-2 text-caption font-button text-primary hover:opacity-90 disabled:opacity-60"
+              className="flex w-full items-center gap-2.5 rounded-control-sm px-2.5 py-2 text-sidebar-fg hover:bg-sidebar-accent hover:text-sidebar-emphasis disabled:opacity-60"
             >
               {updateState === "updating" ? (
-                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" strokeWidth={2} aria-hidden />
+                <Loader2 className="h-[18px] w-[18px] shrink-0 animate-spin" strokeWidth={1.5} aria-hidden />
               ) : (
-                <ArrowUpCircle className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden />
+                <ArrowUpCircle className="h-[18px] w-[18px] shrink-0" strokeWidth={1.5} aria-hidden />
               )}
-              <span className="truncate">
-                {updateState === "updating" ? t("sidebar.update.updating") : t("sidebar.update.available")}
+              <span className="truncate text-caption">
+                {updateState === "updating"
+                  ? t("sidebar.update.updating")
+                  : t("sidebar.update.available", { version: versionInfo.latest ?? "" })}
               </span>
             </button>
           )}
@@ -291,7 +303,10 @@ export function Sidebar() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-body font-nav-active text-sidebar-emphasis">{user.email}</p>
-              <p className="truncate text-small capitalize text-text-tertiary">{user.role}</p>
+              <p className="truncate text-small text-text-tertiary">
+                <span className="capitalize">{user.role}</span>
+                {versionInfo?.current && <span> · v{versionInfo.current}</span>}
+              </p>
             </div>
             <button
               type="button"
