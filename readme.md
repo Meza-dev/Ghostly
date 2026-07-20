@@ -61,20 +61,25 @@ Toda la documentación del proyecto vive en [`docs/`](docs/README.md):
 ## ✅ Implementado
 
 - **Pipeline asistido**: planificación por horizontes con strategist + observer + healer (self-healing de selectores).
-- **Dashboard web**: overview, runs en vivo (SSE), detalle de run con artefactos, settings y panel LLM.
+- **Veredictos veraces**: victoria verificada por el motor (no declarada por la IA) + agente juez con taxonomía de 6 veredictos, agrupada de cara al usuario en 3 estados (Éxito / Fallo / Fallo de Ghostly) y con un resumen del run en lenguaje natural.
+- **Percepción de errores**: captura estructurada de errores de consola, red (4xx/5xx) y alerts/toasts en el observer, con circuit breaker de errores bloqueantes.
+- **Dashboard web bilingüe (EN/ES)**: overview, runs en vivo (SSE), detalle de run con hilo unificado de pasos + artefactos (screenshots, video, trazas), settings y panel LLM.
+- **Re-ejecución**: replay del plan existente, y re-ejecución cambiando datos o anexando instrucciones al objetivo.
 - **Memoria de flujos** (`AssistMemory`): los runs exitosos se reutilizan para acelerar y estabilizar corridas futuras.
 - **Proveedor LLM configurable**: HTTP OpenAI-compatible o CLI local, por usuario.
+- **Grabación de video configurable** y **auto-update**: el dashboard detecta versiones nuevas y actualiza con un click.
 - **Integración MCP**: herramientas Ghostly disponibles desde el IDE.
 
 ## 🗺 Hoja de ruta
 
-La siguiente versión es **v0.2 "Trust Release"** — fiabilidad del veredicto antes que nuevas features. Ver el [spec completo](docs/specs/ghostly-v0.2-trust-release.md).
+La **v0.2 "Trust Release"** (fiabilidad del veredicto: capa determinista + agente juez + redacción de secretos) ya está en `main`. Ver el [spec](docs/specs/ghostly-v0.2-trust-release.md). Próximos pasos:
 
-- **Percepción de errores**: captura estructurada de errores de consola, red (4xx/5xx) y alerts/toasts en el observer.
-- **Veredictos veraces**: victoria verificada por el motor (no declarada por la IA) + agente juez con taxonomía de 6 veredictos.
-- **Orquestación CI/CD**: modo `--ci` con exit codes y reporte JSON/JUnit; integración por webhooks con proveedores Git.
-- **Scheduling local**: ejecución programada (cron) desde el daemon local.
-- **Agregación de flujos**: ejecución de lotes de pruebas con agregación de resultados jerárquica.
+- **Auto-restart tras update**: que el botón reinicie el motor solo (estilo Claude Desktop), sin el paso manual de `ghostly up`.
+- **Atribución de victoria diff-based**: exigir que la evidencia de éxito la haya causado este run (cortar falsos éxitos por datos residuales).
+- **Orquestación CI/CD**: modo `--ci` con exit codes y reporte JSON/JUnit; scheduling local; webhooks Git.
+- **Vocabulario de acciones**: verbos restantes (`check`/`uncheck`, `hover`, `setInputFiles`, diálogos nativos, etc.).
+- **Parametrización (fase 2)**: variables con nombre reutilizables entre runs.
+- **Import/export de runs**: mover el historial entre máquinas.
 
 ## ⚖️ Licencia
 
