@@ -110,27 +110,6 @@ export function getEffectiveVerdictMeta(
 }
 
 /**
- * Color del punto en la señal fusionada estado+veredicto (sidebar y tabla de
- * runs). El rediseño admite solo 2 acentos —verde = éxito, morado = hallazgo—
- * y deja el resto neutro, por eso `warning` colapsa en el mismo gris que
- * `muted` en vez de usar ámbar. El tamaño lo decide cada call site.
- */
-export const VERDICT_DOT_BY_TONE: Record<VerdictTone, string> = {
-  success: "bg-success-fg",
-  primary: "bg-primary",
-  warning: "bg-text-tertiary",
-  muted: "bg-text-tertiary",
-};
-
-/**
- * true si el tono merece énfasis tipográfico en listados: solo los dos acentos
- * (éxito y hallazgo) van en color primario y peso medio; el resto queda apagado.
- */
-export function isEmphasisTone(tone: VerdictTone): boolean {
-  return tone === "success" || tone === "primary";
-}
-
-/**
  * Agrupación CARA AL USUARIO (3 estados). La taxonomía de 6 veredictos sigue
  * viva por debajo (panel "por qué" / `verdictReason`), pero los badges y pills
  * que ve el usuario solo muestran estos tres:
@@ -178,12 +157,3 @@ export function getUserVerdictGroup(
 export function getUserGroupMeta(group: UserVerdictGroup): UserGroupMeta {
   return USER_GROUP_META[group];
 }
-
-export const ALL_VERDICTS: Verdict[] = [
-  "success",
-  "fail-app-bug",
-  "fail-test-broken",
-  "fail-agent-lost",
-  "inconclusive-environment",
-  "inconclusive",
-];

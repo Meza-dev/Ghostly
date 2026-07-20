@@ -6,7 +6,6 @@ import {
   Moon,
   SlidersHorizontal,
   Sun,
-  Workflow,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -40,12 +39,6 @@ const navMain = [
     icon: CirclePlay,
     path: "/runs",
     hintKey: "sidebar.hint.runs",
-  },
-  {
-    labelKey: "nav.flows",
-    icon: Workflow,
-    path: "/flows",
-    hintKey: "sidebar.hint.flows",
   },
   {
     labelKey: "nav.settings",

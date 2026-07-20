@@ -2,35 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { LlmSettingsPanel } from "../components/llm-settings-panel";
 import { useLanguage, type Lang } from "../context/language-context";
 import { useTheme, type Theme } from "../context/theme-context";
-
-const PREFS_STORAGE_KEY = "ghostly-ui-prefs";
-
-type UiPrefs = {
-  video: boolean;
-};
-
-const defaultUiPrefs: UiPrefs = {
-  video: true,
-};
-
-function loadUiPrefs(): UiPrefs {
-  try {
-    const raw = localStorage.getItem(PREFS_STORAGE_KEY);
-    if (!raw) return defaultUiPrefs;
-    const parsed = JSON.parse(raw) as Partial<UiPrefs>;
-    return { ...defaultUiPrefs, ...parsed };
-  } catch {
-    return defaultUiPrefs;
-  }
-}
-
-function saveUiPrefs(prefs: UiPrefs) {
-  try {
-    localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
-  } catch {
-    /* ignore */
-  }
-}
+import { defaultUiPrefs, loadUiPrefs, saveUiPrefs, type UiPrefs } from "../lib/ui-prefs";
 
 /** Etiqueta overline morada del diseño; las filas traen su propia línea superior. */
 function SettingsSection({ label, children }: { label: string; children: React.ReactNode }) {

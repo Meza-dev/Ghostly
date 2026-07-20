@@ -5,6 +5,7 @@ import { useAppContext } from "../context/app-context";
 import { useLanguage } from "../context/language-context";
 import type { MessageKey } from "../i18n/en";
 import { apiFetch } from "../lib/api";
+import { loadUiPrefs } from "../lib/ui-prefs";
 
 type TFn = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
@@ -233,7 +234,8 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         ...(assisted ? { assisted } : {}),
         headless: true,
         captureScreenshotAfterEachStep: true,
-        recordVideoOnFailure: true,
+        // Toggle "Grabar video" de Configuración (localStorage). Off ⇒ sin video.
+        recordVideoOnFailure: loadUiPrefs().video,
       };
       if (tab === "assisted" && assisted) {
         const victory = {

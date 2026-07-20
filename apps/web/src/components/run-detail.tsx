@@ -6,6 +6,7 @@ import { useLanguage } from "../context/language-context";
 import { useRunStream } from "../hooks/use-run-stream";
 import { apiFetch, getToken } from "../lib/api";
 import { appendInstructionsToGoal, buildOverriddenSteps, deriveEditableFillFields } from "../lib/rerun-fields";
+import { loadUiPrefs } from "../lib/ui-prefs";
 import { getUserGroupMeta, getUserVerdictGroup } from "../lib/verdict";
 import { AddInstructionsModal } from "./add-instructions-modal";
 import type { AssistEvent } from "./assist-timeline";
@@ -289,7 +290,8 @@ export function RunDetail() {
         project: run.project,
         headless: true,
         captureScreenshotAfterEachStep: true,
-        recordVideoOnFailure: true,
+        // Mismo toggle "Grabar video" de Configuración que usa el modal de nueva ejecución.
+        recordVideoOnFailure: loadUiPrefs().video,
       };
       if (valueOverrides) {
         // "Cambiar datos": replay literal puro sobre los steps ejecutados, sin assist

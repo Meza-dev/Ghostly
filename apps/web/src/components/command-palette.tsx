@@ -57,13 +57,6 @@ export function CommandPalette() {
         action: () => navigate("/runs"),
       },
       {
-        id: "flows",
-        label: t("nav.flows"),
-        type: "page",
-        keywords: "flows tests grupos",
-        action: () => navigate("/flows"),
-      },
-      {
         id: "settings",
         label: t("nav.settings"),
         type: "page",
