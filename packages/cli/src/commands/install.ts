@@ -4,18 +4,57 @@ import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { generateApiKey, readAuth, writeAuth } from "../lib/auth.js";
 import { buildMcpEntry } from "../lib/mcp-clients/entry.js";
-import { cursorClient } from "../lib/mcp-clients/cursor.js";
+import { detectClients } from "../lib/mcp-clients/registry.js";
+import { resolveSelectedClients } from "../lib/mcp-clients/selection.js";
+import type { McpClient } from "../lib/mcp-clients/types.js";
 import { getMcpServerEntryPath } from "../lib/paths.js";
 import { isChromiumInstalled } from "../lib/playwright.js";
 
 const DEFAULT_API_URL = "http://localhost:4000";
 
+/** Pregunta qué clientes MCP soportados configurar. Los detect-only se listan aparte (coming soon). */
+async function selectClientsInteractively(
+  detected: ReturnType<typeof detectClients>,
+): Promise<McpClient[]> {
+  const supportedDetected = detected.filter((d) => d.client.supported);
+  const comingSoon = detected.filter((d) => !d.client.supported && d.installed);
+
+  if (supportedDetected.length === 0) {
+    p.log.warn("No supported MCP client detected. Skipping MCP setup — see the docs to configure manually.");
+    return [];
+  }
+
+  // ponytail: @clack/prompts multiselect has no per-option "disabled" state, so detect-only
+  // clients aren't rendered as options at all — they're surfaced via the info note below instead.
+  const answer = await p.multiselect({
+    message: "Which MCP clients should Ghostly configure?",
+    options: supportedDetected.map((d) => ({
+      value: d.client.id,
+      label: d.client.label,
+      hint: d.installed ? "detected" : undefined,
+    })),
+    initialValues: supportedDetected.map((d) => d.client.id),
+    required: false,
+  });
+
+  if (comingSoon.length > 0) {
+    p.log.info(`Also detected (coming soon): ${comingSoon.map((d) => d.client.label).join(", ")}`);
+  }
+
+  if (p.isCancel(answer)) return [];
+  return resolveSelectedClients(detected, answer).selected;
+}
+
 export function registerInstall(program: Command): void {
   program
     .command("install")
-    .description("Set up Ghostly: API key, Cursor MCP, and browsers")
+    .description("Set up Ghostly: API key, MCP clients, and browsers")
     .option("--api-url <url>", "Local backend URL", DEFAULT_API_URL)
-    .action(async (opts: { apiUrl: string }) => {
+    .option(
+      "--mcp-clients <ids>",
+      "Comma-separated MCP client ids to configure non-interactively (e.g. cursor,claude-desktop)",
+    )
+    .action(async (opts: { apiUrl: string; mcpClients?: string }) => {
       console.clear();
       p.intro("👻  Ghostly — Installation");
 
@@ -46,44 +85,57 @@ export function registerInstall(program: Command): void {
         process.exit(1);
       }
 
-      // ── 3. Inyectar MCP en ~/.cursor/mcp.json ────────────────────────────
-      const alreadyConfigured = cursorClient.isConfigured();
-      let injectMcp = true;
-
-      if (alreadyConfigured) {
-        const overwrite = await p.confirm({
-          message: "A Ghostly configuration already exists in ~/.cursor/mcp.json. Overwrite it?",
-          initialValue: false,
-        });
-        if (p.isCancel(overwrite) || !overwrite) {
-          injectMcp = false;
-          p.log.info("MCP configuration left unchanged.");
-        }
+      // ── 3. Detectar clientes MCP y elegir cuáles configurar ────────────────
+      const detected = detectClients();
+      let selectedClients: McpClient[];
+      if (opts.mcpClients) {
+        const ids = opts.mcpClients.split(",").map((s) => s.trim()).filter(Boolean);
+        const { selected, warnings } = resolveSelectedClients(detected, ids);
+        selectedClients = selected;
+        for (const warning of warnings) p.log.warn(warning);
+      } else {
+        selectedClients = await selectClientsInteractively(detected);
       }
 
-      if (injectMcp) {
-        const s2 = p.spinner();
-        s2.start("Injecting MCP server into ~/.cursor/mcp.json");
-        try {
-          const mcpEntryPath = getMcpServerEntryPath();
-          if (!existsSync(mcpEntryPath)) {
-            throw new Error(
-              `${mcpEntryPath} not found. Reinstall or update @ghostly-io/cli to include the bundled MCP server.`,
-            );
+      for (const client of selectedClients) {
+        const alreadyConfigured = client.isConfigured();
+        let injectMcp = true;
+
+        if (alreadyConfigured) {
+          const overwrite = await p.confirm({
+            message: `A Ghostly configuration already exists for ${client.label}. Overwrite it?`,
+            initialValue: false,
+          });
+          if (p.isCancel(overwrite) || !overwrite) {
+            injectMcp = false;
+            p.log.info(`${client.label} configuration left unchanged.`);
           }
-          const injectResult = cursorClient.inject(buildMcpEntry(apiKey, opts.apiUrl));
-          if (injectResult.status === "skipped-backup") {
-            s2.stop("Cursor MCP config left unchanged");
-            p.log.warn(
-              `Your ~/.cursor/mcp.json could not be read, so Ghostly did NOT modify it (${injectResult.detail ?? "backed up, not modified"}). Fix or remove the file and run ghostly install again.`,
-            );
-          } else {
-            s2.stop("MCP server configured in Cursor ✓");
+        }
+
+        if (injectMcp) {
+          const s2 = p.spinner();
+          s2.start(`Injecting MCP server into ${client.label}`);
+          try {
+            const mcpEntryPath = getMcpServerEntryPath();
+            if (!existsSync(mcpEntryPath)) {
+              throw new Error(
+                `${mcpEntryPath} not found. Reinstall or update @ghostly-io/cli to include the bundled MCP server.`,
+              );
+            }
+            const injectResult = client.inject(buildMcpEntry(apiKey, opts.apiUrl));
+            if (injectResult.status === "skipped-backup") {
+              s2.stop(`${client.label} MCP config left unchanged`);
+              p.log.warn(
+                `Your ${client.label} config could not be read, so Ghostly did NOT modify it (${injectResult.detail ?? "backed up, not modified"}). Fix or remove the file and run ghostly install again.`,
+              );
+            } else {
+              s2.stop(`MCP server configured in ${client.label} ✓`);
+            }
+          } catch (err) {
+            s2.stop(`Failed to configure ${client.label}`);
+            p.log.error(String(err));
+            p.log.warn("You can add it manually — see the documentation.");
           }
-        } catch (err) {
-          s2.stop("Failed to write mcp.json");
-          p.log.error(String(err));
-          p.log.warn("You can add it manually — see the documentation.");
         }
       }
 
@@ -112,8 +164,10 @@ export function registerInstall(program: Command): void {
         }
       }
 
-      // ── 5. Copiar reglas/skills de Cursor en ~/.cursor (global) ───────────
-      cursorClient.installGuidance?.();
+      // ── 5. Guía por cliente (reglas/skills) para cada cliente configurado ──
+      for (const client of selectedClients) {
+        client.installGuidance?.();
+      }
 
       // ── Resumen final ─────────────────────────────────────────────────────
       p.note(
