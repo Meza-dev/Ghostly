@@ -45,7 +45,7 @@ Same engine, three entry points — from zero code to fully in your editor.
 # 1. Install the CLI
 npm install -g @ghostly-io/cli
 
-# 2. Set up credentials, Chromium, and the Cursor MCP server
+# 2. Set up credentials, Chromium, and your editor's MCP server(s)
 ghostly install
 
 # 3. Launch the engine and dashboard
@@ -67,6 +67,17 @@ No config files to hand-edit.
 | --- | --- | --- |
 | ![Home overview](docs/media/home.png) | ![Runs list with grouped verdicts](docs/media/runs.png) | ![Run detail with the unified thread and verdict](docs/media/run-detail.png) |
 
+## How it works
+
+Under the hood, an assisted run is a loop of four roles:
+
+1. **Strategist** — reads your goal and the current page, and plans the next steps.
+2. **Observer** — after every action, captures a fresh snapshot of the page (accessibility tree + form controls) so the next decision is grounded in reality.
+3. **Healer** — when a selector breaks, repairs it from what's actually on the page instead of failing.
+4. **Judge** — verifies the outcome against real evidence and issues the verdict, so a pass means the app truly worked.
+
+Successful runs are remembered and replayed, so re-running the same flow is fast and stable.
+
 ## Features
 
 - **Natural-language goals** — describe the outcome; Ghostly plans and drives the browser.
@@ -80,15 +91,23 @@ No config files to hand-edit.
 
 ## Using Ghostly from your IDE (MCP)
 
-`ghostly install` automatically registers Ghostly's MCP server in Cursor (`~/.cursor/mcp.json`) and copies its rules and skills. Once `ghostly up` is running, Cursor can call Ghostly's tools — build a project map, run a flow, and save it — directly from your editor.
+`ghostly install` detects the MCP-capable editors on your machine and lets you pick which ones to set up — **Cursor, Claude Desktop, and Claude Code** are supported. For each, it registers Ghostly's MCP server and installs a Ghostly "expert" skill so the agent knows how to design solid tests and can offer to create one when you add a screen or flow. Once `ghostly up` is running, your editor can call Ghostly's tools — build a project map, run a flow, and save it — without leaving your editor.
 
-> Other MCP clients (Claude Desktop/Code and friends) aren't auto-configured yet — point them at the bundled MCP server manually. Broader editor support is on the way.
+Manage them anytime:
+
+```bash
+ghostly mcp list          # which editors are detected and configured
+ghostly mcp add cursor    # (re)configure one editor
+```
+
+> More editors (Antigravity, Codex, OpenCode) are detected today; injection for them is on the way.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `ghostly install` | Sets up credentials, the Cursor MCP server, and Chromium. |
+| `ghostly install` | Sets up credentials, Chromium, and the MCP server + skill for your chosen editors (Cursor, Claude). |
+| `ghostly mcp` | List detected editors and add or (re)configure Ghostly's MCP server in them. |
 | `ghostly up` | Prepares the local database and starts the engine and dashboard on `http://localhost:4000`. |
 | `ghostly config` | Optional — configure the AI provider from the CLI instead of the dashboard. |
 | `ghostly update` | Update the CLI to the latest version. |
