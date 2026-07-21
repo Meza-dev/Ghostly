@@ -141,6 +141,17 @@
     will-change: transform;
   }
 
+  /* Preflight: línea que "escanea" la página mock + elementos que se resaltan,
+     para transmitir que Ghostly está leyendo la página y planificando. */
+  .ghostly-scanline {
+    animation: ghostly-scan 3.6s cubic-bezier(0.6, 0, 0.4, 1) infinite;
+    will-change: top, opacity;
+  }
+
+  .ghostly-scan-hl {
+    animation: ghostly-scan-hl 3.6s ease-in-out infinite;
+  }
+
   .ghostly-scrollbar {
     scrollbar-width: thin;
     scrollbar-color: var(--color-border-strong) transparent;
@@ -173,6 +184,36 @@
   }
   100% {
     transform: translateX(410%);
+  }
+}
+
+@keyframes ghostly-scan {
+  0% {
+    top: 0;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
+}
+
+@keyframes ghostly-scan-hl {
+  0%,
+  100% {
+    outline-color: transparent;
+    background-color: transparent;
+  }
+  45%,
+  60% {
+    outline-color: rgba(125, 108, 255, 0.75);
+    background-color: rgba(125, 108, 255, 0.1);
   }
 }
 

@@ -1,4 +1,4 @@
-import { AlertCircle, Check, ChevronDown, ChevronUp, Circle, Loader2, Target, X } from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronUp, Target, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AssistedMeta, RunRecord, Step } from "../../../../packages/runner/src/schema.js";
 import { useAppContext } from "../context/app-context";
@@ -38,6 +38,18 @@ const DEFAULT_STEPS_JSON = JSON.stringify([{ action: "waitForSelector", selector
 const GOAL_MIN_LENGTH = 10;
 const GOAL_MAX_LENGTH = 500;
 
+/**
+ * Mensajes de planificación que rotan en el preflight. `/v1/plan` es una sola
+ * request sin telemetría, así que se ciclan por tiempo para dar sensación de
+ * avance — describen lo que la IA realmente hace (recon + planificación).
+ */
+const PREFLIGHT_STEP_KEYS = [
+  "newRun.preflight.step.open",
+  "newRun.preflight.step.layout",
+  "newRun.preflight.step.controls",
+  "newRun.preflight.step.plan",
+] as const satisfies readonly MessageKey[];
+
 type Props = {
   onClose: () => void;
   onRunStarted: (run: RunRecord) => void;
@@ -72,10 +84,23 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
   const [victoryUrl, setVictoryUrl] = useState("");
   const [victoryMustAll, setVictoryMustAll] = useState(false);
   const [victoryOpen, setVictoryOpen] = useState(true);
+  const [preflightStep, setPreflightStep] = useState(0);
 
   // El preflight es exclusivo del modo asistido: en avanzado los pasos ya vienen
   // dados, no hay plan que armar, así que se va directo al detalle de la run.
   const showPreflight = tab === "assisted" && (planning || loading);
+
+  // Cicla los mensajes de planificación mientras el plan se arma (sensación de avance).
+  useEffect(() => {
+    if (!planning) {
+      setPreflightStep(0);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setPreflightStep((s) => (s + 1) % PREFLIGHT_STEP_KEYS.length);
+    }, 2800);
+    return () => window.clearInterval(id);
+  }, [planning]);
 
   const submitDisabledReason = (() => {
     if (loading) return t("newRun.disabled.starting");
@@ -581,64 +606,60 @@ export function NewRunModal({ onClose, onRunStarted }: Props) {
         aria-live="polite"
         aria-busy="true"
       >
-        <div className="w-full max-w-[440px] rounded-ui border border-border bg-card p-6 shadow-overlay">
-          <p className="text-body font-title text-foreground">{t("newRun.preflight.title")}</p>
-
-          {/* Indeterminada a propósito: /v1/plan es una sola request, no publica avance. */}
-          <div className="mt-4 h-1.5 overflow-hidden rounded-pill bg-muted">
-            <div className="ghostly-indeterminate h-full w-1/4 rounded-pill bg-primary" />
+        <div className="w-full max-w-[560px] rounded-ui border border-border bg-card p-8 shadow-overlay">
+          {/* Escáner de la página: una línea barre el mock y algunos controles se resaltan,
+              para transmitir que Ghostly está LEYENDO la página y planificando (no instalando). */}
+          <div className="relative h-80 overflow-hidden rounded-control-lg border border-border bg-background">
+            <div className="flex items-center gap-1.5 border-b border-bg-muted px-4 py-3">
+              <span className="h-2 w-2 rounded-pill bg-muted" />
+              <span className="h-2 w-2 rounded-pill bg-muted" />
+              <span className="h-2 w-2 rounded-pill bg-muted" />
+              <span className="ml-2 truncate font-mono text-caption text-text-tertiary">{startUrl.trim()}</span>
+            </div>
+            <div className="flex flex-col gap-3.5 p-5">
+              <div className="h-3 w-2/5 rounded bg-muted" />
+              <div className="flex gap-3">
+                <div className="ghostly-scan-hl h-11 w-3/5 rounded-control-sm bg-muted" style={{ animationDelay: "0.5s" }} />
+                <div className="ghostly-scan-hl h-11 w-1/3 rounded-control-sm bg-muted" style={{ animationDelay: "1.1s" }} />
+              </div>
+              <div className="h-2.5 w-4/5 rounded bg-muted" />
+              <div className="ghostly-scan-hl h-9 w-2/5 rounded-control-sm bg-muted" style={{ animationDelay: "1.8s" }} />
+              <div className="h-2.5 w-3/4 rounded bg-muted" />
+              <div className="h-2.5 w-3/5 rounded bg-muted" />
+              <div className="ghostly-scan-hl h-9 w-1/2 rounded-control-sm bg-muted" style={{ animationDelay: "2.6s" }} />
+            </div>
+            <div
+              className="ghostly-scanline pointer-events-none absolute inset-x-0 top-0 h-14"
+              style={{
+                background: "linear-gradient(180deg, transparent, rgba(125,108,255,0.16), transparent)",
+                borderBottom: "1px solid rgba(125,108,255,0.6)",
+              }}
+            />
           </div>
 
-          <div className="mt-5 flex flex-col gap-1">
-            {[
-              {
-                key: "plan",
-                label: t("newRun.preflight.plan.label"),
-                detail: t("newRun.preflight.plan.detail", { url: startUrl.trim() }),
-                done: !planning,
-                active: planning,
-              },
-              {
-                key: "start",
-                label: t("newRun.preflight.start.label"),
-                detail: t("newRun.preflight.start.detail"),
-                done: false,
-                active: !planning && loading,
-              },
-            ].map((phase) => (
-              <div key={phase.key} className="flex items-start gap-3 py-2">
-                <span
-                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-pill ${
-                    phase.done
-                      ? "bg-success text-success-fg"
-                      : phase.active
-                      ? "bg-brand-primary-soft text-primary"
-                      : "bg-muted text-muted-fg"
-                  }`}
-                >
-                  {phase.done ? (
-                    <Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />
-                  ) : phase.active ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} aria-hidden />
-                  ) : (
-                    <Circle className="h-2.5 w-2.5" strokeWidth={2} aria-hidden />
-                  )}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p
-                    className={`text-small ${
-                      phase.done || phase.active ? "font-button text-foreground" : "text-muted-fg"
-                    }`}
-                  >
-                    {phase.label}
-                  </p>
-                  <p className="mt-0.5 break-words text-caption text-muted-fg">{phase.detail}</p>
-                </div>
-              </div>
+          <h2 className="mt-7 text-lg font-title text-foreground">{t("newRun.preflight.title")}</h2>
+
+          <div className="mt-3 flex items-center gap-3">
+            <span className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-pill bg-primary" aria-hidden />
+            <span className="text-md text-foreground">
+              {planning
+                ? t(PREFLIGHT_STEP_KEYS[preflightStep] ?? PREFLIGHT_STEP_KEYS[0])
+                : t("newRun.preflight.starting")}
+            </span>
+          </div>
+
+          <div className="mt-5 flex gap-2">
+            {PREFLIGHT_STEP_KEYS.map((stepKey, idx) => (
+              <span
+                key={stepKey}
+                className={`h-1 flex-1 rounded-pill transition-colors ${
+                  !planning || idx <= preflightStep ? "bg-primary" : "bg-muted"
+                }`}
+              />
             ))}
           </div>
 
-          <p className="mt-4 text-center text-caption text-muted-fg">{t("newRun.preflight.footer")}</p>
+          <p className="mt-6 text-small leading-relaxed text-muted-fg">{t("newRun.preflight.footer")}</p>
         </div>
       </div>
     )}
