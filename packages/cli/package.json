@@ -33,6 +33,7 @@
     "build": "node scripts/build.mjs",
     "build:cli-only": "tsup",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
     "publish-check": "node scripts/publish-check.mjs"
   },
   "dependencies": {
@@ -52,7 +53,8 @@
     "@ghostly-io/tsconfig": "workspace:*",
     "@types/node": "^22.10.5",
     "tsup": "^8.3.5",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.4"
   },
   "engines": {
     "node": ">=20"
