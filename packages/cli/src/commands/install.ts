@@ -1,43 +1,14 @@
 import { execSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { generateApiKey, readAuth, writeAuth } from "../lib/auth.js";
-import { isMcpAlreadyConfigured, injectGhostlyMcp } from "../lib/mcp.js";
-import { getCursorRulesAssetsDir, getCursorSkillsAssetsDir, getMcpServerEntryPath } from "../lib/paths.js";
+import { buildMcpEntry } from "../lib/mcp-clients/entry.js";
+import { cursorClient } from "../lib/mcp-clients/cursor.js";
+import { getMcpServerEntryPath } from "../lib/paths.js";
 import { isChromiumInstalled } from "../lib/playwright.js";
 
 const DEFAULT_API_URL = "http://localhost:4000";
-
-function copyCursorAssetsGlobal(): { copied: number; skipped: boolean } {
-  const rulesSrc = getCursorRulesAssetsDir();
-  const skillsSrc = getCursorSkillsAssetsDir();
-  if (!existsSync(rulesSrc) && !existsSync(skillsSrc)) {
-    return { copied: 0, skipped: true };
-  }
-
-  const cursorDir = resolve(homedir(), ".cursor");
-  const rulesDest = resolve(cursorDir, "rules");
-  const skillsDest = resolve(cursorDir, "skills");
-  mkdirSync(rulesDest, { recursive: true });
-  mkdirSync(skillsDest, { recursive: true });
-
-  let copied = 0;
-  const ruleFile = resolve(rulesDest, "ghosttester-expert-architect.mdc");
-  const skillDir = resolve(skillsDest, "ghosttester-expert-architect");
-
-  if (existsSync(rulesSrc) && !existsSync(ruleFile)) {
-    cpSync(rulesSrc, rulesDest, { recursive: true });
-    copied += 1;
-  }
-  if (existsSync(skillsSrc) && !existsSync(skillDir)) {
-    cpSync(skillsSrc, skillsDest, { recursive: true });
-    copied += 1;
-  }
-  return { copied, skipped: false };
-}
 
 export function registerInstall(program: Command): void {
   program
@@ -76,7 +47,7 @@ export function registerInstall(program: Command): void {
       }
 
       // ── 3. Inyectar MCP en ~/.cursor/mcp.json ────────────────────────────
-      const alreadyConfigured = isMcpAlreadyConfigured();
+      const alreadyConfigured = cursorClient.isConfigured();
       let injectMcp = true;
 
       if (alreadyConfigured) {
@@ -94,13 +65,13 @@ export function registerInstall(program: Command): void {
         const s2 = p.spinner();
         s2.start("Injecting MCP server into ~/.cursor/mcp.json");
         try {
-          const mcpEntry = getMcpServerEntryPath();
-          if (!existsSync(mcpEntry)) {
+          const mcpEntryPath = getMcpServerEntryPath();
+          if (!existsSync(mcpEntryPath)) {
             throw new Error(
-              `${mcpEntry} not found. Reinstall or update @ghostly-io/cli to include the bundled MCP server.`,
+              `${mcpEntryPath} not found. Reinstall or update @ghostly-io/cli to include the bundled MCP server.`,
             );
           }
-          injectGhostlyMcp(apiKey, opts.apiUrl);
+          cursorClient.inject(buildMcpEntry(apiKey, opts.apiUrl));
           s2.stop("MCP server configured in Cursor ✓");
         } catch (err) {
           s2.stop("Failed to write mcp.json");
@@ -135,22 +106,7 @@ export function registerInstall(program: Command): void {
       }
 
       // ── 5. Copiar reglas/skills de Cursor en ~/.cursor (global) ───────────
-      const s4 = p.spinner();
-      s4.start("Syncing rules and skills into ~/.cursor/");
-      try {
-        const result = copyCursorAssetsGlobal();
-        if (result.skipped) {
-          s4.stop("No Cursor assets found in this build");
-          p.log.warn("Reinstall/update the CLI to include the bundled rules and skills.");
-        } else if (result.copied === 0) {
-          s4.stop("Global rules and skills were already present ✓");
-        } else {
-          s4.stop(`Global rules and skills copied ✓ (${result.copied} blocks)`);
-        }
-      } catch (err) {
-        s4.stop("Could not import rules/skills");
-        p.log.error(String(err));
-      }
+      cursorClient.installGuidance?.();
 
       // ── Resumen final ─────────────────────────────────────────────────────
       p.note(
