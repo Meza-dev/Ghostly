@@ -2,8 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../paths.js", () => ({
   getCursorMcpPath: () => "/nonexistent/mcp.json",
-  getCursorRulesAssetsDir: () => "/nonexistent/rules",
-  getCursorSkillsAssetsDir: () => "/nonexistent/skills",
 }));
 
 // Los adapters detect-only tocan fs/PATH reales (home dir, `where`/`which`); no importa el
@@ -22,8 +20,12 @@ describe("registry", () => {
     ]);
   });
 
-  it("Cursor and Claude Desktop are supported today; the rest are detect-only", () => {
-    expect(registry.filter((c) => c.supported).map((c) => c.id)).toEqual(["cursor", "claude-desktop"]);
+  it("Cursor, Claude Desktop and Claude Code are supported today; the rest are detect-only", () => {
+    expect(registry.filter((c) => c.supported).map((c) => c.id)).toEqual([
+      "cursor",
+      "claude-desktop",
+      "claude-code",
+    ]);
   });
 
   it("detectClients() resolves adapter + boolean installed flag for every registered client, without crashing", () => {
