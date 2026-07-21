@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { registerConfig } from "./commands/config.js";
 import { registerInstall } from "./commands/install.js";
 import { registerKeygen } from "./commands/keygen.js";
+import { registerMcp } from "./commands/mcp.js";
 import { registerUp } from "./commands/up.js";
 import { registerUpdate } from "./commands/update.js";
 
@@ -15,6 +16,7 @@ program
 registerInstall(program);
 registerKeygen(program);
 registerConfig(program);
+registerMcp(program);
 registerUp(program);
 registerUpdate(program);
 

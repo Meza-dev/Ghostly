@@ -1,13 +1,12 @@
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { generateApiKey, readAuth, writeAuth } from "../lib/auth.js";
+import { configureClient } from "../lib/mcp-clients/configure.js";
 import { buildMcpEntry } from "../lib/mcp-clients/entry.js";
 import { detectClients } from "../lib/mcp-clients/registry.js";
 import { resolveSelectedClients } from "../lib/mcp-clients/selection.js";
 import type { McpClient } from "../lib/mcp-clients/types.js";
-import { getMcpServerEntryPath } from "../lib/paths.js";
 import { isChromiumInstalled } from "../lib/playwright.js";
 
 const DEFAULT_API_URL = "http://localhost:4000";
@@ -97,48 +96,9 @@ export function registerInstall(program: Command): void {
         selectedClients = await selectClientsInteractively(detected);
       }
 
+      const entry = buildMcpEntry(apiKey, opts.apiUrl);
       for (const client of selectedClients) {
-        const alreadyConfigured = client.isConfigured();
-        let injectMcp = true;
-
-        if (alreadyConfigured) {
-          const overwrite = await p.confirm({
-            message: `A Ghostly configuration already exists for ${client.label}. Overwrite it?`,
-            initialValue: false,
-          });
-          if (p.isCancel(overwrite) || !overwrite) {
-            injectMcp = false;
-            p.log.info(`${client.label} configuration left unchanged.`);
-          }
-        }
-
-        if (injectMcp) {
-          const s2 = p.spinner();
-          s2.start(`Injecting MCP server into ${client.label}`);
-          try {
-            const mcpEntryPath = getMcpServerEntryPath();
-            if (!existsSync(mcpEntryPath)) {
-              throw new Error(
-                `${mcpEntryPath} not found. Reinstall or update @ghostly-io/cli to include the bundled MCP server.`,
-              );
-            }
-            const injectResult = client.inject(buildMcpEntry(apiKey, opts.apiUrl));
-            if (injectResult.status === "skipped-backup") {
-              s2.stop(`${client.label} MCP config left unchanged`);
-              p.log.warn(
-                `Your ${client.label} config could not be read, so Ghostly did NOT modify it (${injectResult.detail ?? "backed up, not modified"}). Fix or remove the file and run ghostly install again.`,
-              );
-            } else if (injectResult.status === "unsupported") {
-              s2.stop(`${client.label} is not supported yet`);
-            } else {
-              s2.stop(`MCP server configured in ${client.label} ✓`);
-            }
-          } catch (err) {
-            s2.stop(`Failed to configure ${client.label}`);
-            p.log.error(String(err));
-            p.log.warn("You can add it manually — see the documentation.");
-          }
-        }
+        await configureClient(client, entry);
       }
 
       // ── 4. Instalar Chromium (solo si no está instalado) ──────────────────
@@ -164,11 +124,6 @@ export function registerInstall(program: Command): void {
             p.log.warn("Run manually: npx playwright install chromium");
           }
         }
-      }
-
-      // ── 5. Guía por cliente (reglas/skills) para cada cliente configurado ──
-      for (const client of selectedClients) {
-        client.installGuidance?.();
       }
 
       // ── Resumen final ─────────────────────────────────────────────────────

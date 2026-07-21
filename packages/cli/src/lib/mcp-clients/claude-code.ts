@@ -48,6 +48,7 @@ export const claudeCodeClient: McpClient = {
   id: "claude-code",
   label: "Claude Code",
   supported: true,
+  restartHint: "Restart or reload Claude Code to pick up the new MCP server.",
 
   detect(): boolean {
     return isBinaryOnPath("claude") || existsSync(resolve(homedir(), ".claude"));
