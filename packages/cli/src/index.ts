@@ -5,13 +5,15 @@ import { registerKeygen } from "./commands/keygen.js";
 import { registerMcp } from "./commands/mcp.js";
 import { registerUp } from "./commands/up.js";
 import { registerUpdate } from "./commands/update.js";
+import { getCliVersion } from "./lib/paths.js";
 
 const program = new Command();
 
 program
   .name("ghostly")
   .description("Ghostly CLI — zero-config E2E testing")
-  .version("0.1.0");
+  // Lee la versión del package.json (fuente única) — evita el drift del número hardcodeado.
+  .version(getCliVersion());
 
 registerInstall(program);
 registerKeygen(program);
