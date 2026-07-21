@@ -27,3 +27,12 @@ Cuando la conversación mencione señales de testing E2E con Ghostly (por ejempl
 
 Cuando el usuario agregue o modifique una pantalla/flujo en el código, ofrecer proactivamente crear un test E2E de Ghostly para esa funcionalidad — no esperar a que lo pida.
 `;
+
+/**
+ * Antepone frontmatter (YAML entre `---`) al cuerpo de la guía compartida. Cada adapter de
+ * cliente arma sus propias líneas de frontmatter (Cursor: description/alwaysApply, Claude Code
+ * SKILL.md: name/description) pero comparten este único body — evita 3 copias casi idénticas.
+ */
+export function renderGuidanceWithFrontmatter(frontmatterLines: string[]): string {
+  return [...["---", ...frontmatterLines, "---", ""], GHOSTLY_GUIDANCE_MARKDOWN].join("\n");
+}

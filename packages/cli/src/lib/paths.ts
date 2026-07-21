@@ -58,16 +58,6 @@ export function getMcpServerEntryPath(): string {
   return resolve(getCliRoot(), "dist", "assets", "mcp-server", "index.js");
 }
 
-/** <cliRoot>/dist/assets/cursor/rules */
-export function getCursorRulesAssetsDir(): string {
-  return resolve(getCliRoot(), "dist", "assets", "cursor", "rules");
-}
-
-/** <cliRoot>/dist/assets/cursor/skills */
-export function getCursorSkillsAssetsDir(): string {
-  return resolve(getCliRoot(), "dist", "assets", "cursor", "skills");
-}
-
 /** Ruta al ~/.cursor/mcp.json (global de Cursor) */
 export function getCursorMcpPath(): string {
   return resolve(homedir(), ".cursor", "mcp.json");

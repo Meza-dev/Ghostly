@@ -36,12 +36,6 @@ function copy(src, dest) {
   cpSync(src, dest, { recursive: true });
 }
 
-function copyFile(src, destFile) {
-  console.log(`📦  ${src} → ${destFile}`);
-  mkdirSync(dirname(destFile), { recursive: true });
-  cpSync(src, destFile);
-}
-
 function safeRemove(target) {
   try {
     rmSync(target, { recursive: true, force: true });
@@ -141,12 +135,9 @@ console.log("\n═══ [6/6] Copying assets to packages/cli/dist/assets ══
 const apiAssets = resolve(assetsDir, "api");
 const webAssets = resolve(assetsDir, "web");
 const mcpAssets = resolve(assetsDir, "mcp-server");
-const cursorRulesAssets = resolve(assetsDir, "cursor", "rules");
-const cursorSkillsAssets = resolve(assetsDir, "cursor", "skills");
 safeRemove(apiAssets);
 safeRemove(webAssets);
 safeRemove(mcpAssets);
-safeRemove(resolve(assetsDir, "cursor"));
 
 // API: dist compilado (index.js + seed.js)
 copy(resolve(apiDir, "dist"), resolve(apiAssets, "dist"));
@@ -156,15 +147,10 @@ copy(resolve(apiDir, "prisma"), resolve(apiAssets, "prisma"));
 copy(resolve(root, "apps/web/dist"), webAssets);
 // MCP server: runtime local para integración con Cursor
 copy(resolve(root, "packages/mcp-server/dist"), mcpAssets);
-// Reglas y skills de Cursor para onboarding del proyecto.
-copyFile(
-  resolve(root, ".cursor/rules/ghosttester-expert-architect.mdc"),
-  resolve(cursorRulesAssets, "ghosttester-expert-architect.mdc"),
-);
-copy(
-  resolve(root, ".cursor/skills/ghosttester-expert-architect"),
-  resolve(cursorSkillsAssets, "ghosttester-expert-architect"),
-);
+// Nota: la guía "Ghostly Expert" (Cursor/Claude Code/Claude Desktop) ya NO se empaqueta como
+// asset de build — cada adapter la renderiza en runtime desde guidance-content.ts (fuente única,
+// committeada). El copy de `.cursor/rules|skills` (gitignored, no existe en checkout limpio) se
+// retiró porque tiraba ENOENT en un `pnpm build` limpio.
 
 // Engine de Prisma: buscar en npm y en pnpm store
 const engineSrc = findPrismaEngineDir([
