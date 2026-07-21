@@ -451,15 +451,18 @@ runRouter.post("/run", async (c) => {
         const strategist = createStrategist({
           llmTimeoutMs: appConfig.assist.llmTimeoutMs,
           chunkSize: appConfig.assistV2.chunkSize,
+          lang,
         });
         const healer = createHealer({
           llmTimeoutMs: appConfig.assist.llmTimeoutMs,
           chunkSize: appConfig.assistV2.chunkSize,
           codeHints,
+          lang,
         });
         const judge = createJudge({
           llmTimeoutMs: appConfig.assist.llmTimeoutMs,
           chunkSize: appConfig.assistV2.chunkSize,
+          lang,
         });
         let seedMemorySteps: Step[] = [];
         if ((assistV2.memoryMode ?? appConfig.assistV2.memoryMode) === "adaptive") {

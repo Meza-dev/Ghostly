@@ -1,4 +1,5 @@
 import { buildJudgeUserPrompt, JUDGE_SYSTEM_PROMPT, safeParseRunInput, validateJudgeVerdict } from "@ghostly-io/runner";
+import { type Lang } from "../i18n/pick.js";
 import type {
   HealerContext,
   HealerFn,
@@ -625,10 +626,27 @@ function buildHealerUserPrompt(ctx: HealerContext): string {
   ].join("\n");
 }
 
+/**
+ * Directiva de idioma de salida (GHOST-58): el texto cara-al-usuario de la IA
+ * (`reasoning`/`evidence`/`summary`/`rationale`/`hint`) sigue el idioma del
+ * usuario. El texto extraído de la app objetivo NO se traduce — es data del
+ * usuario, no copy de Ghostly. Se anexa al system prompt en el borde API (no en
+ * el runner) para no tocar los prompts puros ni sus tests.
+ */
+function languageDirective(lang: Lang): string {
+  const target = lang === "es" ? "español" : "inglés (English)";
+  return [
+    "",
+    `IDIOMA DE SALIDA (OBLIGATORIO): todo el texto dirigido al usuario — reasoning, evidence, summary, rationale, hint — DEBE estar en ${target}, sin importar el idioma de este prompt.`,
+    "NO traduzcas el texto extraído de la app objetivo (aria-label, placeholder, toasts, mensajes de la página): citalo textualmente en su idioma original.",
+  ].join("\n");
+}
+
 export type OrchestratorOptions = {
   llmTimeoutMs: number;
   chunkSize: number;
   codeHints?: CodeHints;
+  lang: Lang;
 };
 
 export function createStrategist(opts: OrchestratorOptions): StrategistFn {
@@ -644,7 +662,7 @@ export function createStrategist(opts: OrchestratorOptions): StrategistFn {
       snapshotUrl: ctx.snapshot.url,
     });
     const raw: Record<string, unknown> = await callLlmJson(
-      STRATEGIST_SYSTEM,
+      STRATEGIST_SYSTEM + languageDirective(opts.lang),
       user,
       opts.llmTimeoutMs,
       "strategist",
@@ -692,7 +710,7 @@ export function createHealer(opts: OrchestratorOptions): HealerFn {
       snapshotNodeCount: ctx.snapshot.nodeCount,
     });
     const raw: Record<string, unknown> = await callLlmJson(
-      HEALER_SYSTEM,
+      HEALER_SYSTEM + languageDirective(opts.lang),
       user,
       opts.llmTimeoutMs,
       "healer",
@@ -755,7 +773,7 @@ export function createJudge(opts: OrchestratorOptions): JudgeFn {
       imageAttached: Boolean(image),
     });
     const verdict = await validateJudgeVerdict(() =>
-      callLlmJson(JUDGE_SYSTEM_PROMPT, user, opts.llmTimeoutMs, "judge", image),
+      callLlmJson(JUDGE_SYSTEM_PROMPT + languageDirective(opts.lang), user, opts.llmTimeoutMs, "judge", image),
     );
     debugLog("judge", {
       stage: "verdict",

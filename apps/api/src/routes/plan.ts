@@ -98,6 +98,7 @@ planRouter.post("/plan", async (c) => {
       const strategist = createStrategist({
         llmTimeoutMs: appConfig.assist.llmTimeoutMs,
         chunkSize: appConfig.assistV2.chunkSize,
+        lang,
       });
       const chunk = await strategist({
         goal,
