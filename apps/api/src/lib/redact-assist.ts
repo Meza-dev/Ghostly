@@ -1,4 +1,4 @@
-import { redactOrTruncateText, type AssistedMeta } from "@ghostly-io/runner";
+import { redactGoalText, type AssistedMeta } from "@ghostly-io/runner";
 
 /**
  * Redacta `assistedMeta.goal` antes de persistirlo (spec §6). Delega en el
@@ -14,6 +14,6 @@ import { redactOrTruncateText, type AssistedMeta } from "@ghostly-io/runner";
 export function redactAssistedMeta(meta: AssistedMeta): AssistedMeta {
   return {
     ...meta,
-    goal: redactOrTruncateText(meta.goal),
+    goal: redactGoalText(meta.goal),
   };
 }

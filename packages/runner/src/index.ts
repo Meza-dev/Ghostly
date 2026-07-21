@@ -48,8 +48,10 @@ export {
   type MemoryGuardRunResult,
 } from "./assist/judge.js";
 export {
+  redactGoalText,
   redactOrTruncateList,
   redactOrTruncateText,
+  redactSecretValues,
   SENSITIVE_TEXT_WORDS,
 } from "./assist/redaction.js";
 export type {

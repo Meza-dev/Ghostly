@@ -79,3 +79,33 @@ export function redactOrTruncateText(value: string): string {
 export function redactOrTruncateList(values: string[]): string[] {
   return values.map(redactOrTruncateText);
 }
+
+/**
+ * Patrón que captura el VALOR que sigue a una palabra sensible: `password: x`,
+ * `token=x`, `password "x"`, `with password x`. Conserva la palabra clave, el
+ * separador y la comilla de apertura; solo el valor se redacta.
+ */
+const SECRET_VALUE_PATTERN = new RegExp(
+  String.raw`\b(${SENSITIVE_TEXT_WORDS.join("|")})\b(\s*[:=]?\s*)(["']?)([^\s"']+)`,
+  "gi",
+);
+
+/**
+ * Redacta SOLO el valor del secreto, conservando el resto del texto legible —
+ * a diferencia de `redactOrTruncateText`, que nukea el campo entero. Se usa para
+ * el GOAL (texto autorado por el usuario que además es el título del run):
+ * `Log in as "admin" with password "admin"` → `...password "[REDACTED]"`.
+ *
+ * ponytail: sobre-redacta la palabra que sigue literalmente a una keyword aunque
+ * no sea un secreto (`password protected` → `password [REDACTED]`); es un
+ * trade-off aceptable frente a nukear todo el título. No usar para el texto de
+ * juez/página (ese sigue con `redactOrTruncateText`, más conservador).
+ */
+export function redactSecretValues(value: string): string {
+  return value.replace(SECRET_VALUE_PATTERN, (_m, kw, sep, quote) => `${kw}${sep}${quote}${REDACTED}`);
+}
+
+/** Redacción del goal/título: redacta el valor del secreto y trunca al límite. */
+export function redactGoalText(value: string): string {
+  return truncateText(redactSecretValues(value));
+}
