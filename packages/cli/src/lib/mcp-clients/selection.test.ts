@@ -45,4 +45,15 @@ describe("resolveSelectedClients", () => {
   it("returns an empty selection for an empty id list", () => {
     expect(resolveSelectedClients(detected, [])).toEqual({ selected: [], warnings: [] });
   });
+
+  it("dedupes repeated ids so a client is only injected once", () => {
+    const { selected } = resolveSelectedClients(detected, ["cursor", "cursor"]);
+    expect(selected).toEqual([cursor]);
+  });
+
+  it("is case-insensitive and trims whitespace", () => {
+    const { selected, warnings } = resolveSelectedClients(detected, [" Cursor "]);
+    expect(selected).toEqual([cursor]);
+    expect(warnings).toEqual([]);
+  });
 });

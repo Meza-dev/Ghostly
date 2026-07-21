@@ -13,11 +13,15 @@ export function resolveSelectedClients(
 ): { selected: McpClient[]; warnings: string[] } {
   const selected: McpClient[] = [];
   const warnings: string[] = [];
+  const seen = new Set<string>();
 
-  for (const id of ids) {
+  for (const raw of ids) {
+    const id = raw.trim().toLowerCase();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
     const match = detected.find((d) => d.client.id === id);
     if (!match) {
-      warnings.push(`Unknown MCP client "${id}" — skipped.`);
+      warnings.push(`Unknown MCP client "${raw}" — skipped.`);
       continue;
     }
     if (!match.client.supported) {

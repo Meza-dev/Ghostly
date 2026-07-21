@@ -128,6 +128,8 @@ export function registerInstall(program: Command): void {
               p.log.warn(
                 `Your ${client.label} config could not be read, so Ghostly did NOT modify it (${injectResult.detail ?? "backed up, not modified"}). Fix or remove the file and run ghostly install again.`,
               );
+            } else if (injectResult.status === "unsupported") {
+              s2.stop(`${client.label} is not supported yet`);
             } else {
               s2.stop(`MCP server configured in ${client.label} ✓`);
             }
