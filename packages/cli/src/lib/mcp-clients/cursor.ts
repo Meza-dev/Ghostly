@@ -1,37 +1,14 @@
-import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import * as p from "@clack/prompts";
-import { getCursorMcpPath, getCursorRulesAssetsDir, getCursorSkillsAssetsDir } from "../paths.js";
+import { getCursorMcpPath } from "../paths.js";
+import { renderGuidanceWithFrontmatter } from "./guidance-content.js";
 import { mergeMcpServerIntoJsonFile } from "./json-writer.js";
 import type { InjectResult, McpClient, McpEntry } from "./types.js";
 
-function copyCursorAssetsGlobal(): { copied: number; skipped: boolean } {
-  const rulesSrc = getCursorRulesAssetsDir();
-  const skillsSrc = getCursorSkillsAssetsDir();
-  if (!existsSync(rulesSrc) && !existsSync(skillsSrc)) {
-    return { copied: 0, skipped: true };
-  }
-
-  const cursorDir = resolve(homedir(), ".cursor");
-  const rulesDest = resolve(cursorDir, "rules");
-  const skillsDest = resolve(cursorDir, "skills");
-  mkdirSync(rulesDest, { recursive: true });
-  mkdirSync(skillsDest, { recursive: true });
-
-  let copied = 0;
-  const ruleFile = resolve(rulesDest, "ghosttester-expert-architect.mdc");
-  const skillDir = resolve(skillsDest, "ghosttester-expert-architect");
-
-  if (existsSync(rulesSrc) && !existsSync(ruleFile)) {
-    cpSync(rulesSrc, rulesDest, { recursive: true });
-    copied += 1;
-  }
-  if (existsSync(skillsSrc) && !existsSync(skillDir)) {
-    cpSync(skillsSrc, skillsDest, { recursive: true });
-    copied += 1;
-  }
-  return { copied, skipped: false };
+function cursorRulePath(): string {
+  return resolve(homedir(), ".cursor", "rules", "ghostly-expert.mdc");
 }
 
 export const cursorClient: McpClient = {
@@ -59,21 +36,17 @@ export const cursorClient: McpClient = {
   },
 
   installGuidance(): void {
-    const s = p.spinner();
-    s.start("Syncing rules and skills into ~/.cursor/");
     try {
-      const result = copyCursorAssetsGlobal();
-      if (result.skipped) {
-        s.stop("No Cursor assets found in this build");
-        p.log.warn("Reinstall/update the CLI to include the bundled rules and skills.");
-      } else if (result.copied === 0) {
-        s.stop("Global rules and skills were already present ✓");
-      } else {
-        s.stop(`Global rules and skills copied ✓ (${result.copied} blocks)`);
-      }
+      const rulePath = cursorRulePath();
+      mkdirSync(resolve(homedir(), ".cursor", "rules"), { recursive: true });
+      const rule = renderGuidanceWithFrontmatter([
+        "description: Activa el protocolo Ghostly Expert para diseño y depuración de tests E2E robustos.",
+        "alwaysApply: true",
+      ]);
+      writeFileSync(rulePath, rule, "utf8");
+      p.log.info(`Ghostly Expert rule written to ${rulePath} ✓`);
     } catch (err) {
-      s.stop("Could not import rules/skills");
-      p.log.error(String(err));
+      p.log.warn(`Could not write the Cursor rule: ${String(err)}`);
     }
   },
 };

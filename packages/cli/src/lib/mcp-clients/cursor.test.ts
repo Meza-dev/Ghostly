@@ -5,12 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpEntry } from "./types.js";
 
 let cursorMcpPath: string;
+let homeDir: string;
 
 vi.mock("../paths.js", () => ({
   getCursorMcpPath: () => cursorMcpPath,
-  getCursorRulesAssetsDir: () => join(tmpdir(), "ghostly-nonexistent-rules"),
-  getCursorSkillsAssetsDir: () => join(tmpdir(), "ghostly-nonexistent-skills"),
 }));
+
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: () => homeDir };
+});
 
 const { cursorClient } = await import("./cursor.js");
 
@@ -26,6 +30,7 @@ describe("cursorClient", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "ghostly-cursor-test-"));
     cursorMcpPath = join(dir, "mcp.json");
+    homeDir = dir;
   });
 
   afterEach(() => {
@@ -58,7 +63,13 @@ describe("cursorClient", () => {
     expect(written.mcpServers.other).toEqual({ command: "y", args: [] });
   });
 
-  it("installGuidance() does not throw when no bundled assets exist", () => {
-    expect(() => cursorClient.installGuidance?.()).not.toThrow();
+  it("installGuidance() writes a rule sourced from the shared guidance markdown", () => {
+    cursorClient.installGuidance?.();
+
+    const written = readFileSync(join(dir, ".cursor", "rules", "ghostly-expert.mdc"), "utf8");
+    expect(written).toContain("alwaysApply: true");
+    expect(written).toContain("get_project_map");
+    expect(written).toContain("ghostly_run_flow");
+    expect(written).toContain("submit_plan");
   });
 });

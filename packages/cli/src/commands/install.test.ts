@@ -13,8 +13,6 @@ let homeDir: string;
 vi.mock("../lib/paths.js", () => ({
   getAuthFile: () => join(ghostDir, "auth.json"),
   getCursorMcpPath: () => cursorMcpPath,
-  getCursorRulesAssetsDir: () => join(tmpdir(), "ghostly-install-test-nonexistent-rules"),
-  getCursorSkillsAssetsDir: () => join(tmpdir(), "ghostly-install-test-nonexistent-skills"),
   getMcpServerEntryPath: () => mcpServerEntryPath,
 }));
 
