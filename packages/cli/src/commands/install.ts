@@ -71,8 +71,15 @@ export function registerInstall(program: Command): void {
               `${mcpEntryPath} not found. Reinstall or update @ghostly-io/cli to include the bundled MCP server.`,
             );
           }
-          cursorClient.inject(buildMcpEntry(apiKey, opts.apiUrl));
-          s2.stop("MCP server configured in Cursor ✓");
+          const injectResult = cursorClient.inject(buildMcpEntry(apiKey, opts.apiUrl));
+          if (injectResult.status === "skipped-backup") {
+            s2.stop("Cursor MCP config left unchanged");
+            p.log.warn(
+              `Your ~/.cursor/mcp.json could not be read, so Ghostly did NOT modify it (${injectResult.detail ?? "backed up, not modified"}). Fix or remove the file and run ghostly install again.`,
+            );
+          } else {
+            s2.stop("MCP server configured in Cursor ✓");
+          }
         } catch (err) {
           s2.stop("Failed to write mcp.json");
           p.log.error(String(err));

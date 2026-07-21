@@ -55,6 +55,17 @@ describe("mergeMcpServerIntoJsonFile", () => {
     expect(backup).toBeDefined();
   });
 
+  it("backs up and aborts on an empty file", () => {
+    writeFileSync(configPath, "");
+
+    const result = mergeMcpServerIntoJsonFile(configPath, "ghostly", entry);
+
+    expect(result.status).toBe("skipped-backup");
+    expect(readFileSync(configPath, "utf8")).toBe("");
+    const backup = readdirSync(dir).find((f) => f.startsWith("mcp.json.ghostly-backup-"));
+    expect(backup).toBeDefined();
+  });
+
   it("backs up and aborts when mcpServers has the wrong shape", () => {
     writeFileSync(configPath, JSON.stringify({ notMcpServers: true }));
 
