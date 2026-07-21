@@ -45,6 +45,8 @@ export const claudeDesktopClient: McpClient = {
   id: "claude-desktop",
   label: "Claude Desktop",
   supported: true,
+  restartHint:
+    "Fully quit Claude Desktop from the system tray (not just close the window) to load Ghostly.",
 
   detect(): boolean {
     return candidatePaths().some((path) => existsSync(path));
@@ -74,8 +76,5 @@ export const claudeDesktopClient: McpClient = {
     } catch (err) {
       p.log.warn(`Could not write the guidance snippet: ${String(err)}`);
     }
-    p.log.warn(
-      "Restart required: fully quit Claude Desktop from the system tray (not just close the window) so it picks up the new MCP server.",
-    );
   },
 };

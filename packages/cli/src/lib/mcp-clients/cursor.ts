@@ -15,6 +15,7 @@ export const cursorClient: McpClient = {
   id: "cursor",
   label: "Cursor",
   supported: true,
+  restartHint: "Restart or reload Cursor to pick up the new MCP server.",
 
   detect(): boolean {
     return existsSync(getCursorMcpPath());
