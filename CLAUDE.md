@@ -8,6 +8,10 @@ Ghostly (formerly "GhostTester AI") is a **local-first, AI-driven E2E testing en
 
 Key design constraint: **local-first / zero-trust** — API keys, secrets and source code stay on the developer's host; nothing is exfiltrated to external clouds. The LLM can be a user-provided HTTP endpoint (OpenAI-compatible) or a locally-installed CLI tool (e.g. Cursor CLI). All UI text and most code comments are in Spanish; match that when editing.
 
+## Versioning
+
+Ghostly is at **0.1.x** (product milestone **v0.2 "Trust Release"**). **Do not bump the version (major/minor) for every feature.** Only bump when the user explicitly approves, or when you propose a concrete number (e.g. "this is a 0.2.1 vs 0.3 vs 1.0") and the user confirms. Never jump to v3/v4 for a single feature. Mental model: like Cursor/Claude — near-daily updates but not version 20/30. Note: a **`v4.x`** seen in test output is **Vitest** (the runner), not Ghostly.
+
 ## Monorepo layout
 
 pnpm workspace (`pnpm-workspace.yaml` → `apps/*`, `packages/*`). Package manager is **pnpm 9.15.4**, Node **>=20**.
