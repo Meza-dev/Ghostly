@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 let ghostDir: string;
 let cursorMcpPath: string;
 let mcpServerEntryPath: string;
+let appData: string;
+let homeDir: string;
 
 vi.mock("../lib/paths.js", () => ({
   getAuthFile: () => join(ghostDir, "auth.json"),
@@ -19,6 +21,21 @@ vi.mock("../lib/paths.js", () => ({
 vi.mock("../lib/playwright.js", () => ({
   isChromiumInstalled: () => true,
 }));
+
+// Claude Desktop es supported ahora (fase 3) — sandboxear sus rutas para que install.test.ts
+// no toque el %APPDATA% real de la máquina que corre los tests.
+vi.mock("../lib/mcp-clients/os-paths.js", () => ({
+  appDataDir: () => appData,
+  localAppDataDir: () => join(tmpdir(), "ghostly-install-test-nonexistent-localappdata"),
+  macAppSupportDir: () => join(tmpdir(), "ghostly-install-test-nonexistent-appsupport"),
+  isBinaryOnPath: () => false,
+}));
+
+// installGuidance() de Claude Desktop escribe bajo homedir()/.ghostly — sandboxearlo también.
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: () => homeDir };
+});
 
 // Los clientes detect-only tocan fs/PATH real (home dir, `where`/`which`) — no nos importa
 // su resultado acá, solo que no rompan el flujo no interactivo de --mcp-clients.
@@ -41,6 +58,9 @@ describe("ghostly install --mcp-clients (non-interactive)", () => {
     mkdirSync(ghostDir, { recursive: true });
     cursorMcpPath = join(dir, "mcp.json");
     mcpServerEntryPath = join(dir, "mcp-server-index.js");
+    appData = join(dir, "AppData", "Roaming");
+    homeDir = join(dir, "home");
+    mkdirSync(homeDir, { recursive: true });
     writeFileSync(mcpServerEntryPath, "// stub");
   });
 
@@ -62,11 +82,23 @@ describe("ghostly install --mcp-clients (non-interactive)", () => {
     expect(ghostly?.env.GHOST_API_URL).toBe("http://localhost:4000");
   });
 
-  it("--mcp-clients with an unsupported/unknown id injects nothing and does not throw", async () => {
+  it("--mcp-clients with a detect-only/unknown id injects nothing and does not throw", async () => {
     const program = buildProgram();
 
-    await program.parseAsync(["node", "ghostly", "install", "--mcp-clients", "claude-desktop,bogus"]);
+    await program.parseAsync(["node", "ghostly", "install", "--mcp-clients", "codex,bogus"]);
 
+    expect(() => readFileSync(cursorMcpPath, "utf8")).toThrow();
+  });
+
+  it("--mcp-clients claude-desktop injects only Claude Desktop, end-to-end through the adapter", async () => {
+    const program = buildProgram();
+
+    await program.parseAsync(["node", "ghostly", "install", "--mcp-clients", "claude-desktop"]);
+
+    const written = JSON.parse(
+      readFileSync(join(appData, "Claude", "claude_desktop_config.json"), "utf8"),
+    ) as { mcpServers: Record<string, { env: Record<string, string> }> };
+    expect(written.mcpServers.ghostly?.env.GHOST_API_KEY).toBeTruthy();
     expect(() => readFileSync(cursorMcpPath, "utf8")).toThrow();
   });
 });
