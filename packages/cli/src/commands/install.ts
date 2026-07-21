@@ -23,7 +23,7 @@ export function registerInstall(program: Command): void {
       let apiKey = existingAuth?.apiKey?.trim() ?? "";
       const hadExistingApiKey = apiKey.length > 0;
       if (!hadExistingApiKey) {
-        apiKey = generateApiKey("uuid");
+        apiKey = generateApiKey();
       }
 
       // ── 2. Guardar auth.json ──────────────────────────────────────────────
@@ -38,7 +38,7 @@ export function registerInstall(program: Command): void {
         });
         s1.stop("Credentials saved ✓");
         if (!hadExistingApiKey) {
-          p.log.info("No apiKey existed; one was generated automatically via ghostly keygen (uuid mode).");
+          p.log.info("No apiKey existed; a secure one was generated automatically.");
         }
       } catch (err) {
         s1.stop("Failed to save credentials");

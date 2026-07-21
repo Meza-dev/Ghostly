@@ -1,8 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { Context, Next } from "hono";
 import { getJwtSecret, verifyToken } from "../lib/token.js";
+
+/** Comparación en tiempo constante (evita timing side-channel al validar la API key). */
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
 
 type AuthFileShape = {
   apiKey?: string;
@@ -43,7 +52,7 @@ export async function apiKeyMiddleware(c: Context, next: Next) {
   const expected = readExpectedApiKey();
   const provided = c.req.header("x-api-key")?.trim();
 
-  if (!expected || !provided || provided !== expected) {
+  if (!expected || !provided || !safeEqual(provided, expected)) {
     return c.json({ ok: false, error: "unauthorized" }, 401);
   }
 

@@ -47,13 +47,22 @@ export function writeAuth(auth: GhostAuth): void {
   });
 }
 
-export type KeygenMode = "uuid" | "token";
+export type KeygenMode = "secure" | "uuid" | "token";
 
-export function generateApiKey(mode: KeygenMode = "uuid"): string {
+/**
+ * Genera la API key de Ghostly. Default `secure`: prefijo `gk_` + 32 bytes
+ * aleatorios en base64url (URL-safe, alta entropía). Los modos `uuid`/`token`
+ * quedan por compatibilidad — las keys viejas (uuid) siguen validando porque
+ * el servidor compara por igualdad exacta, no por formato.
+ */
+export function generateApiKey(mode: KeygenMode = "secure"): string {
   if (mode === "uuid") {
     return randomUUID();
   }
-  return randomBytes(32).toString("hex");
+  if (mode === "token") {
+    return randomBytes(32).toString("hex");
+  }
+  return `gk_${randomBytes(32).toString("base64url")}`;
 }
 
 /** Convierte GhostAuth en el mapa de env vars que se inyecta al proceso de la API. */
