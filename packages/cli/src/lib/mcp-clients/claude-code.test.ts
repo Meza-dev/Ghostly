@@ -86,8 +86,8 @@ describe("claudeCodeClient", () => {
       "stdio",
       "ghostly",
       "--",
-      "node",
-      "/abs/index.js",
+      '"node"',
+      '"/abs/index.js"',
     ]);
   });
 
@@ -114,7 +114,36 @@ describe("claudeCodeClient", () => {
     expect(written.mcpServers.ghostly).toMatchObject({ ...entry, type: "stdio" });
   });
 
-  it("fallback .claude.json write preserves other servers and backs up on malformed config", () => {
+  it("fallback adds ghostly to a real ~/.claude.json that has no mcpServers yet", () => {
+    // El footgun: ~/.claude.json es el config grande de Claude Code (projects, settings)
+    // que suele NO tener mcpServers hasta el primer server. Debe mergear, no abortar.
+    writeFileSync(claudeJsonPath(), JSON.stringify({ projects: { p: 1 }, numStartups: 42 }));
+
+    const result = claudeCodeClient.inject(entry);
+
+    expect(result.status).toBe("injected");
+    const written = JSON.parse(readFileSync(claudeJsonPath(), "utf8"));
+    expect(written.projects).toEqual({ p: 1 });
+    expect(written.numStartups).toBe(42);
+    expect(written.mcpServers.ghostly).toMatchObject({ ...entry, type: "stdio" });
+  });
+
+  it("fallback preserves existing keys and other servers in ~/.claude.json", () => {
+    writeFileSync(
+      claudeJsonPath(),
+      JSON.stringify({ projects: { p: 1 }, mcpServers: { other: { command: "x", args: [] } } }),
+    );
+
+    const result = claudeCodeClient.inject(entry);
+
+    expect(result.status).toBe("injected");
+    const written = JSON.parse(readFileSync(claudeJsonPath(), "utf8"));
+    expect(written.projects).toEqual({ p: 1 });
+    expect(written.mcpServers.other).toEqual({ command: "x", args: [] });
+    expect(written.mcpServers.ghostly).toMatchObject({ ...entry, type: "stdio" });
+  });
+
+  it("fallback backs up and aborts a truly malformed .claude.json", () => {
     writeFileSync(claudeJsonPath(), "{not json");
 
     const result = claudeCodeClient.inject(entry);

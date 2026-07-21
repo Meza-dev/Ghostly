@@ -25,9 +25,17 @@ function injectViaCli(entry: McpEntry): boolean {
   try {
     // ponytail: `--scope user` matches the design's assumed default for `claude mcp add`, but is
     // UNVERIFIED against a real Claude Code install — confirm live and adjust the flag if wrong.
+    // shell:true (needed to resolve `claude.cmd` on Windows) joins args WITHOUT quoting, so the
+    // dynamic parts (node path, script path) are quoted here — the default Windows node lives at
+    // `C:\Program Files\nodejs\node.exe` (a space) and would otherwise be split by the shell.
+    const quote = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
     execFileSync(
       "claude",
-      ["mcp", "add", "--scope", "user", "--transport", "stdio", "ghostly", "--", entry.command, ...entry.args],
+      [
+        "mcp", "add", "--scope", "user", "--transport", "stdio", "ghostly", "--",
+        quote(entry.command),
+        ...entry.args.map(quote),
+      ],
       { stdio: "ignore", shell: true },
     );
     return true;

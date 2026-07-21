@@ -66,15 +66,34 @@ describe("mergeMcpServerIntoJsonFile", () => {
     expect(backup).toBeDefined();
   });
 
-  it("backs up and aborts when mcpServers has the wrong shape", () => {
-    writeFileSync(configPath, JSON.stringify({ notMcpServers: true }));
+  it("adds mcpServers to a valid config that lacks it, preserving other keys", () => {
+    // Caso ~/.claude.json de Claude Code: objeto válido con otras claves, sin mcpServers.
+    writeFileSync(configPath, JSON.stringify({ projects: { a: 1 }, theme: "dark" }));
+
+    const result = mergeMcpServerIntoJsonFile(configPath, "ghostly", entry);
+
+    expect(result.status).toBe("injected");
+    const written = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(written.projects).toEqual({ a: 1 });
+    expect(written.theme).toBe("dark");
+    expect(written.mcpServers.ghostly).toEqual(entry);
+  });
+
+  it("backs up and aborts when mcpServers is present but the wrong type", () => {
+    writeFileSync(configPath, JSON.stringify({ mcpServers: "nope" }));
 
     const result = mergeMcpServerIntoJsonFile(configPath, "ghostly", entry);
 
     expect(result.status).toBe("skipped-backup");
-    expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({ notMcpServers: true });
-    const backup = readdirSync(dir).find((f) => f.startsWith("mcp.json.ghostly-backup-"));
-    expect(backup).toBeDefined();
+    expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({ mcpServers: "nope" });
+  });
+
+  it("backs up and aborts on non-object JSON (array)", () => {
+    writeFileSync(configPath, JSON.stringify([1, 2, 3]));
+
+    const result = mergeMcpServerIntoJsonFile(configPath, "ghostly", entry);
+
+    expect(result.status).toBe("skipped-backup");
   });
 
   it("is idempotent across repeated runs", () => {
