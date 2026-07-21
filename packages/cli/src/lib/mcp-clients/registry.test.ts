@@ -22,8 +22,8 @@ describe("registry", () => {
     ]);
   });
 
-  it("only Cursor is supported today; the rest are detect-only", () => {
-    expect(registry.filter((c) => c.supported).map((c) => c.id)).toEqual(["cursor"]);
+  it("Cursor and Claude Desktop are supported today; the rest are detect-only", () => {
+    expect(registry.filter((c) => c.supported).map((c) => c.id)).toEqual(["cursor", "claude-desktop"]);
   });
 
   it("detectClients() resolves adapter + boolean installed flag for every registered client, without crashing", () => {
