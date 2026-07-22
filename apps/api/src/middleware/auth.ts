@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono";
 import { prisma } from "../lib/prisma.js";
 import { getJwtSecret, verifyToken } from "../lib/token.js";
+import { readExpectedApiKey, safeEqual } from "./api-key.js";
 import { msg, pickLang } from "../i18n/pick.js";
 
 export type AuthUser = {
@@ -55,6 +56,22 @@ export async function authMiddleware(c: Context, next: Next) {
     if (record) {
       c.set("user", { id: record.user.id, email: record.user.email, role: record.user.role });
       return next();
+    }
+    // La key de host (~/.ghostly/auth.json) ES la credencial dueña de la
+    // instancia local (local-first, single-host): si coincide, resolvemos al
+    // admin local. Las filas de ApiKey quedan para keys adicionales emitidas
+    // desde la web.
+    const hostKey = readExpectedApiKey();
+    if (hostKey && safeEqual(apiKey, hostKey)) {
+      const admin = await prisma.user.findFirst({
+        where: { role: "admin" },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, email: true, role: true },
+      });
+      if (admin) {
+        c.set("user", admin);
+        return next();
+      }
     }
     return c.json({ ok: false, error: msg("auth.invalidApiKey", lang) }, 401);
   }
