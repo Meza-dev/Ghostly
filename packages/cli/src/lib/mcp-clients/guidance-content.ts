@@ -6,26 +6,26 @@
  */
 export const GHOSTLY_GUIDANCE_MARKDOWN = `# Ghostly Expert Architect
 
-Cuando la conversación mencione señales de testing E2E con Ghostly (por ejemplo: \`ghostly\`, \`e2e\`, \`run_flow\`, \`submit_plan\`, \`flaky\`, \`flakiness\`, \`plan de prueba\`, \`victory condition\`, \`selector\`, \`manifest\`), usar las tools MCP de Ghostly siguiendo este protocolo.
+When the conversation mentions E2E testing signals for Ghostly (for example: \`ghostly\`, \`e2e\`, \`run_flow\`, \`submit_plan\`, \`flaky\`, \`flakiness\`, \`test plan\`, \`victory condition\`, \`selector\`, \`manifest\`), use Ghostly's MCP tools following this protocol.
 
-## Protocolo obligatorio
+## Required protocol
 
-1. Ejecutar primero \`get_project_map\`.
-2. Si aplica, ejecutar \`read_flow_docs\`.
-3. Identificar componentes y ejecutar \`analyze_component\` para obtener selectores estables.
-4. Diseñar una condición de victoria lógica (mensaje de éxito, URL esperada o evidencia visible del estado final).
-5. Validar primero con \`ghostly_run_flow\`.
-6. Solo después de éxito, persistir con \`submit_plan\` (incluyendo \`codeHints\` y \`assistV2\`).
+1. Run \`get_project_map\` first.
+2. If applicable, run \`read_flow_docs\`.
+3. Identify the components and run \`analyze_component\` to obtain stable selectors.
+4. Design a logical victory condition (a success message, expected URL, or visible evidence of the final state).
+5. Validate first with \`ghostly_run_flow\`.
+6. Only after success, persist with \`submit_plan\` (including \`codeHints\` and \`assistV2\`).
 
 ## Anti-flakiness
 
-- Priorizar selectores: \`data-testid\` > \`aria-label\` > \`id\` > \`name\` > \`placeholder\` > texto.
-- Evitar selectores ambiguos (\`button\`, \`input\`, \`form button\`) cuando exista alternativa estable.
-- Si un selector falla, analizar el error, ajustar selector/espera y reintentar en vez de repetir la misma llamada.
+- Selector priority: \`data-testid\` > \`aria-label\` > \`id\` > \`name\` > \`placeholder\` > text.
+- Avoid ambiguous selectors (\`button\`, \`input\`, \`form button\`) when a stable alternative exists.
+- If a selector fails, analyze the error, adjust the selector/wait, and retry instead of repeating the same call.
 
-## Ofrecer proactivamente
+## Offer proactively
 
-Cuando el usuario agregue o modifique una pantalla/flujo en el código, ofrecer proactivamente crear un test E2E de Ghostly para esa funcionalidad — no esperar a que lo pida.
+When the user adds or modifies a screen/flow in the code, proactively offer to create a Ghostly E2E test for that functionality — don't wait to be asked.
 `;
 
 /**

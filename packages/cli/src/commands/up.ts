@@ -2,7 +2,7 @@ import { execSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
-import { authToEnv, readAuth } from "../lib/auth.js";
+import { authToEnv, ensureJwtSecret, readAuth } from "../lib/auth.js";
 import { isAssistLlmConfigured } from "../lib/llm-check.js";
 import { isCliLlmProvider } from "../lib/llm-providers.js";
 import {
@@ -43,7 +43,7 @@ export function registerUp(program: Command): void {
       const port = Number.parseInt(opts.port, 10) || DEFAULT_PORT;
 
       console.clear();
-      p.intro("👻  Ghostly — Starting services");
+      p.intro("Ghostly — Starting services");
 
       // ── 1. Verificar auth ─────────────────────────────────────────────────
       const auth = readAuth();
@@ -122,6 +122,9 @@ export function registerUp(program: Command): void {
 
       // ── 6. Construir env vars del proceso hijo ────────────────────────────
       const enginePath = getPrismaEngineLibraryPath();
+      // C2: genera/persiste un JWT_SECRET fuerte si falta, para que `up` arranque
+      // sin configuración manual. Se inyecta al API vía extraEnv en authToEnv().
+      ensureJwtSecret(auth);
       const authEnv = authToEnv(auth);
 
       const serverEnv: NodeJS.ProcessEnv = {
@@ -140,8 +143,8 @@ export function registerUp(program: Command): void {
       const assistConfigured = isAssistLlmConfigured(auth);
       if (!assistConfigured && !serverEnv["ASSIST_LLM_API_KEY"] && !serverEnv["OPENAI_API_KEY"]) {
         p.log.warn(
-          "AI-assisted mode is not configured. To enable it, run:\n" +
-            "  ghostly config",
+          "AI-assisted mode is not configured yet. Enable it from the dashboard\n" +
+            "(Settings → Assisted mode) once it's running — or run: ghostly config",
         );
       } else if (isCliLlmProvider(auth.llm?.provider)) {
         p.log.info("Assisted mode: Cursor Agent CLI (local auth)");

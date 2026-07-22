@@ -14,7 +14,7 @@ export function registerMcp(program: Command): void {
     .command("list")
     .description("List detected MCP clients and their Ghostly configuration status")
     .action(() => {
-      p.intro("👻  Ghostly — MCP clients");
+      p.intro("Ghostly — MCP clients");
       for (const { client, installed } of detectClients()) {
         const status = !client.supported
           ? "coming soon"
@@ -56,7 +56,7 @@ export function registerMcp(program: Command): void {
         return;
       }
 
-      p.intro(`👻  Ghostly — Configuring ${match.client.label}`);
+      p.intro(`Ghostly — Configuring ${match.client.label}`);
       const entry = buildMcpEntry(auth.apiKey, opts.apiUrl ?? auth.apiUrl ?? DEFAULT_API_URL);
       await configureClient(match.client, entry);
       p.outro("Done.");
