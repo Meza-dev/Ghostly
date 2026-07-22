@@ -1,16 +1,18 @@
 /**
- * Auto-update (MVP): detección de versión nueva + disparo del `npm install -g`.
+ * Auto-update: detección de versión nueva + reinicio orquestado por el CLI.
  *
  * La versión ACTUAL la inyecta `ghostly up` por env (`GHOST_APP_VERSION`, =
  * package.json del CLI). En dev (sin `up`) queda `null` y el dashboard no
- * ofrece update. La ÚLTIMA se consulta al registry público de npm. El reinicio
- * con el código nuevo es manual (`ghostly up`) — el supervisor auto-restart
- * queda fuera del MVP.
+ * ofrece update. La ÚLTIMA se consulta al registry público de npm. La
+ * instalación NO corre en este proceso (lockea sus propios archivos en
+ * Windows): el server sale con `UPDATE_EXIT_CODE` y `ghostly up` hace el
+ * npm install + relanzamiento.
  */
-import { spawn } from "node:child_process";
-
 const PACKAGE = "@ghostly-io/cli";
 const REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE}/latest`;
+
+/** Contrato con `ghostly up`: este exit code significa "instalá y relanzame". */
+export const UPDATE_EXIT_CODE = 75;
 
 /** Versión instalada, inyectada por `ghostly up`. `null` en dev. */
 export function getCurrentVersion(): string | null {
@@ -54,28 +56,4 @@ export async function fetchLatestVersion(): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-/**
- * Corre `npm install -g @ghostly-io/cli@latest`. Puede fallar por permisos
- * (EACCES en instalaciones globales sin sudo) — se devuelve el error para que
- * la UI sugiera correr `ghostly update` a mano. shell:true en Windows para
- * resolver `npm` → `npm.cmd`.
- */
-export function runUpdate(): Promise<{ ok: boolean; error?: string }> {
-  return new Promise((resolvePromise) => {
-    const child = spawn("npm", ["install", "-g", `${PACKAGE}@latest`], {
-      shell: process.platform === "win32",
-      timeout: 180_000,
-    });
-    let stderr = "";
-    child.stderr?.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on("error", (err) => resolvePromise({ ok: false, error: err.message }));
-    child.on("close", (code) => {
-      if (code === 0) resolvePromise({ ok: true });
-      else resolvePromise({ ok: false, error: stderr.trim() || `npm exited with code ${code}` });
-    });
-  });
 }

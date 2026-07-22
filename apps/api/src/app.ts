@@ -18,7 +18,7 @@ import { planRouter } from "./routes/plan.js";
 import { projectsRouter } from "./routes/projects.js";
 import { runRouter } from "./routes/run.js";
 import { runEventsRouter } from "./routes/run-events.js";
-import { fetchLatestVersion, getCurrentVersion, isNewerVersion, runUpdate } from "./services/updater.js";
+import { fetchLatestVersion, getCurrentVersion, isNewerVersion, UPDATE_EXIT_CODE } from "./services/updater.js";
 
 const ARTIFACTS_ROOT = resolve(process.cwd(), "artifacts");
 
@@ -95,13 +95,17 @@ export function createApp(): Hono {
     });
   });
 
-  app.post("/v1/update", async (c) => {
-    const result = await runUpdate();
-    if (!result.ok) {
-      return c.json({ ok: false, error: result.error ?? "update failed" }, 500);
+  app.post("/v1/update", (c) => {
+    // El update NO puede correr en este proceso: en Windows npm no puede
+    // renombrar el paquete global mientras este server (y los MCP servers de
+    // los editores) lo tienen lockeado → EBUSY. Contrato: salir con código 75
+    // y `ghostly up` (el padre) orquesta kill de procesos residuales +
+    // npm install + relanzamiento del server.
+    if (!getCurrentVersion()) {
+      return c.json({ ok: false, error: "self-update is only available when running under ghostly up" }, 400);
     }
-    // El reinicio con el código nuevo es manual en el MVP (ghostly up).
-    return c.json({ ok: true, restartRequired: true });
+    setTimeout(() => process.exit(UPDATE_EXIT_CODE), 300);
+    return c.json({ ok: true, scheduled: true });
   });
 
   app.use("/v1/*", attachUserLlmMiddleware);
