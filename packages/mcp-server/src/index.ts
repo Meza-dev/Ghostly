@@ -6,13 +6,16 @@ import { registerGetProjectMapTool } from "./tools/get-project-map.js";
 import { registerReadFlowDocsTool } from "./tools/read-flow-docs.js";
 import { registerListGhostlyProjectsTool } from "./tools/list-ghostly-projects.js";
 import { registerSubmitPlanTool } from "./tools/submit-plan.js";
+import { registerGetRunTool } from "./tools/get-run.js";
 
 const inputFields = {
   baseUrl: z.string().url(),
   stepsJson: z
     .string()
     .min(2)
-    .describe("JSON array of steps with { action, ... }"),
+    .describe(
+      'JSON array of steps: { action, ... }. Actions: goto{url}, click{selector}, fill{selector,value}, press{key}, waitForSelector{selector,timeoutMs?}, snapshot{}, selectOption{selector,value}, check{selector}, uncheck{selector}, setInputFiles{selector,files}, hover{selector}.',
+    ),
   headless: z.boolean().optional(),
   captureA11yAfterEachStep: z.boolean().optional(),
   captureScreenshotAfterEachStep: z.boolean().optional(),
@@ -23,7 +26,7 @@ const inputFields = {
 
 const server = new McpServer({
   name: "ghostly",
-  version: "0.0.0",
+  version: "0.2.7",
 });
 
 server.tool(
@@ -52,6 +55,7 @@ server.tool(
             }),
           },
         ],
+        isError: true,
       };
     }
 
@@ -69,6 +73,7 @@ server.tool(
             }),
           },
         ],
+        isError: true,
       };
     }
 
@@ -95,18 +100,42 @@ server.tool(
             ),
           },
         ],
+        isError: true,
       };
     }
 
-    const result = await runFlow(parsed.data);
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    };
+    // Un crash de Playwright (p. ej. browser no instalado) no debe burbujear
+    // como excepción del SDK: lo devolvemos como resultado de tool con isError.
+    try {
+      const result = await runFlow(parsed.data);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                ok: false,
+                error: msg,
+                hint: "If Playwright's browser is missing, run: npx playwright install chromium",
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 
@@ -115,6 +144,7 @@ registerAnalyzeComponentTool(server);
 registerReadFlowDocsTool(server);
 registerSubmitPlanTool(server);
 registerListGhostlyProjectsTool(server);
+registerGetRunTool(server);
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();

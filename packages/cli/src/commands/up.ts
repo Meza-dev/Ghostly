@@ -1,5 +1,6 @@
 import { execSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { authToEnv, ensureJwtSecret, readAuth } from "../lib/auth.js";
@@ -12,6 +13,7 @@ import {
   getApiSeedPath,
   getCliVersion,
   getDbPath,
+  getGhostDir,
   getPrismaEngineLibraryPath,
   getPrismaBin,
   getWebDistDir,
@@ -146,6 +148,8 @@ export function registerUp(program: Command): void {
           NODE_ENV: "production",
           DATABASE_URL: databaseUrl,
           GHOST_WEB_DIR: webDist,
+          // Artefactos fuera del paquete global npm: sobreviven a los updates.
+          GHOST_ARTIFACTS_DIR: resolve(getGhostDir(), "artifacts"),
           GHOST_APP_VERSION: getCliVersion(),
           API_PORT: String(port),
           HOST: "127.0.0.1",

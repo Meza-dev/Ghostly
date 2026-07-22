@@ -295,6 +295,12 @@ runRouter.post("/run", async (c) => {
     return c.json({ ok: false, error: msg("common.invalidJsonBody", lang) }, 400);
   }
   body = normalizeRunBody(body);
+  // Si el cliente no pidió un artifactsDir explícito, usar la raíz configurada
+  // (GHOST_ARTIFACTS_DIR bajo `ghostly up`) en vez del default relativo del
+  // runner, que se resuelve contra el cwd del proceso y muere con cada update.
+  if (body.artifactsDir === undefined) {
+    body = { ...body, artifactsDir: appConfig.artifactsDir };
+  }
 
   const parsed = safeParseRunInput(body, {
     maxSteps: appConfig.assist.maxSteps,

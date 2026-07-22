@@ -14,8 +14,18 @@ When the conversation mentions E2E testing signals for Ghostly (for example: \`g
 2. If applicable, run \`read_flow_docs\`.
 3. Identify the components and run \`analyze_component\` to obtain stable selectors.
 4. Design a logical victory condition (a success message, expected URL, or visible evidence of the final state).
-5. Validate first with \`ghostly_run_flow\`.
-6. Only after success, persist with \`submit_plan\` (including \`codeHints\` and \`assistV2\`).
+5. Validate with \`ghostly_run_flow\` — iterate until it passes.
+6. Run \`list_ghostly_projects\` to get the project id.
+7. Publish with \`submit_plan\` WITHOUT \`assistV2\` — the plan was already validated in the sandbox; a plain deterministic replay is the honest record. Reserve \`assistV2\` for when you explicitly want Ghostly's self-healing/judge supervision (e.g., an unvalidated plan).
+8. Check the result with \`get_run\` (poll while \`status\` is \`running\`).
+
+## Real data warning
+
+Sandbox and published runs execute against the user's real running app — every attempt creates real data. Prefer a dev/staging environment; never target production with destructive flows. Use unique, identifiable values per attempt (e.g. suffix a short random tag: \`Test user gh-x7k2\`) so attempts never collide and residue is attributable.
+
+## projectRoot
+
+When the MCP client does not run from the project directory (e.g. Claude Desktop), always pass \`projectRoot\` (absolute path) to \`get_project_map\` / \`analyze_component\` / \`read_flow_docs\` / \`submit_plan\`.
 
 ## Anti-flakiness
 

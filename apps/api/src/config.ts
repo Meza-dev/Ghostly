@@ -7,6 +7,8 @@ export type AppConfig = {
   port: number;
   host: string;
   nodeEnv: string;
+  /** Raíz de artefactos (screenshots/videos). GHOST_ARTIFACTS_DIR o cwd/artifacts. */
+  artifactsDir: string;
   assist: {
     enabled: boolean;
     maxSteps: number;
@@ -60,10 +62,18 @@ export function loadConfig(): AppConfig {
   const port = Number.parseInt(rawPort, 10);
   const host = process.env.HOST ?? "0.0.0.0";
   const nodeEnv = process.env.NODE_ENV ?? "development";
+  // GHOST_ARTIFACTS_DIR: el CLI (`ghostly up`) apunta esto a ~/.ghostly/artifacts
+  // para que los artefactos sobrevivan a los updates del paquete global npm.
+  // Sin la env var, se mantiene el comportamiento dev: cwd/artifacts.
+  const artifactsDirRaw = process.env.GHOST_ARTIFACTS_DIR?.trim();
+  const artifactsDir = artifactsDirRaw
+    ? resolve(artifactsDirRaw)
+    : resolve(process.cwd(), "artifacts");
   return {
     port: Number.isFinite(port) ? port : 3000,
     host,
     nodeEnv,
+    artifactsDir,
     assist: {
       enabled: (process.env.ASSIST_ENABLED ?? "true").toLowerCase() !== "false",
       maxSteps: parseIntOr(process.env.ASSIST_MAX_STEPS, 25),

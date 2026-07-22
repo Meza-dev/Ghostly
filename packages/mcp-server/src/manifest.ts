@@ -1,6 +1,8 @@
 import { execFile, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -79,6 +81,24 @@ export type LoadedManifest = {
   warning?: string;
 };
 
+// Hash corto y estable por máquina del projectRoot: absoluto, en minúsculas y
+// con barras normalizadas, para que Windows y Unix produzcan el mismo bucket.
+function projectHash(projectRoot: string): string {
+  const normalized = path.resolve(projectRoot).replace(/\\/g, "/").toLowerCase();
+  return createHash("sha256").update(normalized).digest("hex").slice(0, 12);
+}
+
+// Cache central por proyecto: nada se escribe dentro del repo del usuario.
+function defaultManifestPath(projectRoot: string): string {
+  return path.join(homedir(), ".ghostly", "manifests", projectHash(projectRoot), "ghost-manifest.json");
+}
+
+// Ubicación anterior (dentro del repo del usuario) — solo se LEE para migrar,
+// nunca se borra ni se reescribe: es el repo del usuario.
+function legacyManifestPath(projectRoot: string): string {
+  return path.join(path.resolve(projectRoot), ".ghostly", "ghost-manifest.json");
+}
+
 function resolveManifestPath(manifestPath?: string, projectRoot?: string): string {
   if (manifestPath) return path.resolve(manifestPath);
   if (process.env.GHOST_MANIFEST_PATH) return path.resolve(process.env.GHOST_MANIFEST_PATH);
@@ -88,7 +108,7 @@ function resolveManifestPath(manifestPath?: string, projectRoot?: string): strin
     : process.env.GHOST_TARGET_PROJECT_ROOT
       ? path.resolve(process.env.GHOST_TARGET_PROJECT_ROOT)
       : process.cwd();
-  return path.join(root, ".ghostly", "ghost-manifest.json");
+  return defaultManifestPath(root);
 }
 
 function currentGitCommit(projectRoot: string): string | undefined {
@@ -109,7 +129,7 @@ export async function loadManifest(manifestPath?: string, projectRoot?: string):
   const manifest = manifestSchema.parse(JSON.parse(raw) as unknown);
   const currentCommit = currentGitCommit(manifest.projectRoot);
   const warning = currentCommit && manifest.gitCommit !== "unknown" && manifest.gitCommit !== currentCommit
-    ? `The manifest was generated at commit ${manifest.gitCommit}, but the current HEAD is ${currentCommit}. Run ghost-scan to refresh it.`
+    ? `The manifest is stale (generated at commit ${manifest.gitCommit}, HEAD is ${currentCommit}). It will be regenerated automatically.`
     : undefined;
 
   return {
@@ -150,11 +170,19 @@ export async function ensureManifest(options?: {
       ? path.resolve(process.env.GHOST_TARGET_PROJECT_ROOT)
       : process.cwd();
 
-  // El manifest vive siempre dentro del projectRoot a menos que se indique explícitamente.
+  // El manifest vive en el cache central (~/.ghostly/manifests/<hash>/) a menos
+  // que se indique explícitamente vía opción o GHOST_MANIFEST_PATH.
   const targetManifestPath = resolveManifestPath(options?.manifestPath, targetProjectRoot);
 
   const tryLoad = async (): Promise<LoadedManifest | undefined> => {
-    try { return await loadManifest(targetManifestPath, targetProjectRoot); } catch { return undefined; }
+    try { return await loadManifest(targetManifestPath, targetProjectRoot); } catch { /* sigue con el legacy */ }
+    // Migración: si el cache central todavía no existe, leer el manifest legacy
+    // dentro del repo del usuario. Si está desactualizado, la regeneración
+    // escribe en la ubicación nueva; el archivo legacy no se toca.
+    if (!options?.manifestPath && !process.env.GHOST_MANIFEST_PATH) {
+      try { return await loadManifest(legacyManifestPath(targetProjectRoot), targetProjectRoot); } catch { /* no hay legacy */ }
+    }
+    return undefined;
   };
 
   const loaded = await tryLoad();
