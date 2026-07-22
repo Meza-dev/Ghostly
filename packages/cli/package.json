@@ -1,6 +1,6 @@
 {
   "name": "@ghostly-io/cli",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "license": "MIT",
   "description": "Ghostly CLI — zero-config installer and local runner",
   "repository": {
