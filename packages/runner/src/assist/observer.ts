@@ -127,6 +127,21 @@ function truncateMessage(message: string, max = 500): string {
 /** Patrones de error típicos (es/en) para clasificar `role="alert"` visible como blocking. */
 const DOM_ERROR_TEXT_RE = /error|fall[oó]|no se pudo|failed|falló|excepci[oó]n|exception|crash/i;
 
+/**
+ * Ruido inequívoco de dev-tooling (GHOST-66): fallos de WebSocket de HMR
+ * (webpack/vite/react refresh) que el entorno de desarrollo del target emite
+ * de forma recurrente. Lista conservadora — solo patrones que jamás indican
+ * un bug de la app. Estos errores se capturan igual (contexto en snapshot y
+ * dossier) pero NO deben disparar el trigger `error-signal` del juez.
+ */
+const HMR_WS_ENDPOINT_RE = /\/ws'? failed|sockjs-node|__vite_hmr|@vite\/client/i;
+const DEV_TOOLING_RE = /\[HMR\]|\[webpack-dev-server\]|react refresh/i;
+
+export function isKnownDevNoiseError(message: string): boolean {
+  if (message.includes("WebSocket connection to") && HMR_WS_ENDPOINT_RE.test(message)) return true;
+  return DEV_TOOLING_RE.test(message);
+}
+
 function classifyDomSeverity(role: string, text: string): PageErrorSeverity {
   if (role === "alert" || role === "alertdialog") {
     return DOM_ERROR_TEXT_RE.test(text) ? "blocking" : "warning";
