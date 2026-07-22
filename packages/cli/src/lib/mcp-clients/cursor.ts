@@ -41,7 +41,7 @@ export const cursorClient: McpClient = {
       const rulePath = cursorRulePath();
       mkdirSync(resolve(homedir(), ".cursor", "rules"), { recursive: true });
       const rule = renderGuidanceWithFrontmatter([
-        "description: Activa el protocolo Ghostly Expert para diseño y depuración de tests E2E robustos.",
+        "description: Use Ghostly's MCP tools to design and debug robust E2E tests; proactively offer to create a test when the user adds or changes a screen/flow.",
         "alwaysApply: true",
       ]);
       writeFileSync(rulePath, rule, "utf8");

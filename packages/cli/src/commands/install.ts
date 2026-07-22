@@ -32,7 +32,9 @@ async function selectClientsInteractively(
       label: d.client.label,
       hint: d.installed ? "detected" : undefined,
     })),
-    initialValues: supportedDetected.map((d) => d.client.id),
+    // ponytail: nada pre-marcado — el usuario elige explícitamente qué configurar.
+    // Pre-marcar todos hacía que "elegí Cursor" terminara instalando en los 3 clientes.
+    initialValues: [],
     required: false,
   });
 
