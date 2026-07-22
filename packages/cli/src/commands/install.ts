@@ -25,24 +25,27 @@ async function selectClientsInteractively(
 
   // ponytail: @clack/prompts multiselect has no per-option "disabled" state, so detect-only
   // clients aren't rendered as options at all — they're surfaced via the info note below instead.
+  // ponytail: nada pre-marcado — el usuario elige explícitamente qué configurar.
+  // `required: true` evita el trap de Enter-sin-marcar (selección vacía silenciosa);
+  // quien no quiera MCP cancela con Ctrl+C y el install sigue sin configurar nada.
   const answer = await p.multiselect({
-    message: "Which MCP clients should Ghostly configure?",
+    message: "Which MCP clients should Ghostly configure? (space to select, enter to confirm)",
     options: supportedDetected.map((d) => ({
       value: d.client.id,
       label: d.client.label,
       hint: d.installed ? "detected" : undefined,
     })),
-    // ponytail: nada pre-marcado — el usuario elige explícitamente qué configurar.
-    // Pre-marcar todos hacía que "elegí Cursor" terminara instalando en los 3 clientes.
-    initialValues: [],
-    required: false,
+    required: true,
   });
 
   if (comingSoon.length > 0) {
     p.log.info(`Also detected (coming soon): ${comingSoon.map((d) => d.client.label).join(", ")}`);
   }
 
-  if (p.isCancel(answer)) return [];
+  if (p.isCancel(answer)) {
+    p.log.info("MCP setup skipped — run `ghostly mcp add <client>` anytime.");
+    return [];
+  }
   return resolveSelectedClients(detected, answer).selected;
 }
 
