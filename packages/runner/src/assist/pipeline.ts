@@ -5,7 +5,7 @@ import { chromium, type BrowserContext, type Page, type Video } from "playwright
 import type { Locator } from "playwright";
 import type { StepOutcome, RunResult } from "../run.js";
 import type { Step } from "../schema.js";
-import { captureObserverSnapshot, createPageErrorTracker } from "./observer.js";
+import { captureObserverSnapshot, createPageErrorTracker, isKnownDevNoiseError } from "./observer.js";
 import { sanitizeHealerSteps } from "./healer.js";
 import {
   buildJudgeDossier,
@@ -1465,7 +1465,10 @@ export function detectUnresolvedWarningSignal(
     (e) =>
       e.severity === "warning" &&
       (e.observedAtStep === currentStepIndex || e.observedAtStep === currentStepIndex - 1) &&
-      !alreadyJudged.has(pageErrorKey(e)),
+      !alreadyJudged.has(pageErrorKey(e)) &&
+      // GHOST-66: el ruido de dev-tooling (HMR/webpack/vite) se captura como
+      // contexto pero nunca justifica quemar una llamada al juez.
+      !isKnownDevNoiseError(e.message),
   );
   return correlated.length > 0 ? correlated : undefined;
 }
