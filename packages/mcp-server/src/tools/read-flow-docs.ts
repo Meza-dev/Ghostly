@@ -7,7 +7,7 @@ import { ensureManifest } from "../manifest.js";
 export function registerReadFlowDocsTool(server: McpServer): void {
   server.tool(
     "read_flow_docs",
-    "Lee documentación *.ghost.md de un flujo registrado en ghost-manifest.json.",
+    "Reads *.ghost.md documentation for a flow registered in ghost-manifest.json.",
     {
       manifestPath: z.string().min(1).optional(),
       projectRoot: z.string().min(1).optional(),
@@ -26,7 +26,7 @@ export function registerReadFlowDocsTool(server: McpServer): void {
             content: [
               {
                 type: "text",
-                text: JSON.stringify({ ok: false, error: "flow no encontrado", warning, generated }, null, 2),
+                text: JSON.stringify({ ok: false, error: "flow not found", warning, generated }, null, 2),
               },
             ],
           };

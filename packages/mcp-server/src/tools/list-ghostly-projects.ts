@@ -5,7 +5,7 @@ import { apiUrlFromEnv, authHeader } from "../ghost-api.js";
 export function registerListGhostlyProjectsTool(server: McpServer): void {
   server.tool(
     "list_ghostly_projects",
-    "Lista proyectos Ghostly del usuario (GET /v1/projects). Devuelve id, label y color para usar el id en submit_plan como parámetro project.",
+    "Lists the user's Ghostly projects (GET /v1/projects). Returns id, label and color; use the id as the project parameter in submit_plan.",
     {
       apiUrl: z.string().url().optional(),
       apiKey: z.string().min(1).optional(),
@@ -35,7 +35,7 @@ export function registerListGhostlyProjectsTool(server: McpServer): void {
                   status: response.status,
                   projects: parsed,
                   hint: response.ok
-                    ? "Usa el campo id de un proyecto como parámetro project en submit_plan."
+                    ? "Use a project's id field as the project parameter in submit_plan."
                     : undefined,
                 },
                 null,

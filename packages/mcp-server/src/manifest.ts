@@ -94,7 +94,7 @@ export async function loadManifest(manifestPath?: string, projectRoot?: string):
   const manifest = manifestSchema.parse(JSON.parse(raw) as unknown);
   const currentCommit = currentGitCommit(manifest.projectRoot);
   const warning = currentCommit && manifest.gitCommit !== "unknown" && manifest.gitCommit !== currentCommit
-    ? `El manifest fue generado en commit ${manifest.gitCommit}, el HEAD actual es ${currentCommit}. Ejecuta ghost-scan para actualizarlo.`
+    ? `The manifest was generated at commit ${manifest.gitCommit}, but the current HEAD is ${currentCommit}. Run ghost-scan to refresh it.`
     : undefined;
 
   return {
@@ -116,7 +116,7 @@ async function runScan(projectRoot: string, outPath: string): Promise<void> {
     if (err && typeof err === "object" && "stderr" in err) {
       const detail = (err as { stderr?: string; stdout?: string });
       const msg = [
-        `ghost-scan falló para: ${projectRoot}`,
+        `ghost-scan failed for: ${projectRoot}`,
         detail.stderr?.trim() || detail.stdout?.trim() || String(err),
       ].filter(Boolean).join("\n");
       throw new Error(msg);

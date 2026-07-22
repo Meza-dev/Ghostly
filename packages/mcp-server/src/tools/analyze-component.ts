@@ -5,7 +5,7 @@ import { ensureManifest } from "../manifest.js";
 export function registerAnalyzeComponentTool(server: McpServer): void {
   server.tool(
     "analyze_component",
-    "Devuelve selectores, roles y formularios asociados a un componente o archivo del ghost-manifest.json.",
+    "Returns selectors, roles and forms associated with a component or file from ghost-manifest.json.",
     {
       manifestPath: z.string().min(1).optional(),
       projectRoot: z.string().min(1).optional(),

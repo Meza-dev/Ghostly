@@ -6,7 +6,7 @@ import { ensureManifest, stableCodeHints } from "../manifest.js";
 export function registerSubmitPlanTool(server: McpServer): void {
   server.tool(
     "submit_plan",
-    "Envía un plan enriquecido a POST /v1/run de Ghostly usando el manifest como codeHints opcional. Por defecto activa captura de pantalla tras cada paso (como la UI web). El vídeo solo se guarda si el run falla.",
+    "Submits an enriched plan to Ghostly's POST /v1/run using the manifest as optional codeHints. Screenshots after each step are enabled by default (like the web UI). Video is only kept when the run fails.",
     {
       apiUrl: z.string().url().optional(),
       apiKey: z.string().min(1).optional(),
@@ -44,7 +44,7 @@ export function registerSubmitPlanTool(server: McpServer): void {
               type: "text",
               text: JSON.stringify({
                 ok: false,
-                error: "No se pudo cargar @ghostly-io/runner para validar submit_plan",
+                error: "Could not load @ghostly-io/runner to validate submit_plan",
                 details: String(error),
               }),
             },
@@ -61,7 +61,7 @@ export function registerSubmitPlanTool(server: McpServer): void {
           content: [
             {
               type: "text",
-              text: JSON.stringify({ ok: false, error: "stepsJson no es JSON válido" }),
+              text: JSON.stringify({ ok: false, error: "stepsJson is not valid JSON" }),
             },
           ],
         };

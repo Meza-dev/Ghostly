@@ -28,7 +28,7 @@ const server = new McpServer({
 
 server.tool(
   "ghostly_run_flow",
-  "Ejecuta un flujo de prueba en un navegador (Playwright) a partir de una URL base y pasos.",
+  "Runs a test flow in a browser (Playwright) from a base URL and steps.",
   inputFields,
   async (args) => {
     let runFlow: (input: unknown) => Promise<unknown>;
@@ -47,7 +47,7 @@ server.tool(
             type: "text",
             text: JSON.stringify({
               ok: false,
-              error: "No se pudo cargar @ghostly-io/runner para ejecutar ghostly_run_flow",
+              error: "Could not load @ghostly-io/runner to execute ghostly_run_flow",
               details: String(error),
             }),
           },
@@ -65,7 +65,7 @@ server.tool(
             type: "text",
             text: JSON.stringify({
               ok: false,
-              error: "stepsJson no es JSON válido",
+              error: "stepsJson is not valid JSON",
             }),
           },
         ],

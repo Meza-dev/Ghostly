@@ -68,6 +68,6 @@ async function main(): Promise<void> {
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   // eslint-disable-next-line no-console
-  console.error(`ghost-scan falló: ${message}`);
+  console.error(`ghost-scan failed: ${message}`);
   process.exit(1);
 });
