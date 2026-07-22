@@ -75,7 +75,7 @@ export function runUpdate(): Promise<{ ok: boolean; error?: string }> {
     child.on("error", (err) => resolvePromise({ ok: false, error: err.message }));
     child.on("close", (code) => {
       if (code === 0) resolvePromise({ ok: true });
-      else resolvePromise({ ok: false, error: stderr.trim() || `npm salió con código ${code}` });
+      else resolvePromise({ ok: false, error: stderr.trim() || `npm exited with code ${code}` });
     });
   });
 }
