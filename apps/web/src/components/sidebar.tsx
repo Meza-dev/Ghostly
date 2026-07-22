@@ -320,7 +320,6 @@ export function Sidebar() {
               <p className="truncate text-body font-nav-active text-sidebar-emphasis">{user.email}</p>
               <p className="truncate text-small text-text-tertiary">
                 <span className="capitalize">{user.role}</span>
-                {versionInfo?.current && <span> · v{versionInfo.current}</span>}
               </p>
             </div>
             <button
@@ -342,6 +341,11 @@ export function Sidebar() {
           >
             <LogOut className="h-3.5 w-3.5" strokeWidth={1.7} />
           </button>
+        )}
+        {versionInfo?.current && !sidebarCollapsed && (
+          <p className="mt-3 text-center text-small text-text-tertiary">
+            Ghostly v{versionInfo.current}
+          </p>
         )}
       </div>
     </aside>
