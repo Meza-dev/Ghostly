@@ -15,7 +15,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -113,8 +113,12 @@ console.log("\n═══ [2/5] Building apps/web ═══");
 run("pnpm --filter @ghostly-io/web build");
 
 // ─── 3. Build packages/mcp-server ─────────────────────────────────────────────
-console.log("\n═══ [3/6] Building packages/mcp-server ═══");
+console.log("\n═══ [3/7] Building packages/mcp-server ═══");
 run("pnpm --filter @ghostly-io/mcp-server build");
+
+// ─── 3.5 Build packages/scanner (lo invoca el MCP server como ghost-scan) ─────
+console.log("\n═══ [3.5/7] Building packages/scanner ═══");
+run("pnpm --filter @ghostly-io/scanner build");
 
 // ─── 4. Prisma generate ───────────────────────────────────────────────────────
 console.log("\n═══ [4/6] Prisma generate ═══");
@@ -135,9 +139,11 @@ console.log("\n═══ [6/6] Copying assets to packages/cli/dist/assets ══
 const apiAssets = resolve(assetsDir, "api");
 const webAssets = resolve(assetsDir, "web");
 const mcpAssets = resolve(assetsDir, "mcp-server");
+const scannerAssets = resolve(assetsDir, "scanner");
 safeRemove(apiAssets);
 safeRemove(webAssets);
 safeRemove(mcpAssets);
+safeRemove(scannerAssets);
 
 // API: dist compilado (index.js + seed.js)
 copy(resolve(apiDir, "dist"), resolve(apiAssets, "dist"));
@@ -147,6 +153,11 @@ copy(resolve(apiDir, "prisma"), resolve(apiAssets, "prisma"));
 copy(resolve(root, "apps/web/dist"), webAssets);
 // MCP server: runtime local para integración con Cursor
 copy(resolve(root, "packages/mcp-server/dist"), mcpAssets);
+// Scanner: el MCP server lo spawnea como ghost-scan (assets/scanner/index.js,
+// autocontenido — sus deps van bundleadas vía noExternal en su tsup.config).
+// El bundle es ESM: el package.json marca type:module sin depender del padre.
+copy(resolve(root, "packages/scanner/dist"), scannerAssets);
+writeFileSync(resolve(scannerAssets, "package.json"), '{"type":"module"}\n');
 // Nota: la guía "Ghostly Expert" (Cursor/Claude Code/Claude Desktop) ya NO se empaqueta como
 // asset de build — cada adapter la renderiza en runtime desde guidance-content.ts (fuente única,
 // committeada). El copy de `.cursor/rules|skills` (gitignored, no existe en checkout limpio) se

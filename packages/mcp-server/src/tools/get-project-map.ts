@@ -5,10 +5,10 @@ import { ensureManifest } from "../manifest.js";
 export function registerGetProjectMapTool(server: McpServer): void {
   server.tool(
     "get_project_map",
-    "Lee ghost-manifest.json y devuelve rutas, componentes, formularios y selectores conocidos del proyecto.",
+    "Reads ghost-manifest.json and returns the project's known routes, components, forms and selectors.",
     {
       manifestPath: z.string().min(1).optional(),
-      projectRoot: z.string().min(1).optional(),
+      projectRoot: z.string().min(1).optional().describe("Absolute path to the target project. Pass it when the MCP client does not run from the project directory (e.g. Claude Desktop)."),
     },
     async (args) => {
       try {

@@ -7,10 +7,10 @@ import { ensureManifest } from "../manifest.js";
 export function registerReadFlowDocsTool(server: McpServer): void {
   server.tool(
     "read_flow_docs",
-    "Lee documentación *.ghost.md de un flujo registrado en ghost-manifest.json.",
+    "Reads *.ghost.md documentation for a flow registered in ghost-manifest.json.",
     {
       manifestPath: z.string().min(1).optional(),
-      projectRoot: z.string().min(1).optional(),
+      projectRoot: z.string().min(1).optional().describe("Absolute path to the target project. Pass it when the MCP client does not run from the project directory (e.g. Claude Desktop)."),
       flowName: z.string().min(1),
     },
     async (args) => {
@@ -26,7 +26,7 @@ export function registerReadFlowDocsTool(server: McpServer): void {
             content: [
               {
                 type: "text",
-                text: JSON.stringify({ ok: false, error: "flow no encontrado", warning, generated }, null, 2),
+                text: JSON.stringify({ ok: false, error: "flow not found", warning, generated }, null, 2),
               },
             ],
           };
