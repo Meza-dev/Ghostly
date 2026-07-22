@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { authToEnv, ensureJwtSecret, readAuth } from "../lib/auth.js";
-import { killStrayGhostlyProcesses } from "../lib/processes.js";
+import { installLatestWithRetry, killStrayGhostlyProcesses } from "../lib/processes.js";
 import { isAssistLlmConfigured } from "../lib/llm-check.js";
 import { isCliLlmProvider } from "../lib/llm-providers.js";
 import {
@@ -196,14 +196,12 @@ export function registerUp(program: Command): void {
         // (los editores los relanzan solos).
         killStrayGhostlyProcesses();
         p.log.info("Installing @ghostly-io/cli@latest…");
-        try {
-          execSync("npm install -g @ghostly-io/cli@latest", {
-            stdio: "inherit",
-            timeout: 300_000,
-          });
-        } catch (err) {
-          p.log.error(String(err));
-          p.log.warn("Automatic update failed. Run manually: ghostly update");
+        const ok = installLatestWithRetry((m) => p.log.info(m));
+        if (!ok) {
+          p.log.error("All install attempts failed.");
+          p.log.warn(
+            "Automatic update failed. Run manually: npm uninstall -g @ghostly-io/cli ; npm install -g @ghostly-io/cli@latest",
+          );
           process.exit(1);
         }
         p.log.info("CLI updated — restarting the server…");
