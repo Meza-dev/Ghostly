@@ -1,10 +1,30 @@
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useLanguage } from "../context/language-context";
+import { apiFetch } from "../lib/api";
 
 export function StatusBar() {
   const { t } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch("/v1/version");
+        if (!res.ok) return;
+        const body = (await res.json()) as { current?: string | null };
+        if (!cancelled) setVersion(body.current ?? null);
+      } catch {
+        // En dev el endpoint puede devolver null — no mostramos nada.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function runQuickAction() {
     if (location.pathname === "/runs") {
@@ -33,6 +53,12 @@ export function StatusBar() {
         <button type="button" onClick={runQuickAction} className="transition-colors hover:text-foreground">
           {t("statusBar.newRun")}
         </button>
+        {version && (
+          <>
+            <span>·</span>
+            <span>v{version}</span>
+          </>
+        )}
       </div>
     </footer>
   );

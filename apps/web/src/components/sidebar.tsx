@@ -349,11 +349,6 @@ export function Sidebar() {
             <LogOut className="h-3.5 w-3.5" strokeWidth={1.7} />
           </button>
         )}
-        {versionInfo?.current && !sidebarCollapsed && (
-          <p className="mt-3 text-center text-small text-text-tertiary">
-            Ghostly v{versionInfo.current}
-          </p>
-        )}
       </div>
     </aside>
     </>
