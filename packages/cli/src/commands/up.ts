@@ -172,19 +172,35 @@ export function registerUp(program: Command): void {
         process.exit(code ?? 0);
       });
 
-      // Propagar señales para un shutdown limpio
-      for (const sig of ["SIGINT", "SIGTERM"] as const) {
-        process.on(sig, () => {
-          // En Windows, SIGINT no siempre termina al hijo; forzamos fallback.
-          server.kill(sig);
+      // Shutdown: en Windows, `server.kill()` no alcanza a los nietos (Prisma, etc.)
+      // y el server queda huérfano al cerrar la terminal. `taskkill /T /F` mata el
+      // árbol completo, de forma síncrona (usable también en el handler de "exit").
+      let stopped = false;
+      const stopServer = (): void => {
+        if (stopped || server.exitCode !== null) return;
+        stopped = true;
+        if (process.platform === "win32" && server.pid) {
+          try {
+            execSync(`taskkill /pid ${server.pid} /T /F`, { stdio: "ignore" });
+          } catch {
+            // El proceso ya no existe — nada que hacer.
+          }
+        } else {
+          server.kill("SIGTERM");
           setTimeout(() => {
-            if (!server.killed) {
-              server.kill("SIGKILL");
-            }
-            process.exit(0);
-          }, 1500);
+            if (!server.killed) server.kill("SIGKILL");
+          }, 1500).unref();
+        }
+      };
+
+      // SIGHUP cubre el cierre de la ventana de terminal; "exit" es el último recurso.
+      for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+        process.on(sig, () => {
+          stopServer();
+          process.exit(0);
         });
       }
+      process.on("exit", stopServer);
 
       p.outro(`
 ✅  Ghostly is running
