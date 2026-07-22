@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
 import { authToEnv, ensureJwtSecret, readAuth } from "../lib/auth.js";
+import { killStrayGhostlyProcesses } from "../lib/processes.js";
 import { isAssistLlmConfigured } from "../lib/llm-check.js";
 import { isCliLlmProvider } from "../lib/llm-providers.js";
 import {
@@ -161,23 +162,55 @@ export function registerUp(program: Command): void {
       // genera el evento Ctrl+C y el server queda imposible de cortar. Restaurar.
       if (process.stdin.isTTY) process.stdin.setRawMode(false);
 
-      const server = spawn(process.execPath, [apiEntry], {
-        env: serverEnv,
-        stdio: "inherit",
-        cwd: apiDist,
-      });
+      // Contrato con POST /v1/update del API: este exit code significa
+      // "instalá la versión nueva y relanzame" (ver apps/api services/updater.ts).
+      const UPDATE_EXIT_CODE = 75;
 
-      server.on("error", (err) => {
-        p.log.error(`Failed to start the server: ${err.message}`);
-        process.exit(1);
-      });
+      const startServer = (): ReturnType<typeof spawn> => {
+        const child = spawn(process.execPath, [apiEntry], {
+          env: serverEnv,
+          stdio: "inherit",
+          cwd: apiDist,
+        });
+        child.on("error", (err) => {
+          p.log.error(`Failed to start the server: ${err.message}`);
+          process.exit(1);
+        });
+        child.on("close", (code) => {
+          if (code === UPDATE_EXIT_CODE) {
+            runSelfUpdate();
+            return;
+          }
+          if (code !== 0 && code !== null) {
+            p.log.error(`The server exited with code: ${code}`);
+          }
+          process.exit(code ?? 0);
+        });
+        return child;
+      };
 
-      server.on("close", (code) => {
-        if (code !== 0 && code !== null) {
-          p.log.error(`The server exited with code: ${code}`);
+      const runSelfUpdate = (): void => {
+        p.log.info("Update requested from the dashboard.");
+        // Los MCP servers de los editores corren desde el mismo paquete global
+        // y lockean archivos en Windows — matarlos antes del npm install
+        // (los editores los relanzan solos).
+        killStrayGhostlyProcesses();
+        p.log.info("Installing @ghostly-io/cli@latest…");
+        try {
+          execSync("npm install -g @ghostly-io/cli@latest", {
+            stdio: "inherit",
+            timeout: 300_000,
+          });
+        } catch (err) {
+          p.log.error(String(err));
+          p.log.warn("Automatic update failed. Run manually: ghostly update");
+          process.exit(1);
         }
-        process.exit(code ?? 0);
-      });
+        p.log.info("CLI updated — restarting the server…");
+        server = startServer();
+      };
+
+      let server = startServer();
 
       // Shutdown: en Windows, `server.kill()` no alcanza a los nietos (Prisma, etc.)
       // y el server queda huérfano al cerrar la terminal. `taskkill /T /F` mata el
