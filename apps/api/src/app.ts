@@ -4,6 +4,7 @@ import { extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { containedPath } from "./lib/contained-path.js";
+import { loadConfig } from "./config.js";
 import { llmSettingsRouter } from "./routes/llm-settings.js";
 import { attachUserLlmMiddleware } from "./middleware/llm-config.js";
 import { runWithLlmConfigAsync } from "./llm/context.js";
@@ -20,7 +21,7 @@ import { runRouter } from "./routes/run.js";
 import { runEventsRouter } from "./routes/run-events.js";
 import { fetchLatestVersion, getCurrentVersion, isNewerVersion, UPDATE_EXIT_CODE } from "./services/updater.js";
 
-const ARTIFACTS_ROOT = resolve(process.cwd(), "artifacts");
+const ARTIFACTS_ROOT = loadConfig().artifactsDir;
 
 const MIME: Record<string, string> = {
   ".png": "image/png",
