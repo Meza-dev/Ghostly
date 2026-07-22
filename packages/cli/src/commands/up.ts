@@ -67,84 +67,97 @@ export function registerUp(program: Command): void {
 
       // ── 3. Detectar si la base de datos es nueva ──────────────────────────
       const dbPath = getDbPath();
-      const isNewDb = !existsSync(dbPath);
       const databaseUrl = `file:${dbPath}`;
 
-      // ── 4. Preparar base de datos (db push) ───────────────────────────────
-      const s1 = p.spinner();
-      s1.start(isNewDb ? `Creating database at ${dbPath}` : `Updating database schema`);
-      try {
-        runPrisma("db push --skip-generate --accept-data-loss", apiPrisma, databaseUrl);
-        s1.stop(isNewDb ? "Database created ✓" : "Schema updated ✓");
-      } catch (err) {
-        s1.stop("Warning: could not run the automatic migration");
-        p.log.warn(String(err));
-        p.log.warn("The server will try to connect to the DB anyway.");
-      }
+      // ── 4/4.5/5. Preparar base de datos (db push + generate + seed) ───────
+      // Se ejecuta en el boot inicial Y tras un self-update: npm install deja
+      // un @prisma/client fresco sin `prisma generate`, y sin este paso el
+      // server relanzado crashea al importar PrismaClient.
+      const prepareDatabase = (): void => {
+        // isNewDb se recalcula acá: en el relanzamiento la DB ya existe,
+        // así que el seed se saltea naturalmente.
+        const isNewDb = !existsSync(dbPath);
 
-      // ── 4.5 Generar cliente Prisma para esta instalación global ───────────
-      const s15 = p.spinner();
-      s15.start("Generating local Prisma client");
-      try {
-        runPrisma("generate --schema schema.prisma", apiPrisma, databaseUrl);
-        s15.stop("Prisma client generated ✓");
-      } catch (err) {
-        s15.stop("Failed to generate Prisma client");
-        p.log.error(String(err));
-        p.log.warn("Reinstall the CLI and try again.");
-        process.exit(1);
-      }
-
-      // ── 5. Seed automático en base de datos nueva ─────────────────────────
-      if (isNewDb && existsSync(seedPath)) {
-        const s2 = p.spinner();
-        s2.start("Running initial seed (admin user)");
+        const s1 = p.spinner();
+        s1.start(isNewDb ? `Creating database at ${dbPath}` : `Updating database schema`);
         try {
-          const enginePath = getPrismaEngineLibraryPath();
-          const seedEnv: NodeJS.ProcessEnv = {
-            ...process.env,
-            DATABASE_URL: databaseUrl,
-            ...(enginePath ? { PRISMA_QUERY_ENGINE_LIBRARY: enginePath } : {}),
-          };
-          execSync(`"${process.execPath}" "${seedPath}"`, {
-            stdio: "ignore",
-            cwd: apiDist,
-            env: seedEnv,
-            timeout: 30_000,
-            shell: process.platform === "win32" ? "cmd.exe" : "/bin/sh",
-          });
-          s2.stop("Seed completed ✓");
+          runPrisma("db push --skip-generate --accept-data-loss", apiPrisma, databaseUrl);
+          s1.stop(isNewDb ? "Database created ✓" : "Schema updated ✓");
         } catch (err) {
-          s2.stop("Warning: could not run the initial seed");
+          s1.stop("Warning: could not run the automatic migration");
           p.log.warn(String(err));
-          p.log.warn("You can create the admin user manually from the UI.");
+          p.log.warn("The server will try to connect to the DB anyway.");
         }
-      }
+
+        const s15 = p.spinner();
+        s15.start("Generating local Prisma client");
+        try {
+          runPrisma("generate --schema schema.prisma", apiPrisma, databaseUrl);
+          s15.stop("Prisma client generated ✓");
+        } catch (err) {
+          s15.stop("Failed to generate Prisma client");
+          p.log.error(String(err));
+          p.log.warn("Reinstall the CLI and try again.");
+          process.exit(1);
+        }
+
+        if (isNewDb && existsSync(seedPath)) {
+          const s2 = p.spinner();
+          s2.start("Running initial seed (admin user)");
+          try {
+            const enginePath = getPrismaEngineLibraryPath();
+            const seedEnv: NodeJS.ProcessEnv = {
+              ...process.env,
+              DATABASE_URL: databaseUrl,
+              ...(enginePath ? { PRISMA_QUERY_ENGINE_LIBRARY: enginePath } : {}),
+            };
+            execSync(`"${process.execPath}" "${seedPath}"`, {
+              stdio: "ignore",
+              cwd: apiDist,
+              env: seedEnv,
+              timeout: 30_000,
+              shell: process.platform === "win32" ? "cmd.exe" : "/bin/sh",
+            });
+            s2.stop("Seed completed ✓");
+          } catch (err) {
+            s2.stop("Warning: could not run the initial seed");
+            p.log.warn(String(err));
+            p.log.warn("You can create the admin user manually from the UI.");
+          }
+        }
+      };
+
+      prepareDatabase();
 
       // ── 6. Construir env vars del proceso hijo ────────────────────────────
-      const enginePath = getPrismaEngineLibraryPath();
-      // C2: genera/persiste un JWT_SECRET fuerte si falta, para que `up` arranque
-      // sin configuración manual. Se inyecta al API vía extraEnv en authToEnv().
-      ensureJwtSecret(auth);
-      const authEnv = authToEnv(auth);
+      // Se recalcula en cada spawn: tras un self-update, getCliVersion() y el
+      // engine path de Prisma cambian con la instalación nueva. Si se cachea,
+      // el server relanzado reportaría la versión vieja en /v1/version.
+      const buildServerEnv = (): NodeJS.ProcessEnv => {
+        const enginePath = getPrismaEngineLibraryPath();
+        // C2: genera/persiste un JWT_SECRET fuerte si falta, para que `up` arranque
+        // sin configuración manual. Se inyecta al API vía extraEnv en authToEnv().
+        ensureJwtSecret(auth);
+        const authEnv = authToEnv(auth);
 
-      const serverEnv: NodeJS.ProcessEnv = {
-        ...process.env,
-        ...authEnv,
-        NODE_ENV: "production",
-        DATABASE_URL: databaseUrl,
-        GHOST_WEB_DIR: webDist,
-        GHOST_APP_VERSION: getCliVersion(),
-        API_PORT: String(port),
-        HOST: "127.0.0.1",
-        // Watchdog: el server se auto-apaga si el CLI padre desaparece (ver api/index.ts).
-        GHOST_PARENT_PID: String(process.pid),
-        ...(enginePath ? { PRISMA_QUERY_ENGINE_LIBRARY: enginePath } : {}),
+        return {
+          ...process.env,
+          ...authEnv,
+          NODE_ENV: "production",
+          DATABASE_URL: databaseUrl,
+          GHOST_WEB_DIR: webDist,
+          GHOST_APP_VERSION: getCliVersion(),
+          API_PORT: String(port),
+          HOST: "127.0.0.1",
+          // Watchdog: el server se auto-apaga si el CLI padre desaparece (ver api/index.ts).
+          GHOST_PARENT_PID: String(process.pid),
+          ...(enginePath ? { PRISMA_QUERY_ENGINE_LIBRARY: enginePath } : {}),
+        };
       };
 
       // ── 7. Advertir si falta config del LLM ──────────────────────────────
       const assistConfigured = isAssistLlmConfigured(auth);
-      if (!assistConfigured && !serverEnv["ASSIST_LLM_API_KEY"] && !serverEnv["OPENAI_API_KEY"]) {
+      if (!assistConfigured && !process.env["ASSIST_LLM_API_KEY"] && !process.env["OPENAI_API_KEY"]) {
         p.log.warn(
           "AI-assisted mode is not configured yet. Enable it from the dashboard\n" +
             "(Settings → Assisted mode) once it's running — or run: ghostly config",
@@ -168,7 +181,8 @@ export function registerUp(program: Command): void {
 
       const startServer = (): ReturnType<typeof spawn> => {
         const child = spawn(process.execPath, [apiEntry], {
-          env: serverEnv,
+          // Env fresco por spawn: recoge la versión nueva tras un self-update.
+          env: buildServerEnv(),
           stdio: "inherit",
           cwd: apiDist,
         });
@@ -205,6 +219,9 @@ export function registerUp(program: Command): void {
           process.exit(1);
         }
         p.log.info("CLI updated — restarting the server…");
+        // El npm install deja un @prisma/client sin generar: repetir la
+        // preparación de DB antes de relanzar (el seed se saltea solo).
+        prepareDatabase();
         server = startServer();
       };
 
