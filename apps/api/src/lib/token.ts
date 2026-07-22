@@ -16,8 +16,8 @@ export function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET?.trim();
   if (!secret || secret.length < MIN_SECRET_LENGTH || KNOWN_DEFAULT_SECRETS.has(secret)) {
     throw new Error(
-      `JWT_SECRET es obligatorio y debe tener >= ${MIN_SECRET_LENGTH} caracteres. ` +
-        "Definí un secreto fuerte y aleatorio en el entorno (.env) antes de arrancar la API.",
+      `JWT_SECRET is required and must be at least ${MIN_SECRET_LENGTH} characters. ` +
+        "Set a strong, random secret in the environment (.env) before starting the API.",
     );
   }
   return secret;
