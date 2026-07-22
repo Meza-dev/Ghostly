@@ -15,6 +15,20 @@ try {
   process.exit(1);
 }
 
+// Watchdog anti-huérfanos: si el CLI padre desaparece (terminal cerrada, kill
+// duro), el server no debe quedar vivo. `process.kill(pid, 0)` solo comprueba
+// existencia — lanza si el proceso ya no está.
+const parentPid = Number(process.env.GHOST_PARENT_PID);
+if (Number.isInteger(parentPid) && parentPid > 0) {
+  setInterval(() => {
+    try {
+      process.kill(parentPid, 0);
+    } catch {
+      process.exit(0);
+    }
+  }, 5_000).unref();
+}
+
 const app = createApp();
 
 serve(

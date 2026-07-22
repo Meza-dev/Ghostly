@@ -136,6 +136,8 @@ export function registerUp(program: Command): void {
         GHOST_APP_VERSION: getCliVersion(),
         API_PORT: String(port),
         HOST: "127.0.0.1",
+        // Watchdog: el server se auto-apaga si el CLI padre desaparece (ver api/index.ts).
+        GHOST_PARENT_PID: String(process.pid),
         ...(enginePath ? { PRISMA_QUERY_ENGINE_LIBRARY: enginePath } : {}),
       };
 
@@ -153,6 +155,11 @@ export function registerUp(program: Command): void {
       // ── 8. Lanzar servidor (API + Frontend estático) ──────────────────────
       const apiEntry = `${apiDist}/index.js`;
       p.log.info(`Starting server at http://localhost:${port}`);
+
+      // Bug de @clack en Windows: el spinner activa raw mode en stdin y nunca lo
+      // restaura (solo lo hace en unix). Sin ENABLE_PROCESSED_INPUT la consola no
+      // genera el evento Ctrl+C y el server queda imposible de cortar. Restaurar.
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
 
       const server = spawn(process.execPath, [apiEntry], {
         env: serverEnv,
