@@ -6,7 +6,7 @@ import type { Context, Next } from "hono";
 import { getJwtSecret, verifyToken } from "../lib/token.js";
 
 /** Comparación en tiempo constante (evita timing side-channel al validar la API key). */
-function safeEqual(a: string, b: string): boolean {
+export function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
   if (ab.length !== bb.length) return false;
@@ -17,7 +17,7 @@ type AuthFileShape = {
   apiKey?: string;
 };
 
-function readExpectedApiKey(): string | null {
+export function readExpectedApiKey(): string | null {
   const authPath = resolve(homedir(), ".ghostly", "auth.json");
   if (!existsSync(authPath)) return null;
   try {
