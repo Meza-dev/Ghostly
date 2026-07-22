@@ -57,7 +57,7 @@ export function registerInstall(program: Command): void {
     )
     .action(async (opts: { apiUrl: string; mcpClients?: string }) => {
       console.clear();
-      p.intro("👻  Ghostly — Installation");
+      p.intro("Ghostly — Installation");
 
       const existingAuth = readAuth();
       let apiKey = existingAuth?.apiKey?.trim() ?? "";
@@ -131,11 +131,10 @@ export function registerInstall(program: Command): void {
       // ── Resumen final ─────────────────────────────────────────────────────
       p.note(
         [
-          "To enable AI-assisted mode, configure your provider credentials:",
+          "To enable AI-assisted mode, connect your AI provider (BYOK).",
+          "Recommended: the dashboard — Settings → Assisted mode (after `ghostly up`).",
           "",
-          "  ghostly config",
-          "",
-          "You can also set ASSIST_LLM_API_KEY via an environment variable.",
+          "Prefer the terminal? Run: ghostly config",
         ].join("\n"),
         "AI configuration",
       );

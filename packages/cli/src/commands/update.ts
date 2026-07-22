@@ -7,7 +7,7 @@ export function registerUpdate(program: Command): void {
     .command("update")
     .description("Update @ghostly-io/cli to the latest version")
     .action(() => {
-      p.intro("👻  Ghostly — Updating CLI");
+      p.intro("Ghostly — Updating CLI");
 
       const s = p.spinner();
       s.start("Installing @ghostly-io/cli@latest");

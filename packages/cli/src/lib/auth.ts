@@ -65,6 +65,21 @@ export function generateApiKey(mode: KeygenMode = "secure"): string {
   return `gk_${randomBytes(32).toString("base64url")}`;
 }
 
+/**
+ * Garantiza un JWT_SECRET fuerte y estable para el proceso de la API. Lo genera
+ * y persiste en auth.json (extraEnv) la primera vez, para que `ghostly up`
+ * arranque sin que el usuario tenga que definir nada (guard C2 del API).
+ * Estable entre reinicios: los tokens ya emitidos siguen siendo válidos.
+ */
+export function ensureJwtSecret(auth: GhostAuth): string {
+  const existing = auth.extraEnv?.JWT_SECRET?.trim();
+  if (existing && existing.length >= 32) return existing;
+  const secret = randomBytes(48).toString("base64url"); // ~64 chars, > mínimo de 32
+  auth.extraEnv = { ...auth.extraEnv, JWT_SECRET: secret };
+  writeAuth(auth);
+  return secret;
+}
+
 /** Convierte GhostAuth en el mapa de env vars que se inyecta al proceso de la API. */
 export function authToEnv(auth: GhostAuth): Record<string, string> {
   const env: Record<string, string> = {
