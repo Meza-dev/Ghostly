@@ -42,13 +42,13 @@ function printHelp(): void {
   console.log([
     "ghost-scan",
     "",
-    "Genera ghost-manifest.json desde el AST del proyecto.",
+    "Generates ghost-manifest.json from the project's AST.",
     "",
-    "Opciones:",
-    "  --root <dir>            Proyecto a analizar (default: cwd)",
-    "  --out <file>            Archivo destino (default: ghost-manifest.json)",
-    "  --base-url <url>        Base URL sugerida para runs",
-    "  --flow-docs-dir <dir>   Carpeta de *.ghost.md (default: docs/flows)",
+    "Options:",
+    "  --root <dir>            Project to analyze (default: cwd)",
+    "  --out <file>            Output file (default: ghost-manifest.json)",
+    "  --base-url <url>        Suggested base URL for runs",
+    "  --flow-docs-dir <dir>   *.ghost.md folder (default: docs/flows)",
   ].join("\n"));
 }
 
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
     ...(opts.flowDocsDir ? { flowDocsDir: opts.flowDocsDir } : {}),
   });
   // eslint-disable-next-line no-console
-  console.log(`ghost-manifest.json generado en ${outPath}`);
+  console.log(`ghost-manifest.json generated at ${outPath}`);
 }
 
 main().catch((error: unknown) => {

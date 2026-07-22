@@ -8,7 +8,7 @@ export function registerAnalyzeComponentTool(server: McpServer): void {
     "Returns selectors, roles and forms associated with a component or file from ghost-manifest.json.",
     {
       manifestPath: z.string().min(1).optional(),
-      projectRoot: z.string().min(1).optional(),
+      projectRoot: z.string().min(1).optional().describe("Absolute path to the target project. Pass it when the MCP client does not run from the project directory (e.g. Claude Desktop)."),
       componentName: z.string().min(1).optional(),
       filePath: z.string().min(1).optional(),
     },

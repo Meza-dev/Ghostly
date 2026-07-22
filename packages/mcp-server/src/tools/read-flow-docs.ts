@@ -10,7 +10,7 @@ export function registerReadFlowDocsTool(server: McpServer): void {
     "Reads *.ghost.md documentation for a flow registered in ghost-manifest.json.",
     {
       manifestPath: z.string().min(1).optional(),
-      projectRoot: z.string().min(1).optional(),
+      projectRoot: z.string().min(1).optional().describe("Absolute path to the target project. Pass it when the MCP client does not run from the project directory (e.g. Claude Desktop)."),
       flowName: z.string().min(1),
     },
     async (args) => {

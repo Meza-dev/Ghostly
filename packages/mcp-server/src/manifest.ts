@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,11 +8,25 @@ import { z } from "zod";
 
 const execFileAsync = promisify(execFile);
 
-// Ruta al CLI del scanner dentro del monorepo Ghostly.
-// import.meta.url → .../packages/mcp-server/dist/index.js
-// scanner CLI   → .../packages/scanner/dist/index.js
+// El scanner vive en rutas distintas según el layout:
+//   monorepo:  packages/mcp-server/dist → ../../scanner/dist/index.js
+//   CLI npm:   <cli>/dist/assets/mcp-server → ../scanner/index.js
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCANNER_DIST = path.resolve(__dirname, "../../scanner/dist/index.js");
+const SCANNER_CANDIDATES = [
+  path.resolve(__dirname, "../scanner/index.js"),
+  path.resolve(__dirname, "../../scanner/dist/index.js"),
+];
+
+function resolveScannerDist(): string {
+  const found = SCANNER_CANDIDATES.find((candidate) => fsSync.existsSync(candidate));
+  if (!found) {
+    throw new Error(
+      `ghost-scan binary not found. Looked in: ${SCANNER_CANDIDATES.join(", ")}. ` +
+        "Reinstall the CLI (npm i -g @ghostly-io/cli@latest) or rebuild the monorepo.",
+    );
+  }
+  return found;
+}
 
 const GENERATE_TIMEOUT_MS = 90_000;
 
@@ -108,7 +123,7 @@ async function runScan(projectRoot: string, outPath: string): Promise<void> {
   try {
     await execFileAsync(
       process.execPath,
-      [SCANNER_DIST, "--root", projectRoot, "--out", outPath],
+      [resolveScannerDist(), "--root", projectRoot, "--out", outPath],
       { timeout: GENERATE_TIMEOUT_MS },
     );
   } catch (err: unknown) {

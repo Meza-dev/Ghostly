@@ -8,7 +8,7 @@ export function registerGetProjectMapTool(server: McpServer): void {
     "Reads ghost-manifest.json and returns the project's known routes, components, forms and selectors.",
     {
       manifestPath: z.string().min(1).optional(),
-      projectRoot: z.string().min(1).optional(),
+      projectRoot: z.string().min(1).optional().describe("Absolute path to the target project. Pass it when the MCP client does not run from the project directory (e.g. Claude Desktop)."),
     },
     async (args) => {
       try {

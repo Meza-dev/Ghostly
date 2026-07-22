@@ -11,7 +11,7 @@ export function registerSubmitPlanTool(server: McpServer): void {
       apiUrl: z.string().url().optional(),
       apiKey: z.string().min(1).optional(),
       manifestPath: z.string().min(1).optional(),
-      projectRoot: z.string().min(1).optional(),
+      projectRoot: z.string().min(1).optional().describe("Absolute path to the target project. Pass it when the MCP client does not run from the project directory (e.g. Claude Desktop)."),
       project: z.string().min(1),
       goal: z.string().min(1),
       contextId: z.string().min(1).optional(),
