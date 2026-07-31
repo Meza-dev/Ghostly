@@ -77,7 +77,11 @@ export function Sidebar() {
   // polleamos /v1/version hasta que vuelva con la versión nueva → reload.
   async function handleUpdate() {
     setUpdateState("updating");
-    const target = versionInfo?.latest ?? null;
+    // La versión desde la que arrancamos: recargamos cuando el server vuelve con
+    // CUALQUIER versión distinta (el update solo avanza). Comparar contra la
+    // "latest" exacta de npm era frágil: si el registry propagaba lento o el
+    // instalado difería del latest, no matcheaba nunca y el poll quedaba colgado.
+    const startVersion = versionInfo?.current ?? null;
     try {
       const res = await apiFetch("/v1/update", { method: "POST" });
       if (!res.ok) {
@@ -87,14 +91,16 @@ export function Sidebar() {
     } catch {
       // El server puede morir antes de responder — seguimos al polling igual.
     }
-    const deadline = Date.now() + 4 * 60_000;
+    // El relanzamiento incluye npm install + prisma generate; en máquinas lentas
+    // o con poco disco puede tardar varios minutos.
+    const deadline = Date.now() + 8 * 60_000;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 2500));
       try {
         const res = await apiFetch("/v1/version");
         if (!res.ok) continue;
         const body = (await res.json()) as { current?: string | null };
-        if (body.current && (!target || body.current === target)) {
+        if (body.current && body.current !== startVersion) {
           window.location.reload();
           return;
         }

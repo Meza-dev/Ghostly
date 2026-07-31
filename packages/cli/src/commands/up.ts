@@ -174,16 +174,16 @@ export function registerUp(program: Command): void {
       const apiEntry = `${apiDist}/index.js`;
       p.log.info(`Starting server at http://localhost:${port}`);
 
-      // Bug de @clack en Windows: el spinner activa raw mode en stdin y nunca lo
-      // restaura (solo lo hace en unix). Sin ENABLE_PROCESSED_INPUT la consola no
-      // genera el evento Ctrl+C y el server queda imposible de cortar. Restaurar.
-      if (process.stdin.isTTY) process.stdin.setRawMode(false);
-
       // Contrato con POST /v1/update del API: este exit code significa
       // "instalá la versión nueva y relanzame" (ver apps/api services/updater.ts).
       const UPDATE_EXIT_CODE = 75;
 
       const startServer = (): ReturnType<typeof spawn> => {
+        // Bug de @clack en Windows: sus spinners activan raw mode en stdin y solo
+        // lo restauran en unix. Sin ENABLE_PROCESSED_INPUT la consola no genera el
+        // evento Ctrl+C. Restaurar en CADA arranque — el relanzamiento post-update
+        // corre prepareDatabase() (spinners) que vuelve a activarlo.
+        if (process.stdin.isTTY) process.stdin.setRawMode(false);
         const child = spawn(process.execPath, [apiEntry], {
           // Env fresco por spawn: recoge la versión nueva tras un self-update.
           env: buildServerEnv(),
