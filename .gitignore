@@ -28,6 +28,7 @@ Ghostly.zip
 # Documentos sensibles — no publicar en repo público (mapa de vulnerabilidades / deployment)
 docs/security-audit-2026-07.md
 docs/docker-deployment.md
+docs/ghostly-v0.2-tracker.md
 
 # Tooling local de agentes/IA — config y caches de la máquina, no del proyecto
 .agents/
