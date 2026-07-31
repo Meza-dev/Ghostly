@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadDotenv } from "dotenv";
@@ -7,7 +8,7 @@ export type AppConfig = {
   port: number;
   host: string;
   nodeEnv: string;
-  /** Raíz de artefactos (screenshots/videos). GHOST_ARTIFACTS_DIR o cwd/artifacts. */
+  /** Raíz de artefactos (screenshots/videos). GHOST_ARTIFACTS_DIR o ~/.ghostly/artifacts. */
   artifactsDir: string;
   assist: {
     enabled: boolean;
@@ -62,13 +63,15 @@ export function loadConfig(): AppConfig {
   const port = Number.parseInt(rawPort, 10);
   const host = process.env.HOST ?? "0.0.0.0";
   const nodeEnv = process.env.NODE_ENV ?? "development";
-  // GHOST_ARTIFACTS_DIR: el CLI (`ghostly up`) apunta esto a ~/.ghostly/artifacts
-  // para que los artefactos sobrevivan a los updates del paquete global npm.
-  // Sin la env var, se mantiene el comportamiento dev: cwd/artifacts.
+  // Artefactos (screenshots/videos): SIEMPRE fuera del paquete global npm, si no
+  // los borra cada update. El default es ~/.ghostly/artifacts (basado en el home,
+  // NO en cwd — el cwd del server empaquetado es dentro del propio paquete). Así
+  // escribir y servir coinciden sin depender de que el CLI setee ninguna env.
+  // GHOST_ARTIFACTS_DIR solo se usa para override explícito (tests, rutas custom).
   const artifactsDirRaw = process.env.GHOST_ARTIFACTS_DIR?.trim();
   const artifactsDir = artifactsDirRaw
     ? resolve(artifactsDirRaw)
-    : resolve(process.cwd(), "artifacts");
+    : resolve(homedir(), ".ghostly", "artifacts");
   return {
     port: Number.isFinite(port) ? port : 3000,
     host,
