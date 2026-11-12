@@ -7,6 +7,9 @@ import { registerReadFlowDocsTool } from "./tools/read-flow-docs.js";
 import { registerListGhostlyProjectsTool } from "./tools/list-ghostly-projects.js";
 import { registerSubmitPlanTool } from "./tools/submit-plan.js";
 import { registerGetRunTool } from "./tools/get-run.js";
+import { registerTestWorkflowTools } from "./tools/test-unit.js";
+import { registerE2ETestTool } from "./tools/test-e2e.js";
+import { registerSecurityAuditTool } from "./tools/security-audit.js";
 
 const inputFields = {
   baseUrl: z.string().url(),
@@ -145,6 +148,9 @@ registerReadFlowDocsTool(server);
 registerSubmitPlanTool(server);
 registerListGhostlyProjectsTool(server);
 registerGetRunTool(server);
+registerTestWorkflowTools(server);
+registerE2ETestTool(server);
+registerSecurityAuditTool(server);
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();

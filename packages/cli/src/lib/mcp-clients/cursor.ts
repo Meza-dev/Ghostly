@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { getCursorMcpPath } from "../paths.js";
-import { renderGuidanceWithFrontmatter } from "./guidance-content.js";
+import { GHOSTLY_GUIDANCE_DESCRIPTION, renderGuidanceWithFrontmatter } from "./guidance-content.js";
 import { mergeMcpServerIntoJsonFile } from "./json-writer.js";
 import type { InjectResult, McpClient, McpEntry } from "./types.js";
 
@@ -41,7 +41,7 @@ export const cursorClient: McpClient = {
       const rulePath = cursorRulePath();
       mkdirSync(resolve(homedir(), ".cursor", "rules"), { recursive: true });
       const rule = renderGuidanceWithFrontmatter([
-        "description: Use Ghostly's MCP tools to design and debug robust E2E tests; proactively offer to create a test when the user adds or changes a screen/flow.",
+        `description: ${GHOSTLY_GUIDANCE_DESCRIPTION}`,
         "alwaysApply: true",
       ]);
       writeFileSync(rulePath, rule, "utf8");

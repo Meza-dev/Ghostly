@@ -97,18 +97,23 @@ export function ClientesPage() {
     }
   };
 
+  const alternateLayout = import.meta.env.VITE_PLAYGROUND_LAYOUT_VARIANT === "alternate";
+  const createButton = (
+    <button
+      type="button"
+      data-testid="cliente-crear"
+      onClick={() => setModal({ kind: "create" })}
+      className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+    >
+      {alternateLayout ? "Agregar cliente" : "Nuevo cliente"}
+    </button>
+  );
+
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold text-gray-800">Clientes</h1>
-        <button
-          type="button"
-          data-testid="cliente-crear"
-          onClick={() => setModal({ kind: "create" })}
-          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          Nuevo cliente
-        </button>
+        {!alternateLayout && createButton}
       </div>
 
       <input
@@ -165,6 +170,8 @@ export function ClientesPage() {
           </tbody>
         </table>
       )}
+
+      {alternateLayout && <div className="mt-4">{createButton}</div>}
 
       {modal.kind === "create" && (
         <ClienteFormModal
