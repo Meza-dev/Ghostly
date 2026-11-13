@@ -123,14 +123,16 @@ export function createApp(): Hono {
   app.use("/artifacts/*", apiKeyMiddleware);
   app.use("/artifacts/*", authMiddleware);
   app.get("/artifacts/*", async (c) => {
-    const relative = c.req.path.replace(/^\/artifacts\//, "");
-    const filePath = containedPath(ARTIFACTS_ROOT, relative);
-    if (!filePath) {
-      return c.json({ ok: false, error: "not found" }, 404);
-    }
     try {
+      const [run, filename, extra] = c.req.path.slice("/artifacts/".length).split("/").map(decodeURIComponent);
+      if (!run || !/^run-[\w-]+$/.test(run) || !filename || extra !== undefined ||
+        /[\\/:\0]/.test(filename) || !/\.(?:png|jpe?g|webm|mp4)$/i.test(filename)) {
+        return c.json({ ok: false, error: "not found" }, 404);
+      }
+      const filePath = containedPath(ARTIFACTS_ROOT, `${run}/${filename}`);
+      if (!filePath) return c.json({ ok: false, error: "not found" }, 404);
       const data = await readFile(filePath);
-      const mime = MIME[extname(filePath)] ?? "application/octet-stream";
+      const mime = MIME[extname(filename).toLowerCase()] ?? "application/octet-stream";
       return new Response(data, {
         headers: { "Content-Type": mime, "X-Content-Type-Options": "nosniff" },
       });

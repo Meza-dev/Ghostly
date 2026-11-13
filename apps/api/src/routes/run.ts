@@ -107,7 +107,6 @@ const mcpPlanSchema = z.object({
   captureA11yAfterEachStep: z.boolean().optional(),
   captureScreenshotAfterEachStep: z.boolean().optional(),
   recordVideoOnFailure: z.boolean().optional(),
-  artifactsDir: z.string().min(1).optional(),
   defaultTimeoutMs: z.number().int().positive().optional(),
   codeHints: codeHintsSchema.optional(),
 });
@@ -133,7 +132,6 @@ function normalizeRunBody(body: Record<string, unknown>): Record<string, unknown
     ...(body.recordVideoOnFailure === undefined && plan.recordVideoOnFailure !== undefined
       ? { recordVideoOnFailure: plan.recordVideoOnFailure }
       : {}),
-    ...(body.artifactsDir === undefined && plan.artifactsDir ? { artifactsDir: plan.artifactsDir } : {}),
     ...(body.defaultTimeoutMs === undefined && plan.defaultTimeoutMs !== undefined
       ? { defaultTimeoutMs: plan.defaultTimeoutMs }
       : {}),
@@ -294,13 +292,8 @@ runRouter.post("/run", async (c) => {
   } catch {
     return c.json({ ok: false, error: msg("common.invalidJsonBody", lang) }, 400);
   }
-  body = normalizeRunBody(body);
-  // Si el cliente no pidió un artifactsDir explícito, usar la raíz configurada
-  // (GHOST_ARTIFACTS_DIR bajo `ghostly up`) en vez del default relativo del
-  // runner, que se resuelve contra el cwd del proceso y muere con cada update.
-  if (body.artifactsDir === undefined) {
-    body = { ...body, artifactsDir: appConfig.artifactsDir };
-  }
+  // Las corridas persistidas deben escribir bajo la misma raíz que sirve la API.
+  body = { ...normalizeRunBody(body), artifactsDir: appConfig.artifactsDir };
 
   const parsed = safeParseRunInput(body, {
     maxSteps: appConfig.assist.maxSteps,

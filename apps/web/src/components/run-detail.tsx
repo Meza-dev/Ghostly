@@ -5,6 +5,7 @@ import type { RunRecord, Step } from "../../../../packages/runner/src/schema.js"
 import { useLanguage } from "../context/language-context";
 import { useRunStream } from "../hooks/use-run-stream";
 import { apiFetch, getToken } from "../lib/api";
+import { artifactUrl as buildArtifactUrl } from "../lib/artifact-url";
 import { appendInstructionsToGoal, buildOverriddenSteps, deriveEditableFillFields } from "../lib/rerun-fields";
 import { loadUiPrefs } from "../lib/ui-prefs";
 import { getUserGroupMeta, getUserVerdictGroup } from "../lib/verdict";
@@ -134,19 +135,8 @@ function deriveRerunBaseUrl(currentBaseUrl: string, candidateSteps: Step[]): str
   return currentBaseUrl;
 }
 
-function artifactUrl(filePath: string): string {
-  // Extrae todo lo que va después de "artifacts\" o "artifacts/"
-  // y construye la URL relativa /artifacts/run-xxx/step-N-ok.png
-  const normalized = filePath.replace(/\\/g, "/");
-  const marker = "/artifacts/";
-  const idx = normalized.indexOf(marker);
-  const relative = idx !== -1 ? normalized.slice(idx + marker.length) : normalized.split("/").pop() ?? "";
-  // /artifacts/* ahora requiere auth (C3). Como <img>/<a> no envían el header
-  // Authorization, pasamos el JWT por query param (?token=), soportado por el
-  // middleware de auth para SSE/EventSource y descargas.
-  const token = getToken();
-  const suffix = token ? `?token=${encodeURIComponent(token)}` : "";
-  return `/artifacts/${relative}${suffix}`;
+function artifactUrl(filePath: string): string | undefined {
+  return buildArtifactUrl(filePath, getToken());
 }
 
 function formatStepSummary(step: Record<string, unknown>): string {
@@ -565,23 +555,26 @@ export function RunDetail() {
     return byIndex;
   }, [mergedEvents]);
 
+  const screenshotHref = selectedStep?.screenshotPath ? artifactUrl(selectedStep.screenshotPath) : undefined;
   useEffect(() => {
-    setArtifactLoading(Boolean(selectedStep?.screenshotPath));
-  }, [selectedStep?.screenshotPath]);
+    setArtifactLoading(Boolean(screenshotHref));
+  }, [screenshotHref]);
 
+  const videoHref = run?.videoPath ? artifactUrl(run.videoPath) : undefined;
   const artifactItems = useMemo(() => {
     const items: Array<{ name: string; href: string; kind: "image" | "video" | "file" }> = [];
-    if (run?.videoPath) {
-      items.push({ name: run.videoPath.split(/[\\/]/).pop() ?? "video.webm", href: artifactUrl(run.videoPath), kind: "video" });
+    if (run?.videoPath && videoHref) {
+      items.push({ name: run.videoPath.split(/[\\/]/).pop() ?? "video.webm", href: videoHref, kind: "video" });
     }
     for (const step of displaySteps) {
       if (!step.screenshotPath) continue;
+      const href = artifactUrl(step.screenshotPath);
+      if (!href) continue;
       const name = step.screenshotPath.split(/[\\/]/).pop() ?? `step-${step.index + 1}.png`;
-      items.push({ name, href: artifactUrl(step.screenshotPath), kind: "image" });
+      items.push({ name, href, kind: "image" });
     }
     return items;
-  }, [displaySteps, run?.videoPath]);
-  const videoHref = run?.videoPath ? artifactUrl(run.videoPath) : null;
+  }, [displaySteps, run?.videoPath, videoHref]);
 
   if (notFound) {
     return (
@@ -756,7 +749,7 @@ export function RunDetail() {
                     type="button"
                     onClick={() => {
                       setSelectedStepIndex(step.index);
-                      if (step.screenshotPath) setArtifactLoading(true);
+                      if (step.screenshotPath && artifactUrl(step.screenshotPath)) setArtifactLoading(true);
                     }}
                     className="grid w-full grid-cols-[52px_1fr] gap-3.5 rounded-control-sm text-left"
                   >
@@ -784,17 +777,17 @@ export function RunDetail() {
               {artifactLoading && (
                 <div className="absolute inset-0 animate-pulse bg-muted" />
               )}
-              {selectedStep?.screenshotPath && (
+              {selectedStep && screenshotHref && (
                 <img
                   key={selectedStep.screenshotPath}
-                  src={artifactUrl(selectedStep.screenshotPath)}
+                  src={screenshotHref}
                   alt={t("runDetail.stepAlt", { n: selectedStep.index + 1 })}
                   className="h-full w-full object-contain"
                   onLoad={() => setArtifactLoading(false)}
                   onError={() => setArtifactLoading(false)}
                 />
               )}
-              {!selectedStep?.screenshotPath && (
+              {!screenshotHref && (
                 <div className="absolute inset-0 flex items-center justify-center font-mono text-caption text-muted-fg">
                   {t("runDetail.noScreenshot")}
                 </div>
