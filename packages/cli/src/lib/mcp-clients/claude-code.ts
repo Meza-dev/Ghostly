@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { renderGuidanceWithFrontmatter } from "./guidance-content.js";
+import { GHOSTLY_GUIDANCE_DESCRIPTION, renderGuidanceWithFrontmatter } from "./guidance-content.js";
 import { mergeMcpServerIntoJsonFile } from "./json-writer.js";
 import { isBinaryOnPath } from "./os-paths.js";
 import type { InjectResult, McpClient, McpEntry } from "./types.js";
@@ -72,7 +72,7 @@ export const claudeCodeClient: McpClient = {
     mkdirSync(skillDir, { recursive: true });
     const skill = renderGuidanceWithFrontmatter([
       "name: ghostly-expert",
-      "description: Use Ghostly's MCP tools to design and debug robust E2E tests; proactively offer to create a test when the user adds or changes a screen/flow.",
+      `description: ${GHOSTLY_GUIDANCE_DESCRIPTION}`,
     ]);
     writeFileSync(resolve(skillDir, "SKILL.md"), skill, "utf8");
   },

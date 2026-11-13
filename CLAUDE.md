@@ -121,16 +121,21 @@ For substantial changes, use the installed `sdd-*` skills instead of ad-hoc edit
 `explore → propose → spec + design → tasks → apply → verify → archive`.
 Artifacts persist in Engram by default (topic keys `sdd/<change>/<phase>`). `/sdd-new`, `/sdd-continue`, `/sdd-ff` orchestrate the sequence. Default to interactive mode (review between phases) unless told otherwise.
 
-### E2E test design — Ghostly Expert Architect (project-specific)
-When the work involves E2E signals (`e2e`, `run_flow`, `submit_plan`, `flaky`, `victory condition`, `selector`, `manifest`, `plan de prueba`), follow this order via the `ghostly` MCP tools:
-1. `get_project_map` first.
-2. `read_flow_docs` if applicable.
-3. `analyze_component` to obtain **stable selectors** for the components involved.
-4. Design a logical **victory condition** — a success message, expected URL, or visible evidence of the final state.
-5. Validate first with `ghostly_run_flow`.
-6. Only after success, persist with `submit_plan` (include `codeHints` and `assistV2`).
+### Testing and security hygiene with Ghostly MCP
 
-**Anti-flakiness:** selector priority `data-testid` > `aria-label` > `id` > `name` > `placeholder` > text. Avoid ambiguous selectors (`button`, `input`, `form button`) when a stable alternative exists; if a selector fails, analyse the error, adjust selector/wait, and retry rather than repeating the same one.
+| User intent | Tool and action |
+| --- | --- |
+| Find useful repository tests | `ghostly_init` without `module` returns a read-only briefing with up to three options. Apply only the user's selected option with its current `planToken` and the same plan inputs. Report missing inputs or unsupported setup. Replan when the request or proposal changes. |
+| Test a unit or integration in a module | `ghostly_test_unit` or `ghostly_test_integration` with the relative module path. Follow the repository's test conventions and use an independently documented expectation. Report baseline and generated test results separately. |
+| Generate a versionable browser persistence test | `ghostly_test_e2e` with a loopback origin, synthetic data and stable test IDs. Check the visible save confirmation and the saved record after reload. |
+| Run or save a browser flow | Validate with `ghostly_run_flow`. Use `submit_plan` only when the user asks to save it. Get the project ID with `list_ghostly_projects` and check the saved run with `get_run`. |
+| Review security hygiene | `ghostly_audit_security` performs a bounded, static, read-only review. Honor any relative `scope` and report evidence, impact, mitigation and coverage gaps. |
+
+Save a validated flow with deterministic replay by default by omitting `assistV2`. Set `assistV2: true` only when the user asks for Ghostly's self-healing and judge supervision.
+
+Use `get_project_map`, `read_flow_docs` and `analyze_component` as needed for browser selectors. Pass the absolute `projectRoot` to those tools and `submit_plan` when the MCP client runs outside the target project. Run browser flows against a test environment with synthetic data.
+
+Report assertion failures as failures. If a selector is wrong, correct it and replay the same check. Return the generated test path and replay command, including any required environment settings.
 
 ### Project management — Kanon (optional)
 When a bug/feature/task should be tracked, use the `kanon_*` MCP tools: `kanon_create_issue` (title `[Area] Verb phrase`, check `kanon_list_groups` first), `kanon_transition_issue`/`kanon_update_issue` to keep the board in sync, and `kanon_create_roadmap_item` to capture deferred ideas. Requires the Kanon server running on `:3333`.

@@ -6,7 +6,11 @@
 
 | Documento | Estado | Descripción |
 |---|---|---|
-| [ghostly-v0.2-trust-release.md](specs/ghostly-v0.2-trust-release.md) | ✅ Implementado (en `main`) | Fiabilidad del veredicto: percepción de errores, capa determinista y agente juez. La operación desatendida (CI, scheduling) queda para v0.3. |
+| [ghostly-v0.2-trust-release.md](specs/ghostly-v0.2-trust-release.md) | ✅ Implementado (en `main`) | Fiabilidad del veredicto: percepción de errores, capa determinista y agente juez. Consulta el roadmap para las próximas entregas. |
+
+## Roadmap
+
+- [Ghostly v0.3](roadmap/v0.3.md)
 
 ## Arquitectura
 

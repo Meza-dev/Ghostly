@@ -127,6 +127,11 @@ Ghostly is built local-first and zero-trust:
 - Test execution never requires exfiltrating your source code to external clouds.
 - Ideal for teams whose code must stay inside the developer's perimeter.
 
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [v0.3 roadmap](docs/roadmap/v0.3.md)
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

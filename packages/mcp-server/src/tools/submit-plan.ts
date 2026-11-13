@@ -27,7 +27,7 @@ export function registerSubmitPlanTool(server: McpServer): void {
       captureScreenshotAfterEachStep: z.boolean().optional(),
       recordVideoOnFailure: z.boolean().optional(),
       captureA11yAfterEachStep: z.boolean().optional(),
-      artifactsDir: z.string().min(1).optional(),
+      artifactsDir: z.string().min(1).optional().describe("Deprecated for saved runs. The API manages artifact storage."),
       defaultTimeoutMs: z.number().int().positive().optional(),
     },
     async (args) => {
@@ -91,7 +91,6 @@ export function registerSubmitPlanTool(server: McpServer): void {
         captureScreenshotAfterEachStep,
         recordVideoOnFailure,
         captureA11yAfterEachStep,
-        ...(args.artifactsDir ? { artifactsDir: args.artifactsDir } : {}),
         ...(args.defaultTimeoutMs ? { defaultTimeoutMs: args.defaultTimeoutMs } : {}),
       });
       if (!parsed.success) {
@@ -135,7 +134,6 @@ export function registerSubmitPlanTool(server: McpServer): void {
               captureA11yAfterEachStep: parsed.data.captureA11yAfterEachStep,
               captureScreenshotAfterEachStep: parsed.data.captureScreenshotAfterEachStep,
               recordVideoOnFailure: parsed.data.recordVideoOnFailure,
-              artifactsDir: parsed.data.artifactsDir,
               defaultTimeoutMs: parsed.data.defaultTimeoutMs,
               ...(codeHints ? { codeHints } : {}),
             },
