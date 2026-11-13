@@ -31,6 +31,7 @@ const flow = {
 };
 
 test("MCP freezes one browser test against three actual Playground variants", async (t) => {
+  const native = Number(process.versions.node.split(".")[0]) >= 24;
   const workspace = await mkdtemp(fileURLToPath(new URL("../../cli/e2e-fixture-", import.meta.url)));
   const client = new Client({ name: "ghostly-e2e-fixture", version: "1.0.0" });
   const servers = [];
@@ -39,11 +40,11 @@ test("MCP freezes one browser test against three actual Playground variants", as
     await Promise.all(servers.map((close) => close()));
     await rm(workspace, { recursive: true, force: true, maxRetries: 5 });
   });
-  await mkdir(path.join(workspace, "test"));
+  if (!native) await mkdir(path.join(workspace, "test"));
   await writeFile(path.join(workspace, "package.json"), JSON.stringify({
     type: "module",
-    scripts: { test: "tsx --test test/*.test.ts" },
-    devDependencies: { playwright: "^1.59.1", tsx: "^4.0.0" },
+    scripts: native ? {} : { test: "tsx --test test/*.test.ts" },
+    devDependencies: native ? { playwright: "^1.59.1" } : { playwright: "^1.59.1", tsx: "^4.0.0" },
   }));
   const env = { GHOST_TARGET_PROJECT_ROOT: workspace };
   if (process.env.PLAYWRIGHT_BROWSERS_PATH) env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH;
@@ -100,21 +101,24 @@ test("MCP freezes one browser test against three actual Playground variants", as
   const healthy = await start(false);
   const testFile = "test/client-persistence.ghostly.e2e.test.ts";
   const absolute = path.join(workspace, testFile);
-  const plan = await call("plan", healthy);
-  assert.equal(plan.status, "planned", JSON.stringify(plan));
-  assert.equal(plan.testFile, testFile);
-  assert.deepEqual(plan.changedFiles, []);
+  if (!native) {
+    const plan = await call("plan", healthy);
+    assert.equal(plan.status, "planned", JSON.stringify(plan));
+    assert.equal(plan.testFile, testFile);
+    assert.deepEqual(plan.changedFiles, []);
+    const unbound = await invoke("ghostly_test_e2e", {
+      mode: "plan", baseUrl: healthy, ...flow,
+      persistence: { ...flow.persistence, text: "Other fixture {{runId}}" },
+    });
+    assert.equal(unbound.status, "unsupported");
+  }
   await assert.rejects(readFile(absolute), { code: "ENOENT" });
-  const unbound = await invoke("ghostly_test_e2e", {
-    mode: "plan", baseUrl: healthy, ...flow,
-    persistence: { ...flow.persistence, text: "Other fixture {{runId}}" },
-  });
-  assert.equal(unbound.status, "unsupported");
 
   const request = { testType: "e2e", e2e: { baseUrl: healthy, ...flow } };
   const brief = await invoke("ghostly_init", { mode: "plan", ...request });
   assert.equal(brief.status, "ready", JSON.stringify(brief));
   assert.deepEqual(brief.options[0].plannedFiles, [testFile]);
+  assert.deepEqual(brief.options[0].configurationChanges, native ? ["package.json", "test/"] : []);
   const approval = { mode: "apply", selection: "A", planToken: brief.planToken };
   const changedRoute = await invoke("ghostly_init", {
     ...approval, ...request, e2e: { ...request.e2e, route: "/clientes" },
@@ -127,6 +131,7 @@ test("MCP freezes one browser test against three actual Playground variants", as
   assert.equal(passed.status, "passed", JSON.stringify(passed));
   assert.equal(passed.selection, "A");
   assert.deepEqual(passed.changedFiles, [testFile]);
+  assert.deepEqual(passed.configurationChanges, native ? ["package.json", "test/"] : []);
   const frozen = await readFile(absolute, "utf8");
   assert.ok(!frozen.includes(healthy));
   assert.match(frozen, /process\.env\.GHOSTLY_E2E_BASE_URL/);
@@ -164,7 +169,8 @@ test("MCP freezes one browser test against three actual Playground variants", as
   await reset(alternate);
   const replayEnv = { ...process.env, GHOSTLY_E2E_BASE_URL: alternate };
   delete replayEnv.NODE_TEST_CONTEXT;
-  const replay = await execFileAsync(process.execPath, ["--import", "tsx", "--test", testFile], {
+  const replayArgs = [...(native ? [] : ["--import", "tsx"]), "--test", testFile];
+  const replay = await execFileAsync(process.execPath, replayArgs, {
     cwd: workspace, env: replayEnv, encoding: "utf8", timeout: 30_000,
   }).catch((error) => {
     assert.fail([error.message, error.stdout, error.stderr].filter(Boolean).join("\n"));

@@ -12,6 +12,7 @@ import { candidatesFromSource, modulePattern, readSmallFile, type SupportedCase 
 
 const execFileAsync = promisify(execFile);
 const testScriptPattern = /^tsx --test ((?:[\w-]+\/)*[\w-]+)\/\*\.test\.ts$/;
+const nativeTestScript = "node --test test/*.test.ts";
 const testFilePattern = /^[\w.-]+\.test\.ts$/;
 
 type RunResult = {
@@ -49,10 +50,11 @@ export async function regularFile(root: string, file: string): Promise<boolean> 
 }
 
 export async function runTests(
-  root: string, files: string[], overrides: Record<string, string> = {},
+  root: string, files: string[], overrides: Record<string, string> = {}, runner: "tsx" | "native" = "tsx",
 ): Promise<RunResult> {
   const startedAt = Date.now();
-  const args = ["--import", "tsx", "--test", nodeTestReporter, ...files];
+  const loader = runner === "tsx" ? ["--import", "tsx"] : [];
+  const args = [...loader, "--test", nodeTestReporter, ...files];
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !/^ghost/i.test(key) && !["NODE_OPTIONS", "NODE_TEST_CONTEXT"].includes(key)),
   );
@@ -74,7 +76,7 @@ export async function runTests(
   }
 }
 
-export async function loadTestWorkspace() {
+export async function loadTestWorkspace(allowSetup = false) {
   const root = await realpath(process.env.GHOST_TARGET_PROJECT_ROOT ?? process.cwd());
   const manifestPath = path.join(root, "package.json");
   if (!await regularFile(root, manifestPath)) {
@@ -92,10 +94,19 @@ export async function loadTestWorkspace() {
   }
   const manifest = parsed as {
     scripts?: { test?: string };
+    engines?: { node?: string };
     devDependencies?: Record<string, string>;
     dependencies?: Record<string, string>;
   };
-  const testDirectory = testScriptPattern.exec(manifest.scripts?.test ?? "")?.[1];
+  const setup = allowSetup && manifest.scripts?.test === undefined &&
+    !["tsx", "vitest", "jest", "mocha", "ava", "tap", "@playwright/test"].some((name) =>
+      manifest.devDependencies?.[name] || manifest.dependencies?.[name]);
+  const native = manifest.scripts?.test === nativeTestScript || setup;
+  const runner = native ? "native" as const : "tsx" as const;
+  if (native && !allowSetup && Number(process.versions.node.split(".")[0]) < 24) {
+    return { ok: false, reason: "The built-in TypeScript test setup requires Node.js 24 or newer." } as const;
+  }
+  const testDirectory = native ? "test" : testScriptPattern.exec(manifest.scripts?.test ?? "")?.[1];
   const detected = {
     runtime: "Node.js",
     declaredRunners: ["tsx", "vitest", "jest", "playwright", "@playwright/test"]
@@ -103,7 +114,7 @@ export async function loadTestWorkspace() {
     testDirectory: testDirectory ?? null,
     hasTestScript: typeof manifest.scripts?.test === "string",
   };
-  if (!testDirectory || !(manifest.devDependencies?.tsx || manifest.dependencies?.tsx)) {
+  if (!testDirectory || (!native && !(manifest.devDependencies?.tsx || manifest.dependencies?.tsx))) {
     return { ok: false, detected, reason: "Expected a declared tsx dependency and a test script such as tsx --test test/*.test.ts." } as const;
   }
   const directory = path.join(root, testDirectory);
@@ -111,19 +122,24 @@ export async function loadTestWorkspace() {
     if (hasCode(error, "ENOENT")) return undefined;
     throw error;
   });
-  if (!directoryInfo?.isDirectory() || !inside(root, await realpath(directory))) {
+  if ((!setup || directoryInfo) &&
+    (!directoryInfo?.isDirectory() || path.relative(directory, await realpath(directory)) !== "")) {
     return { ok: false, detected, reason: "The configured test directory must already exist inside the workspace." } as const;
   }
-  return { ok: true, root, manifestPath, manifestText, manifest, testDirectory, directory } as const;
+  return { ok: true, root, manifestPath, manifestText, manifest, testDirectory, directory, runner, setup,
+    directoryExists: Boolean(directoryInfo) } as const;
 }
 
 export type TestWorkspace = Extract<Awaited<ReturnType<typeof loadTestWorkspace>>, { ok: true }>;
 type CodeTestType = "unit" | "integration";
-export type CodeCase = SupportedCase & { dependency?: { file: string; exportedName: string } };
+export type CodeCase = SupportedCase & {
+  dependency?: { file: string; exportedName: string };
+  documentation?: { file: string; line: number };
+};
 export type VerifyPlan = () => Promise<Array<{ kind: string; files: string[] }> | undefined>;
 
 export async function inspectTestSuite(workspace: TestWorkspace) {
-  const entries = await readdir(workspace.directory, { withFileTypes: true });
+  const entries = workspace.directoryExists ? await readdir(workspace.directory, { withFileTypes: true }) : [];
   const suiteEntries = entries.filter((entry) => entry.name.endsWith(".test.ts"));
   const files = suiteEntries.filter((entry) => entry.isFile() && testFilePattern.test(entry.name))
     .map((entry) => `${workspace.testDirectory}/${entry.name}`).sort();
@@ -148,7 +164,17 @@ export function prepareCodeTest(workspace: TestWorkspace, candidate: CodeCase, t
     "});",
     "",
   ].join("\n");
-  return { fileName, generated, testFile, command: `node --import tsx --test ${testFile}` };
+  return { fileName, generated, testFile, command: replayCommand(workspace, testFile) };
+}
+
+export function replayCommand(workspace: TestWorkspace, file: string): string {
+  return workspace.runner === "native" ? `node --test ${file}` : `node --import tsx --test ${file}`;
+}
+
+export function runnerReady(workspace: TestWorkspace): boolean {
+  return workspace.runner === "native"
+    ? Number(process.versions.node.split(".")[0]) >= 24
+    : dependencyInstalled(workspace, "tsx");
 }
 
 export function dependencyInstalled(workspace: TestWorkspace, dependency: string): boolean {
@@ -163,7 +189,8 @@ export function dependencyInstalled(workspace: TestWorkspace, dependency: string
 export async function runCodeTest(
   tool: string, mode: TestInput["mode"], workspace: TestWorkspace,
   suite: Awaited<ReturnType<typeof inspectTestSuite>>, candidate: CodeCase, testType: CodeTestType,
-  startedAt = Date.now(), verifyPlan?: VerifyPlan,
+  startedAt = Date.now(), verifyPlan?: VerifyPlan, priorBaseline?: Awaited<ReturnType<typeof runBaseline>>,
+  deferExecution = false,
 ) {
   const unsupported = (reason: string) => ({ tool, status: "unsupported", reason });
   const { root, directory } = workspace;
@@ -171,7 +198,7 @@ export async function runCodeTest(
   const outputFile = path.join(directory, fileName);
   const proposal = {
     tool,
-    roles: { analysis: "tsx + node:test", planning: "Independent expectation documented in source" },
+    roles: { analysis: workspace.runner === "native" ? "Node.js native TypeScript + node:test" : "tsx + node:test", planning: "Independent expectation documented in source" },
     case: candidate,
     testFile,
     command,
@@ -180,7 +207,7 @@ export async function runCodeTest(
     return { ...proposal, status: "planned", changedFiles: [], durationMs: Date.now() - startedAt };
   }
 
-  if (!dependencyInstalled(workspace, "tsx")) {
+  if (!runnerReady(workspace)) {
     return unsupported("Install the project's declared tsx dependency before applying the plan.");
   }
   const priorFile = suite.entries.find((entry) => entry.name.toLowerCase() === fileName.toLowerCase());
@@ -188,12 +215,7 @@ export async function runCodeTest(
     await readFile(outputFile, "utf8") !== generated)) {
     return unsupported(`The target ${testFile} already exists with different content. It was preserved.`);
   }
-  const suiteFiles = suite.files.filter((file) => file !== testFile);
-  const baseline = !suite.complete
-    ? { status: "unavailable", reason: "The suite contains test entries outside the supported file convention." }
-    : suiteFiles.length
-      ? await runTests(root, suiteFiles)
-      : { status: "empty" };
+  const baseline = priorBaseline ?? await runBaseline(workspace, suite, testFile);
 
   if (!verifyPlan && !inside(root, await realpath(directory))) {
     return unsupported("The test directory moved outside the workspace during the baseline.");
@@ -211,10 +233,10 @@ export async function runCodeTest(
       throw error;
     }
   }
-  const verification = await runTests(root, [testFile]);
+  const verification = deferExecution ? undefined : await runTests(root, [testFile], {}, workspace.runner);
   return {
     ...proposal,
-    status: verification.status,
+    status: verification?.status ?? "generated",
     durationMs: Date.now() - startedAt,
     changedFiles: priorFile ? [] : [testFile],
     roles: {
@@ -225,6 +247,14 @@ export async function runCodeTest(
     baseline,
     verification,
   };
+}
+
+export async function runBaseline(
+  workspace: TestWorkspace, suite: Awaited<ReturnType<typeof inspectTestSuite>>, exclude?: string,
+) {
+  const files = suite.files.filter((file) => file !== exclude);
+  if (!suite.complete) return { status: "unavailable", reason: "The suite contains test entries outside the supported file convention." } as const;
+  return files.length ? runTests(workspace.root, files, {}, workspace.runner) : { status: "empty" } as const;
 }
 
 export async function testWorkflow(tool: string, args: TestInput) {

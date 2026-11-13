@@ -335,3 +335,74 @@ ${body}
     item.evidence.file === "src/otherInput.ts" && item.files.includes("test/otherInput.test.ts")));
   assert.equal(plan.status, "needs_input");
 });
+
+test("MCP plans and applies first-suite setup only for the approved selection", async (t) => {
+  const { repo, call, manifestPath } = await fixture(t);
+  await writeFile(manifestPath, JSON.stringify({ type: "module", engines: { node: ">=24" }, scripts: { start: "node src/value.ts" } }));
+  await writeFile(path.join(repo, "src/value.ts"), `/** @example value(2) => 4 */
+export function value(input: number): number { return input * 3; }
+`);
+  const plan = await call("ghostly_init", { mode: "plan" });
+  assert.equal(plan.status, Number(process.versions.node.split(".")[0]) < 24 ? "unsupported" : "ready");
+  if (plan.status !== "ready") return;
+  assert.ok(plan.options[0].configurationChanges.includes("package.json"));
+  assert.equal(plan.configuration.initialSetup, true);
+  assert.deepEqual(plan.configuration.dependencies, []);
+  assert.ok(plan.options.find(({ testType }) => testType === "e2e")?.prerequisites.some((item) => item.includes("Chromium")));
+  assert.equal(JSON.parse(await readFile(manifestPath, "utf8")).scripts.test, undefined);
+  const unapproved = await call("ghostly_init", { mode: "apply", selections: ["A"] });
+  assert.equal(unapproved.status, "needs_input");
+  assert.equal(JSON.parse(await readFile(manifestPath, "utf8")).scripts.test, undefined);
+  const applied = await call("ghostly_init", { mode: "apply", selections: ["A"], planToken: plan.planToken });
+  assert.equal(applied.status, "failed", JSON.stringify(applied));
+  assert.ok(applied.changedFiles.includes("test/value.ghostly.test.ts"));
+  assert.match(applied.results[0].verification.output, /ERR_ASSERTION/);
+  assert.equal(JSON.parse(await readFile(manifestPath, "utf8")).scripts.test, "node --test test/*.test.ts");
+  const repeat = await call("ghostly_init", { mode: "plan" });
+  assert.equal(repeat.status, "needs_input");
+});
+
+test("MCP bootstraps a native suite once for several explicitly selected cases", async (t) => {
+  if (Number(process.versions.node.split(".")[0]) < 24) return t.skip("Native TypeScript setup requires Node 24");
+  const { repo, call, manifestPath } = await fixture(t);
+  const packageSource = JSON.stringify({ type: "module", engines: { node: ">=24" }, scripts: { start: "node src/value.ts" } });
+  await writeFile(manifestPath, packageSource);
+  await rm(path.join(repo, "test"), { recursive: true });
+  const readme = path.join(repo, "README.md");
+  await writeFile(readme, "# Behavior\n\n- `quote(4) => 12`\n");
+  await writeFile(path.join(repo, "src/value.ts"),
+    "export function quote(input: number): number { return input * 3; }\n");
+  await writeFile(path.join(repo, "src/report.ts"), `import { quote } from "./value.ts";
+/** @integrationExample report(4) => 12 */
+export function report(input: number): number { return quote(input); }
+`);
+  const plan = await call("ghostly_init", { mode: "plan" });
+  assert.equal(plan.status, "ready", JSON.stringify(plan));
+  assert.deepEqual(plan.options[0].documentation, { file: "README.md", line: 3 });
+  assert.deepEqual(plan.options[0].configurationChanges, ["package.json", "test/"]);
+  assert.equal(plan.options[1].testType, "integration");
+  const blocked = await call("ghostly_init", {
+    mode: "apply", selections: ["A", "B", "C"], planToken: plan.planToken,
+  });
+  assert.equal(blocked.status, "needs_input");
+  assert.equal(await readFile(manifestPath, "utf8"), packageSource);
+  await writeFile(readme, "# Behavior\n\n- `quote(4) => 13`\n");
+  const stale = await call("ghostly_init", { mode: "apply", selections: ["A", "B"], planToken: plan.planToken });
+  assert.equal(stale.status, "plan_changed");
+  assert.equal(await readFile(manifestPath, "utf8"), packageSource);
+  await writeFile(readme, "# Behavior\n\n- `quote(4) => 12`\n");
+  const applied = await call("ghostly_init", { mode: "apply", selections: ["A", "B"], planToken: plan.planToken });
+  assert.equal(applied.status, "passed", JSON.stringify(applied));
+  assert.deepEqual(applied.configurationChanges, ["package.json", "test/"]);
+  assert.deepEqual(applied.changedFiles, ["test/value.ghostly.test.ts", "test/report.ghostly.integration.test.ts"]);
+  assert.equal(applied.results[0].command, "node --test test/value.ghostly.test.ts");
+  const configured = JSON.parse(await readFile(manifestPath, "utf8"));
+  assert.deepEqual(configured.scripts, { start: "node src/value.ts", test: "node --test test/*.test.ts" });
+  assert.equal(configured.devDependencies, undefined);
+  const replayEnv = { ...process.env };
+  delete replayEnv.NODE_TEST_CONTEXT;
+  const replay = execFileSync(process.execPath, ["--test", "test/value.ghostly.test.ts"], {
+    cwd: repo, env: replayEnv, encoding: "utf8", timeout: 10_000,
+  });
+  assert.match(replay, /quote\(4\) returns 12/);
+});

@@ -1,10 +1,9 @@
 import { lstat, readFile, realpath, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { hasCode, inside, loadTestWorkspace, runTests, type TestWorkspace, type VerifyPlan } from "./test-unit.js";
+import { dependencyInstalled, hasCode, inside, loadTestWorkspace, replayCommand, runnerReady, runTests, type TestWorkspace, type VerifyPlan } from "./test-unit.js";
 
 const tool = "ghostly_test_e2e";
 const runIdPlaceholder = "{{runId}}";
@@ -110,17 +109,19 @@ export function prepareE2ETest(workspace: TestWorkspace, args: z.infer<typeof e2
   const testFile = `${workspace.testDirectory}/${fileName}`;
   return {
     fileName, testFile, generated: renderTest(args),
-    command: `node --import tsx --test ${testFile}`,
+    command: replayCommand(workspace, testFile),
   };
 }
 
-export async function runE2ETest(args: E2EInput, confirmedWorkspace?: TestWorkspace, verifyPlan?: VerifyPlan) {
+export async function runE2ETest(
+  args: E2EInput, confirmedWorkspace?: TestWorkspace, verifyPlan?: VerifyPlan, deferExecution = false,
+) {
   const unsupported = (reason: string) => ({ tool, status: "unsupported", reason });
   const preparedFlow = prepareRunId(args);
   if (!preparedFlow.ok) return unsupported(preparedFlow.reason);
   const workspace = confirmedWorkspace ?? await loadTestWorkspace();
   if (!workspace.ok) return unsupported(workspace.reason);
-  const { root, directory, manifest, manifestPath } = workspace;
+  const { root, directory, manifest } = workspace;
   if (!(manifest.dependencies?.playwright || manifest.devDependencies?.playwright)) {
     return unsupported("Declare Playwright in the target workspace before generating an E2E test.");
   }
@@ -139,12 +140,8 @@ export async function runE2ETest(args: E2EInput, confirmedWorkspace?: TestWorksp
   };
   if (args.mode === "plan") return { ...proposal, status: "planned", changedFiles: [] };
 
-  try {
-    const require = createRequire(manifestPath);
-    require.resolve("tsx");
-    require.resolve("playwright");
-  } catch {
-    return unsupported("Install the workspace's declared tsx and Playwright dependencies before applying the plan.");
+  if (!runnerReady(workspace) || !dependencyInstalled(workspace, "playwright")) {
+    return unsupported("Install the workspace's required runner and Playwright dependencies before applying the plan.");
   }
   if (!inside(root, await realpath(directory))) {
     return unsupported("The configured test directory moved outside the workspace.");
@@ -169,8 +166,8 @@ export async function runE2ETest(args: E2EInput, confirmedWorkspace?: TestWorksp
       throw error;
     }
   }
-  const verification = await runTests(root, [testFile], proposal.environment);
-  return { ...proposal, status: verification.status, verification, changedFiles: existing ? [] : [testFile] };
+  const verification = deferExecution ? undefined : await runTests(root, [testFile], proposal.environment, workspace.runner);
+  return { ...proposal, status: verification?.status ?? "generated", verification, changedFiles: existing ? [] : [testFile] };
 }
 
 export function registerE2ETestTool(server: McpServer): void {

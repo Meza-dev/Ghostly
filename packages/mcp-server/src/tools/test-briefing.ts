@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -8,7 +8,7 @@ import { integrationCaseFromSource } from "./integration-discovery.js";
 import { e2eFlow, prepareE2ETest, prepareRunId, runE2ETest } from "./test-e2e.js";
 import {
   dependencyInstalled, hasCode, inspectTestSuite, loadTestWorkspace, prepareCodeTest,
-  regularFile, runCodeTest, testWorkflow, type CodeCase, type TestWorkspace, type VerifyPlan,
+  regularFile, runBaseline, runCodeTest, runnerReady, runTests, testWorkflow, type CodeCase, type TestWorkspace, type VerifyPlan,
 } from "./test-unit.js";
 import { candidatesFromSource, coverageOf, discoverCodeEvidence, readSmallFile } from "./unit-discovery.js";
 
@@ -22,6 +22,8 @@ const input = {
   layout: z.enum(["configured", "colocated"]).optional().describe("Requested layout. Only the existing configured test directory is supported."),
   e2e: e2eFlow.partial().optional().describe("Browser test inputs. Plan reports any missing fields."),
   selection: z.enum(choices).optional().describe("Explicitly approved option from a previous briefing."),
+  selections: z.array(z.enum(choices)).min(1).max(3).refine((ids) => new Set(ids).size === ids.length)
+    .optional().describe("Explicitly approved options from a previous briefing."),
   planToken: z.string().regex(/^[a-f0-9]{64}$/).optional().describe("Fingerprint returned by the briefing."),
 };
 const inputSchema = z.object(input).strict();
@@ -30,6 +32,7 @@ type TestType = NonNullable<BriefingInput["testType"]>;
 type BrowserFlow = z.infer<typeof e2eFlow>;
 type Suite = Awaited<ReturnType<typeof inspectTestSuite>>;
 type Evidence = Awaited<ReturnType<typeof discoverCodeEvidence>>;
+type Document = { file: "README.md"; text: string };
 type Option = {
   testType: TestType;
   status: "ready" | "needs_input" | "unsupported";
@@ -41,6 +44,8 @@ type Option = {
   command?: string;
   missingInputs?: string[];
   assertion?: string;
+  prerequisites?: string[];
+  documentation?: CodeCase["documentation"];
 };
 type Prepared = { option: Option } & (
   { kind: "code"; testType: "unit" | "integration"; candidate: CodeCase } |
@@ -65,7 +70,7 @@ async function validScope(workspace: TestWorkspace, scope: string): Promise<bool
 }
 
 async function prepareCodeOptions(
-  args: BriefingInput, workspace: TestWorkspace, suite: Suite, evidence: Evidence,
+  args: BriefingInput, workspace: TestWorkspace, suite: Suite, evidence: Evidence, document?: Document,
 ) {
   const units: Prepared[] = [];
   const integrations: Prepared[] = [];
@@ -74,6 +79,16 @@ async function prepareCodeOptions(
   const coverageUncertain: Array<{
     testType: "unit" | "integration"; case: string; evidence: CodeCase["evidence"]; files: string[]; reason: string;
   }> = [];
+  const documentedCases = new Map<string, { argument: number; expected: number | boolean; line: number } | null>();
+  for (const [index, line] of document?.text.split(/\r?\n/).entries() ?? []) {
+    const example = /^\s*-?\s*`([\w$]+)\((-?\d+(?:\.\d+)?)\) => (-?\d+(?:\.\d+)?|true|false)`\s*$/.exec(line);
+    const name = example?.[1];
+    if (!name) continue;
+    const argument = Number(example[2]);
+    const expected = example[3] === "true" ? true : example[3] === "false" ? false : Number(example[3]);
+    if (!Number.isFinite(argument) || typeof expected === "number" && !Number.isFinite(expected)) continue;
+    documentedCases.set(name, documentedCases.has(name) ? null : { argument, expected, line: index + 1 });
+  }
   function offer(candidate: CodeCase, testType: "unit" | "integration", options: Prepared[]) {
     const coverage = coverageOf(candidate, evidence.suite, evidence.completeCoverage);
     if (coverage.status === "covered") {
@@ -92,14 +107,33 @@ async function prepareCodeOptions(
       option: {
         testType, status: "ready", case: candidate.behavior, evidence: candidate.evidence,
         assertion: candidate.assertion, plannedFiles: [prepared.testFile], configurationChanges: [],
-        command: prepared.command, reason: candidate.reason,
+        command: prepared.command, reason: candidate.reason, documentation: candidate.documentation,
       },
     });
   }
   for (const { file, source } of evidence.sources) {
     if (!args.testType || args.testType === "unit") {
       for (const candidate of candidatesFromSource(file, source)) {
-        if (candidate.assertion !== null) offer(candidate, "unit", units);
+        if (candidate.assertion !== null) {
+          offer(candidate, "unit", units);
+          continue;
+        }
+        // A README can document a numeric input/result independently of source.
+        const documented = documentedCases.get(candidate.functionName);
+        if (document && documented) {
+          const { argument, expected, line } = documented;
+          const declaration = source.split(/\r?\n/)[candidate.evidence.line - 1];
+          const returnType = typeof expected === "boolean" ? "boolean" : "number";
+          if (!declaration || !/^\s*export\s+function\s+/.test(declaration) ||
+            !declaration.split("{")[0]?.trimEnd().endsWith(returnType)) continue;
+          offer({
+            ...candidate, argument, expected,
+            behavior: `${candidate.functionName}(${argument}) returns ${expected}`,
+            reason: "The README records the expected behavior independently of the implementation.",
+            assertion: `assert.strictEqual(${candidate.functionName}(${argument}), ${expected})`,
+            documentation: { file: document.file, line },
+          }, "unit", units);
+        }
       }
     }
     if (args.testType && args.testType !== "integration") continue;
@@ -120,7 +154,7 @@ async function prepareCodeOptions(
 async function prepareBrowserOption(args: BriefingInput, workspace: TestWorkspace, suite: Suite): Promise<Prepared | undefined> {
   if (args.testType && args.testType !== "e2e") return;
   const declared = workspace.manifest.devDependencies?.playwright || workspace.manifest.dependencies?.playwright;
-  if (!declared && !args.e2e && args.testType !== "e2e") return;
+  if (!declared && !args.e2e && args.testType !== "e2e" && !workspace.setup) return;
   const missingInputs = Object.keys(e2eFlow.shape).filter((key) => args.e2e?.[key as keyof BrowserFlow] === undefined);
   const declarationLine = workspace.manifestText.split("\n").findIndex((line) => /"playwright"\s*:/.test(line)) + 1;
   const option: Option = {
@@ -129,10 +163,14 @@ async function prepareBrowserOption(args: BriefingInput, workspace: TestWorkspac
       : declared ? { file: "package.json", line: declarationLine || 1 } : null,
     plannedFiles: args.e2e?.name ? [`${workspace.testDirectory}/${args.e2e.name}.ghostly.e2e.test.ts`] : [],
     configurationChanges: [], missingInputs,
+    prerequisites: ["Playwright declared and installed in the target package.", "Chromium installed for Playwright."],
     reason: "Supply the missing browser flow inputs using stable test IDs and synthetic data.",
   };
   if (!declared) return {
-    kind: "unavailable", option: { ...option, status: "unsupported", reason: "The target package does not declare Playwright." },
+    kind: "unavailable", option: {
+      ...option, status: missingInputs.length ? "needs_input" : "unsupported",
+      reason: "The target package needs Playwright and its Chromium runtime. This briefing does not install browser dependencies.",
+    },
   };
   const parsed = e2eFlow.safeParse(args.e2e);
   if (!parsed.success) return { kind: "unavailable", option };
@@ -165,23 +203,43 @@ function selectOptions(code: Awaited<ReturnType<typeof prepareCodeOptions>>, bro
     .filter((option): option is Prepared => option !== undefined).slice(0, choices.length);
 }
 
+function setupFiles(workspace: TestWorkspace): string[] {
+  return workspace.setup ? ["package.json", ...(workspace.directoryExists ? [] : ["test/"])] : [];
+}
+
 async function prepareBriefing(args: BriefingInput, workspace: TestWorkspace, suite: Suite, evidence: Evidence) {
   const scope = args.scope ?? ".";
-  const code = await prepareCodeOptions(args, workspace, suite, evidence);
+  const readme = await regularFile(workspace.root, path.join(workspace.root, "README.md"))
+    ? await readSmallFile(workspace.root, "README.md") : undefined;
+  const documentation = readme === undefined ? [] : [{ file: "README.md", lines: readme.split(/\r?\n/).length }];
+  const code = await prepareCodeOptions(args, workspace, suite, evidence,
+    readme === undefined ? undefined : { file: "README.md", text: readme });
   const browser = await prepareBrowserOption(args, workspace, suite);
   const prepared = selectOptions(code, browser);
-  const options = prepared.map(({ option }, index) => ({ id: choices[index], ...option }));
+  const options = prepared.map(({ option }, index) => ({
+    id: choices[index], ...option,
+    configurationChanges: option.status === "ready" ? setupFiles(workspace) : option.configurationChanges,
+  }));
   const recommendation = options.find((option) => option.status === "ready");
-  const runtimeReady = dependencyInstalled(workspace, "tsx");
-  const reason = !runtimeReady ? "Install the declared tsx dependency before applying."
+  const runtimeReady = runnerReady(workspace);
+  const reason = !runtimeReady
+    ? workspace.runner === "native"
+      ? "The built-in TypeScript test setup requires Node.js 24 or newer."
+      : "Install the declared tsx dependency before applying."
     : !evidence.complete ? "The source scan is incomplete. Narrow the briefing scope."
       : !evidence.completeCoverage ? "The existing test suite could not be fully inspected."
         : !recommendation ? options[0]?.reason ?? "No supported uncovered case has an independent expectation." : undefined;
   const report = {
     tool, scope, options,
-    stack: { language: "TypeScript", runtime: "Node.js", runner: "tsx + node:test" },
-    configuration: { layout: "configured", testDirectory: workspace.testDirectory, testScript: workspace.manifest.scripts?.test },
+    stack: { language: "TypeScript", runtime: "Node.js", runner: workspace.runner === "native" ? "Node.js native TypeScript + node:test" : "tsx + node:test" },
+    configuration: {
+      layout: "configured", testDirectory: workspace.testDirectory,
+      testScript: workspace.setup ? "node --test test/*.test.ts" : workspace.manifest.scripts?.test,
+      initialSetup: workspace.setup,
+      dependencies: [],
+    },
     existingTests: suite.files.slice(0, 100),
+    documentation,
     coveredBy: code.alreadyCovered,
     coverageUncertain: code.coverageUncertain,
     recommendedOption: reason ? undefined : recommendation?.id,
@@ -192,14 +250,15 @@ async function prepareBriefing(args: BriefingInput, workspace: TestWorkspace, su
   };
   const snapshot = {
     root: workspace.root, scope, testType: args.testType, layout: args.layout, e2e: args.e2e,
-    manifest: hash(workspace.manifestText),
+    manifest: hash(workspace.manifestText), directoryExists: workspace.directoryExists,
     sources: evidence.sources.map(({ file, source }) => [file, hash(source)] as const),
     suite: evidence.suite.map(({ file, source }) => [file, hash(source)] as const),
     dependencies: code.dependencies,
+    documentation: readme === undefined ? [] : [["README.md", hash(readme)] as const],
     options,
   };
   const token = reason ? undefined : hash(JSON.stringify(snapshot));
-  return { prepared, report, reason, token, snapshot };
+  return { prepared, report, reason, token, snapshot, runtimeReady };
 }
 
 type Snapshot = Awaited<ReturnType<typeof prepareBriefing>>["snapshot"];
@@ -214,7 +273,7 @@ function changedFiles(before: ReadonlyArray<readonly [string, string]>, after: R
 function revalidate(args: BriefingInput, original: Snapshot): VerifyPlan {
   return async () => {
     try {
-      const workspace = await loadTestWorkspace();
+      const workspace = await loadTestWorkspace(true);
       if (!workspace.ok) return [{ kind: "configuration", files: ["package.json"] }];
       if (workspace.root !== original.root || !await validScope(workspace, original.scope)) {
         return [{ kind: "scope", files: [] }];
@@ -227,10 +286,12 @@ function revalidate(args: BriefingInput, original: Snapshot): VerifyPlan {
       if (token === args.planToken) return;
 
       const drift = original.manifest === snapshot.manifest ? [] : [{ kind: "configuration", files: ["package.json"] }];
+      if (original.directoryExists !== snapshot.directoryExists) drift.push({ kind: "configuration", files: ["test/"] });
       for (const [kind, before, after] of [
         ["source", original.sources, snapshot.sources],
         ["suite", original.suite, snapshot.suite],
         ["dependency", original.dependencies, snapshot.dependencies],
+        ["documentation", original.documentation, snapshot.documentation],
       ] as const) {
         const files = changedFiles(before, after);
         if (files.length) drift.push({ kind, files });
@@ -245,17 +306,27 @@ function revalidate(args: BriefingInput, original: Snapshot): VerifyPlan {
   };
 }
 
+async function writeSetup(workspace: TestWorkspace) {
+  if (await readFile(workspace.manifestPath, "utf8") !== workspace.manifestText) return false;
+  if (!workspace.directoryExists) await mkdir(workspace.directory);
+  const manifest = { ...workspace.manifest, scripts: { ...workspace.manifest.scripts, test: "node --test test/*.test.ts" } };
+  const indent = /\n([ \t]+)"/.exec(workspace.manifestText)?.[1] ?? 2;
+  await writeFile(workspace.manifestPath, JSON.stringify(manifest, null, indent) + "\n", "utf8");
+  return true;
+}
+
 async function briefing(args: BriefingInput) {
   if (args.module !== undefined) {
-    if (args.scope !== undefined || args.testType || args.layout || args.e2e || args.selection || args.planToken) {
+    if (args.scope !== undefined || args.testType || args.layout || args.e2e || args.selection || args.selections || args.planToken) {
       return unsupported("Use either a direct module request or a briefing selection. Do not combine their inputs.");
     }
     return testWorkflow(tool, args);
   }
+  if (args.selection && args.selections) return unsupported("Use selection or selections, not both.");
   if (args.layout === "colocated") {
     return unsupported("Tests next to source are unsupported. This workflow writes to the existing configured test directory.");
   }
-  const workspace = await loadTestWorkspace();
+  const workspace = await loadTestWorkspace(true);
   if (!workspace.ok) {
     return {
       ...unsupported(workspace.reason),
@@ -268,19 +339,22 @@ async function briefing(args: BriefingInput) {
   if (!await validScope(workspace, scope)) return unsupported("Scope must be an existing relative source directory inside the workspace.");
   const suite = await inspectTestSuite(workspace);
   const evidence = await discoverCodeEvidence(workspace.root, workspace.testDirectory, suite.files, suite.complete, scope);
-  const { prepared, report, reason, token, snapshot } = await prepareBriefing(args, workspace, suite, evidence);
+  const { prepared, report, reason, token, snapshot, runtimeReady } = await prepareBriefing(args, workspace, suite, evidence);
   if (args.mode === "plan") {
-    const status = token ? "ready" : report.options[0]?.status === "unsupported" ? "unsupported" : "needs_input";
+    const status = token ? "ready"
+      : !runtimeReady && workspace.runner === "native" || report.options[0]?.status === "unsupported" ? "unsupported" : "needs_input";
     return { ...report, status, reason, planToken: token };
   }
-  let selected = args.selection ? prepared[choices.indexOf(args.selection)] : undefined;
+  const selectedIds = args.selections ?? (args.selection ? [args.selection] : []);
+  let selected = selectedIds.map((id) => prepared[choices.indexOf(id)]);
   let approvedInputs = args;
   let approvedSnapshot = snapshot;
-  if (!args.selection || !args.planToken) {
-    if (selected?.kind === "unavailable") {
+  if (!selectedIds.length || !args.planToken) {
+    const unavailable = selected.find((choice) => choice?.kind === "unavailable");
+    if (unavailable) {
       return {
-        ...report, status: selected.option.status, reason: selected.option.reason,
-        missingInputs: selected.option.missingInputs,
+        ...report, status: unavailable.option.status, reason: unavailable.option.reason,
+        missingInputs: unavailable.option.missingInputs,
       };
     }
     return { ...report, status: "needs_input", reason: "Confirm a briefing option and supply its plan token before applying." };
@@ -290,28 +364,73 @@ async function briefing(args: BriefingInput) {
     const original = args.testType
       ? await prepareBriefing({ ...args, testType: undefined }, workspace, suite, evidence)
       : undefined;
-    const approved = original?.prepared[choices.indexOf(args.selection)];
-    if (original?.token !== args.planToken || approved?.option.testType !== args.testType) {
+    const approved = selectedIds.map((id) => original?.prepared[choices.indexOf(id)]);
+    if (original?.token !== args.planToken || approved.some((choice) => choice?.option.testType !== args.testType)) {
       return { ...report, status: "plan_changed", reason: "Create a fresh briefing and confirm its option." };
     }
     selected = approved;
     approvedInputs = { ...args, testType: undefined };
     approvedSnapshot = original.snapshot;
   }
-  if (!selected || selected.kind === "unavailable") {
+  const ready = selected.filter((choice): choice is Exclude<Prepared, { kind: "unavailable" }> =>
+    choice !== undefined && choice.kind !== "unavailable");
+  if (ready.length !== selectedIds.length) {
+    const unavailable = selected.find((choice) => choice?.kind === "unavailable");
     return {
-      ...report, status: "needs_input", reason: selected?.option.reason ?? "Select an option from the briefing.",
-      missingInputs: selected?.option.missingInputs,
+      ...report, status: "needs_input", reason: unavailable?.option.reason ?? "Select an option from the briefing.",
+      missingInputs: unavailable?.option.missingInputs,
     };
   }
+  const outputPaths = ready.flatMap(({ option }) => option.plannedFiles.map((file) => file.toLowerCase()));
+  if (new Set(outputPaths).size !== outputPaths.length) return unsupported("The selected cases share a destination. Select one case per test file.");
   const verifyPlan = revalidate(approvedInputs, approvedSnapshot);
-  const result = selected.kind === "code"
-    ? await runCodeTest(tool, "apply", workspace, suite, selected.candidate, selected.testType, Date.now(), verifyPlan)
-    : {
-      ...await runE2ETest({ mode: "apply", ...selected.flow }, workspace, verifyPlan),
-      baseline: { status: "unavailable", reason: "The browser option runs only the selected browser test." },
-    };
-  return { ...unchanged, ...result, tool, selection: args.selection, testType: selected.option.testType };
+  const execute = async (
+    choice: typeof ready[number], beforeWrite?: VerifyPlan, baseline?: Awaited<ReturnType<typeof runBaseline>>,
+    deferExecution = false,
+  ) =>
+    choice.kind === "code"
+      ? runCodeTest(tool, "apply", workspace, suite, choice.candidate, choice.testType, Date.now(), beforeWrite, baseline, deferExecution)
+      : {
+        ...await runE2ETest({ mode: "apply", ...choice.flow }, workspace, beforeWrite, deferExecution),
+        baseline: baseline ?? { status: "unavailable", reason: "The browser option runs only the selected browser test." },
+      };
+  const single = ready[0];
+  if (single && ready.length === 1 && !workspace.setup && !args.selections) {
+    const result = await execute(single, verifyPlan);
+    return { ...unchanged, ...result, tool, selection: args.selection, testType: single.option.testType };
+  }
+  const baseline = await runBaseline(workspace, suite);
+  const drift = await verifyPlan();
+  if (drift) return { ...report, status: "plan_changed", reason: "The workspace changed before generation.", drift, baseline };
+  const configurationChanges = setupFiles(workspace);
+  if (workspace.setup && !await writeSetup(workspace)) {
+    return { ...report, status: "plan_changed", reason: "The package manifest changed before setup.", baseline };
+  }
+  const generated = [];
+  for (const [index, choice] of ready.entries()) {
+    const result = await execute(choice, undefined, baseline, true);
+    generated.push({ ...result, selection: selectedIds[index], testType: choice.option.testType });
+  }
+  const results = [];
+  for (const result of generated) {
+    if (result.status !== "generated" || !("testFile" in result) || !result.testFile) {
+      results.push(result);
+      continue;
+    }
+    const verification = await runTests(
+      workspace.root, [result.testFile], "environment" in result ? result.environment : {}, workspace.runner,
+    );
+    results.push({ ...result, status: verification.status, verification });
+  }
+  const status = results.find((result) => result.status !== "passed" && result.status !== "failed")?.status ??
+    (results.some((result) => result.status === "failed") ? "failed" : "passed");
+  if (results.length === 1 && !args.selections) {
+    return { ...unchanged, ...results[0], tool, configurationChanges };
+  }
+  return {
+    tool, status, baseline, selections: selectedIds, results, configurationChanges,
+    changedFiles: results.flatMap((result) => "changedFiles" in result ? result.changedFiles ?? [] : []),
+  };
 }
 
 export function registerTestBriefingTool(server: McpServer): void {
