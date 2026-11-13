@@ -125,7 +125,7 @@ Artifacts persist in Engram by default (topic keys `sdd/<change>/<phase>`). `/sd
 
 | User intent | Tool and action |
 | --- | --- |
-| Find useful repository tests | `ghostly_init` without `module` discovers up to three ranked unit cases in `mode: "plan"`. Use `mode: "apply"` to generate and run one supported unit case with no apparent coverage. Report `needs_input` when no case qualifies. |
+| Find useful repository tests | `ghostly_init` without `module` returns a read-only briefing with up to three options. Apply only the user's selected option with its current `planToken` and the same plan inputs. Report missing inputs or unsupported setup. Replan when the request or proposal changes. |
 | Test a unit or integration in a module | `ghostly_test_unit` or `ghostly_test_integration` with the relative module path. Follow the repository's test conventions and use an independently documented expectation. Report baseline and generated test results separately. |
 | Generate a versionable browser persistence test | `ghostly_test_e2e` with a loopback origin, synthetic data and stable test IDs. Check the visible save confirmation and the saved record after reload. |
 | Run or save a browser flow | Validate with `ghostly_run_flow`. Use `submit_plan` only when the user asks to save it. Get the project ID with `list_ghostly_projects` and check the saved run with `get_run`. |

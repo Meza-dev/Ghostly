@@ -1,5 +1,6 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import { inspectTestReference } from "./coverage-evidence.js";
 
 export const modulePattern = /^(?:[\w-]+\/)*[\w-]+\.ts$/;
 const declaration = /(?:^|\n)[ \t]*(?:\/\*\*([\s\S]*?)\*\/[ \t\r\n]*)?export[ \t]+function[ \t]+([a-zA-Z_$][\w$]*)[ \t]*\([ \t]*([a-zA-Z_$][\w$]*)[ \t]*:[ \t]*number[ \t]*\)[ \t]*:[ \t]*(number|boolean)[ \t]*\{/g;
@@ -28,7 +29,6 @@ export type UnitCandidate = SupportedCase | {
   assertion: null;
 };
 
-type RankedCandidate = UnitCandidate & { coverage: Coverage };
 type SuiteTest = { file: string; source: string };
 
 function escapeRegex(value: string): string {
@@ -81,13 +81,15 @@ export function candidatesFromSource(file: string, source: string): UnitCandidat
   });
 }
 
-async function discoverSources(root: string, testDirectory: string) {
-  const folders = [""];
+async function discoverSources(root: string, testDirectory: string, scope: string) {
+  const folders = [scope === "." ? "" : scope];
   const modules: string[] = [];
+  let inspected = 0;
   while (folders.length) {
     const folder = folders.pop() ?? "";
     const entries = await readdir(path.join(root, folder), { withFileTypes: true });
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name, "en"))) {
+      if (++inspected > 2_000) return { modules: [], complete: false };
       const relative = path.posix.join(folder, entry.name);
       if (entry.isDirectory() && /^[\w-]+$/.test(entry.name) && !ignored.has(entry.name) &&
         relative !== testDirectory) {
@@ -100,72 +102,46 @@ async function discoverSources(root: string, testDirectory: string) {
   return { modules: modules.sort(), complete: true };
 }
 
-function coverageOf(candidate: UnitCandidate, suite: SuiteTest[], complete: boolean): Coverage {
+export function coverageOf(candidate: UnitCandidate, suite: SuiteTest[], complete: boolean): Coverage {
+  if (candidate.assertion === null) {
+    return { status: "unknown", reason: "The case lacks an independent written expectation.", files: [] };
+  }
   const files: string[] = [];
   const covered: string[] = [];
   for (const test of suite) {
-    const imports = /\bimport[ \t\r\n]+([^;"']+?)[ \t\r\n]+from[ \t\r\n]+["'](\.[^"']+)["']/g;
-    for (const match of test.source.matchAll(imports)) {
-      const [, bindings, specifier] = match;
-      if (!bindings || !specifier) continue;
-      const target = path.posix.normalize(path.posix.join(path.posix.dirname(test.file), specifier))
-        .replace(/\.[cm]?[jt]s$/, "");
-      if (target !== candidate.evidence.file.replace(/\.ts$/, "")) continue;
-      const binding = new RegExp(`(?:[{,]\\s*)${escapeRegex(candidate.functionName)}(?:\\s+as\\s+([\\w$]+))?\\s*(?=[,}])`)
-        .exec(bindings);
-      if (!binding && !bindings.includes("*")) continue;
-      files.push(test.file);
-      if (!binding || candidate.assertion === null) continue;
-      const local = escapeRegex(binding[1] ?? candidate.functionName);
-      const input = escapeRegex(String(candidate.argument));
-      const expected = escapeRegex(String(candidate.expected));
-      if (new RegExp(`\\bassert\\.(?:strictEqual|equal)\\(\\s*${local}\\(\\s*${input}\\s*\\)\\s*,\\s*${expected}\\s*(?:[,)]|$)`).test(test.source)) {
-        covered.push(test.file);
-      }
-    }
+    const evidence = inspectTestReference(test.file, test.source, candidate);
+    if (evidence.referenced) files.push(test.file);
+    if (evidence.covered) covered.push(test.file);
   }
   if (covered.length) {
-    return { status: "covered", reason: "Found an apparent direct assertion for this case.", files: [...new Set(covered)] };
+    return { status: "covered", reason: "Found an active direct assertion for this exact case.", files: covered };
   }
-  if (!complete || files.length || candidate.assertion === null) {
+  if (!complete || files.length) {
     return {
       status: "unknown",
       reason: files.length
         ? "The suite imports the function or module, but an equivalent assertion could not be established."
-        : !complete ? "Some suite files could not be inspected." : "The case lacks an independent written expectation.",
-      files: [...new Set(files)],
+        : "Some suite files could not be inspected.",
+      files,
     };
   }
   return { status: "uncovered", reason: "No direct assertion or function import found in the inspected suite.", files: [] };
 }
 
-function rank(candidate: RankedCandidate): number {
-  if (candidate.coverage.status === "uncovered" && candidate.assertion !== null) {
-    return typeof candidate.expected === "boolean" ? 0 : 1;
-  }
-  return candidate.coverage.status === "covered" ? 2 : 3;
-}
-
-export async function discoverUnitCandidates(
-  root: string, testDirectory: string, suiteFiles: string[], completeSuite: boolean,
+export async function discoverCodeEvidence(
+  root: string, testDirectory: string, suiteFiles: string[], completeSuite: boolean, scope: string,
 ) {
-  const { modules, complete } = await discoverSources(root, testDirectory);
+  const { modules, complete } = await discoverSources(root, testDirectory, scope);
   const suite: SuiteTest[] = [];
   for (const file of suiteFiles.slice(0, 100)) {
     const source = await readSmallFile(root, file);
     if (source !== undefined) suite.push({ file, source });
   }
   const completeCoverage = completeSuite && suite.length === suiteFiles.length;
-  const candidates: RankedCandidate[] = [];
+  const sources: SuiteTest[] = [];
   for (const file of modules) {
     const source = await readSmallFile(root, file);
-    if (source === undefined) continue;
-    for (const candidate of candidatesFromSource(file, source)) {
-      candidates.push({ ...candidate, coverage: coverageOf(candidate, suite, completeCoverage) });
-    }
+    if (source !== undefined) sources.push({ file, source });
   }
-  const ranked = candidates.sort((a, b) => rank(a) - rank(b)).slice(0, 3);
-  const best = ranked[0];
-  const selected = best?.coverage.status === "uncovered" && best.assertion !== null ? best : undefined;
-  return { candidates: ranked, selected, complete, modulesInspected: modules.length, testsInspected: suite.length };
+  return { sources, suite, complete: complete && sources.length === modules.length, completeCoverage };
 }

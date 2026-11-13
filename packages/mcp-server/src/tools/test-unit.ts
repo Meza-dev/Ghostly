@@ -7,14 +7,16 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { integrationCaseFromSource } from "./integration-discovery.js";
-import { candidatesFromSource, discoverUnitCandidates, modulePattern, readSmallFile } from "./unit-discovery.js";
+import { nodeTestReporter, readNodeTestResult } from "./node-test-result.js";
+import { candidatesFromSource, modulePattern, readSmallFile, type SupportedCase } from "./unit-discovery.js";
 
 const execFileAsync = promisify(execFile);
 const testScriptPattern = /^tsx --test ((?:[\w-]+\/)*[\w-]+)\/\*\.test\.ts$/;
 const testFilePattern = /^[\w.-]+\.test\.ts$/;
 
 type RunResult = {
-  status: "passed" | "failed" | "error";
+  status: "passed" | "failed" | "error" | "no_tests";
+  effectiveTests: number;
   durationMs: number;
   output: string;
 };
@@ -37,7 +39,7 @@ export function hasCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
-async function regularFile(root: string, file: string): Promise<boolean> {
+export async function regularFile(root: string, file: string): Promise<boolean> {
   try {
     return (await lstat(file)).isFile() && inside(root, await realpath(file));
   } catch (error) {
@@ -50,15 +52,15 @@ export async function runTests(
   root: string, files: string[], overrides: Record<string, string> = {},
 ): Promise<RunResult> {
   const startedAt = Date.now();
-  const args = ["--import", "tsx", "--test", ...files];
+  const args = ["--import", "tsx", "--test", nodeTestReporter, ...files];
   const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !/^ghost/i.test(key) && key !== "NODE_OPTIONS"),
+    Object.entries(process.env).filter(([key]) => !/^ghost/i.test(key) && !["NODE_OPTIONS", "NODE_TEST_CONTEXT"].includes(key)),
   );
   try {
-    const { stdout } = await execFileAsync(process.execPath, args, {
+    const { stdout, stderr } = await execFileAsync(process.execPath, args, {
       cwd: root, env: { ...env, ...overrides }, timeout: 30_000, maxBuffer: 512 * 1024, windowsHide: true,
     });
-    return { status: "passed", durationMs: Date.now() - startedAt, output: stdout };
+    return { ...readNodeTestResult(0, stdout, stderr), durationMs: Date.now() - startedAt };
   } catch (error) {
     const failure = error as Error & {
       code?: number | string;
@@ -66,9 +68,8 @@ export async function runTests(
       stderr?: string;
     };
     return {
-      status: failure.code === 1 && /^not ok /m.test(failure.stdout ?? "") ? "failed" : "error",
+      ...readNodeTestResult(failure.code, failure.stdout ?? "", failure.stderr ?? "", failure.message),
       durationMs: Date.now() - startedAt,
-      output: [failure.stdout, failure.stderr].filter(Boolean).join("\n") || failure.message,
     };
   }
 }
@@ -79,14 +80,31 @@ export async function loadTestWorkspace() {
   if (!await regularFile(root, manifestPath)) {
     return { ok: false, reason: "The MCP workspace must have a package.json file." } as const;
   }
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+  const manifestText = await readFile(manifestPath, "utf8");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(manifestText);
+  } catch {
+    return { ok: false, reason: "The workspace package.json must contain valid JSON." } as const;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, reason: "The workspace package.json must be a JSON object." } as const;
+  }
+  const manifest = parsed as {
     scripts?: { test?: string };
     devDependencies?: Record<string, string>;
     dependencies?: Record<string, string>;
   };
   const testDirectory = testScriptPattern.exec(manifest.scripts?.test ?? "")?.[1];
+  const detected = {
+    runtime: "Node.js",
+    declaredRunners: ["tsx", "vitest", "jest", "playwright", "@playwright/test"]
+      .filter((name) => manifest.devDependencies?.[name] || manifest.dependencies?.[name]),
+    testDirectory: testDirectory ?? null,
+    hasTestScript: typeof manifest.scripts?.test === "string",
+  };
   if (!testDirectory || !(manifest.devDependencies?.tsx || manifest.dependencies?.tsx)) {
-    return { ok: false, reason: "Expected a declared tsx dependency and a test script such as tsx --test test/*.test.ts." } as const;
+    return { ok: false, detected, reason: "Expected a declared tsx dependency and a test script such as tsx --test test/*.test.ts." } as const;
   }
   const directory = path.join(root, testDirectory);
   const directoryInfo = await lstat(directory).catch((error: unknown) => {
@@ -94,67 +112,32 @@ export async function loadTestWorkspace() {
     throw error;
   });
   if (!directoryInfo?.isDirectory() || !inside(root, await realpath(directory))) {
-    return { ok: false, reason: "The configured test directory must already exist inside the workspace." } as const;
+    return { ok: false, detected, reason: "The configured test directory must already exist inside the workspace." } as const;
   }
-  return { ok: true, root, manifestPath, manifest, testDirectory, directory } as const;
+  return { ok: true, root, manifestPath, manifestText, manifest, testDirectory, directory } as const;
 }
 
-async function testWorkflow(tool: string, args: TestInput) {
-  const startedAt = Date.now();
-  const integration = tool === "ghostly_test_integration";
-  const unsupported = (reason: string) => ({ tool, status: "unsupported", reason });
-  if (args.module === undefined ? tool !== "ghostly_init" : !modulePattern.test(args.module)) {
-    return unsupported("Provide a workspace-relative TypeScript module such as src/discount.ts.");
-  }
-  const workspace = await loadTestWorkspace();
-  if (!workspace.ok) return unsupported(workspace.reason);
-  const { root, manifestPath, testDirectory, directory } = workspace;
-  const entries = await readdir(directory, { withFileTypes: true });
+export type TestWorkspace = Extract<Awaited<ReturnType<typeof loadTestWorkspace>>, { ok: true }>;
+type CodeTestType = "unit" | "integration";
+export type CodeCase = SupportedCase & { dependency?: { file: string; exportedName: string } };
+export type VerifyPlan = () => Promise<Array<{ kind: string; files: string[] }> | undefined>;
+
+export async function inspectTestSuite(workspace: TestWorkspace) {
+  const entries = await readdir(workspace.directory, { withFileTypes: true });
   const suiteEntries = entries.filter((entry) => entry.name.endsWith(".test.ts"));
-  const validSuiteEntries = suiteEntries.filter((entry) => entry.isFile() && testFilePattern.test(entry.name));
-  const discovery = args.module === undefined
-    ? await discoverUnitCandidates(
-      root, testDirectory, validSuiteEntries.map((entry) => `${testDirectory}/${entry.name}`).sort(),
-      validSuiteEntries.length === suiteEntries.length,
-    )
-    : undefined;
-  const discoveryReport = discovery && {
-    candidates: discovery.candidates,
-    modulesInspected: discovery.modulesInspected,
-    testsInspected: discovery.testsInspected,
-  };
-  if (discovery && (args.mode === "plan" || !discovery.selected || !discovery.complete)) {
-    const reason = !discovery.complete ? "The repository exceeds the supported discovery budget. Specify a module."
-      : !discovery.selected ? "No uncovered case with an independent written expectation could be confirmed." : undefined;
-    return {
-      tool, status: args.mode === "plan" ? "planned" : "needs_input", ...discoveryReport,
-      reason, changedFiles: [], durationMs: Date.now() - startedAt,
-    };
-  }
-  const module = args.module ?? discovery?.selected?.evidence.file;
-  if (!module) return unsupported("No supported module was selected.");
-  const moduleFile = path.join(root, module);
-  if (!await regularFile(root, moduleFile)) {
-    return unsupported("The module must be a regular TypeScript file inside the workspace.");
-  }
-  const source = await readSmallFile(root, module);
-  const integrationCase = integration && source ? integrationCaseFromSource(module, source) : undefined;
-  if (integration && (!integrationCase ||
-    !await regularFile(root, path.join(root, integrationCase.dependency.file)))) {
-    return unsupported("Expected an @integrationExample and a direct named call to a separate relative TypeScript module inside the workspace.");
-  }
-  const candidate = integrationCase ?? discovery?.selected ?? (source &&
-    candidatesFromSource(module, source).find((item) => item.assertion !== null));
-  if (!candidate || candidate.assertion === null) {
-    return unsupported("Expected a numeric @example or an explicitly documented inclusive boolean boundary on an exported function.");
-  }
+  const files = suiteEntries.filter((entry) => entry.isFile() && testFilePattern.test(entry.name))
+    .map((entry) => `${workspace.testDirectory}/${entry.name}`).sort();
+  return { entries, files, complete: files.length === suiteEntries.length };
+}
+
+export function prepareCodeTest(workspace: TestWorkspace, candidate: CodeCase, testType: CodeTestType) {
   const { functionName, behavior, assertion } = candidate;
-  const relativeImport = path.relative(directory, moduleFile).split(path.sep).join("/");
+  const module = candidate.evidence.file;
+  const relativeImport = path.relative(workspace.directory, path.join(workspace.root, module)).split(path.sep).join("/");
   const importPath = relativeImport.startsWith("../") ? relativeImport : `./${relativeImport}`;
-  const suffix = integration ? ".ghostly.integration.test.ts" : ".ghostly.test.ts";
+  const suffix = testType === "integration" ? ".ghostly.integration.test.ts" : ".ghostly.test.ts";
   const fileName = `${path.basename(module, ".ts")}${suffix}`;
-  const testFile = `${testDirectory}/${fileName}`;
-  const outputFile = path.join(directory, fileName);
+  const testFile = `${workspace.testDirectory}/${fileName}`;
   const generated = [
     'import assert from "node:assert/strict";',
     'import { test } from "node:test";',
@@ -165,39 +148,61 @@ async function testWorkflow(tool: string, args: TestInput) {
     "});",
     "",
   ].join("\n");
+  return { fileName, generated, testFile, command: `node --import tsx --test ${testFile}` };
+}
+
+export function dependencyInstalled(workspace: TestWorkspace, dependency: string): boolean {
+  try {
+    createRequire(workspace.manifestPath).resolve(dependency);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function runCodeTest(
+  tool: string, mode: TestInput["mode"], workspace: TestWorkspace,
+  suite: Awaited<ReturnType<typeof inspectTestSuite>>, candidate: CodeCase, testType: CodeTestType,
+  startedAt = Date.now(), verifyPlan?: VerifyPlan,
+) {
+  const unsupported = (reason: string) => ({ tool, status: "unsupported", reason });
+  const { root, directory } = workspace;
+  const { fileName, testFile, command, generated } = prepareCodeTest(workspace, candidate, testType);
+  const outputFile = path.join(directory, fileName);
   const proposal = {
     tool,
     roles: { analysis: "tsx + node:test", planning: "Independent expectation documented in source" },
-    ...discoveryReport,
     case: candidate,
     testFile,
-    command: `node --import tsx --test ${testFile}`,
+    command,
   };
-  if (args.mode === "plan") {
+  if (mode === "plan") {
     return { ...proposal, status: "planned", changedFiles: [], durationMs: Date.now() - startedAt };
   }
 
-  try {
-    createRequire(manifestPath).resolve("tsx");
-  } catch {
+  if (!dependencyInstalled(workspace, "tsx")) {
     return unsupported("Install the project's declared tsx dependency before applying the plan.");
   }
-  const priorFile = entries.find((entry) => entry.name.toLowerCase() === fileName.toLowerCase());
+  const priorFile = suite.entries.find((entry) => entry.name.toLowerCase() === fileName.toLowerCase());
   if (priorFile && (!priorFile.isFile() || priorFile.name !== fileName ||
     await readFile(outputFile, "utf8") !== generated)) {
     return unsupported(`The target ${testFile} already exists with different content. It was preserved.`);
   }
-  const suiteFiles = validSuiteEntries.filter((entry) => entry.name !== fileName)
-    .map((entry) => `${testDirectory}/${entry.name}`).sort();
-  const baseline = validSuiteEntries.length !== suiteEntries.length
+  const suiteFiles = suite.files.filter((file) => file !== testFile);
+  const baseline = !suite.complete
     ? { status: "unavailable", reason: "The suite contains test entries outside the supported file convention." }
     : suiteFiles.length
       ? await runTests(root, suiteFiles)
       : { status: "empty" };
 
-  if (!inside(root, await realpath(directory))) {
+  if (!verifyPlan && !inside(root, await realpath(directory))) {
     return unsupported("The test directory moved outside the workspace during the baseline.");
   }
+  const drift = await verifyPlan?.();
+  if (drift) return {
+    ...proposal, status: "plan_changed", reason: "The workspace changed before generation. Create and confirm a new briefing.",
+    drift, baseline, changedFiles: [],
+  };
   if (!priorFile) {
     try {
       await writeFile(outputFile, generated, { flag: "wx" });
@@ -222,9 +227,37 @@ async function testWorkflow(tool: string, args: TestInput) {
   };
 }
 
+export async function testWorkflow(tool: string, args: TestInput) {
+  const startedAt = Date.now();
+  const integration = tool === "ghostly_test_integration";
+  const unsupported = (reason: string) => ({ tool, status: "unsupported", reason });
+  const module = args.module;
+  if (!module || !modulePattern.test(module)) {
+    return unsupported("Provide a workspace-relative TypeScript module such as src/discount.ts.");
+  }
+  const workspace = await loadTestWorkspace();
+  if (!workspace.ok) return unsupported(workspace.reason);
+  const { root } = workspace;
+  if (!await regularFile(root, path.join(root, module))) {
+    return unsupported("The module must be a regular TypeScript file inside the workspace.");
+  }
+  const source = await readSmallFile(root, module);
+  const integrationCase = integration && source ? integrationCaseFromSource(module, source) : undefined;
+  if (integration && (!integrationCase ||
+    !await regularFile(root, path.join(root, integrationCase.dependency.file)))) {
+    return unsupported("Expected an @integrationExample and a direct named call to a separate relative TypeScript module inside the workspace.");
+  }
+  const candidate = integrationCase ?? (source && candidatesFromSource(module, source)
+    .find((item) => item.assertion !== null));
+  if (!candidate || candidate.assertion === null) {
+    return unsupported("Expected a numeric @example or an explicitly documented inclusive boolean boundary on an exported function.");
+  }
+  const suite = await inspectTestSuite(workspace);
+  return runCodeTest(tool, args.mode, workspace, suite, candidate, integration ? "integration" : "unit", startedAt);
+}
+
 export function registerTestWorkflowTools(server: McpServer): void {
   for (const [name, description] of [
-    ["ghostly_init", "Discover and rank TypeScript unit tests in the workspace, or scope to a module. Apply creates and runs the highest-priority supported uncovered case."],
     ["ghostly_test_unit", "Plan or apply a unit test from an independent written expectation in a TypeScript module."],
     ["ghostly_test_integration", "Plan or apply a TypeScript integration test for a documented operation and its direct local module dependency."],
   ] as const) {

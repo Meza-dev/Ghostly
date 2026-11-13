@@ -23,11 +23,11 @@ const flow = {
     { action: "fill", testId: "login-password", value: "fixture-password" },
     { action: "click", testId: "login-submit" },
     { action: "click", testId: "cliente-crear" },
-    { action: "fill", testId: "cliente-form-nombre", value: "Ghostly Persistence Fixture" },
+    { action: "fill", testId: "cliente-form-nombre", value: "Ghostly Persistence Fixture {{runId}}" },
     { action: "click", testId: "cliente-form-guardar" },
   ],
   acknowledgement: { testId: "toast", text: "Cliente creado con éxito." },
-  persistence: { testId: "clientes-table", text: "Ghostly Persistence Fixture" },
+  persistence: { testId: "clientes-table", text: "Ghostly Persistence Fixture {{runId}}" },
 };
 
 test("MCP freezes one browser test against three actual Playground variants", async (t) => {
@@ -71,23 +71,29 @@ test("MCP freezes one browser test against three actual Playground variants", as
     });
     return `http://127.0.0.1:${listener.address().port}`;
   }
-  async function call(mode, baseUrl) {
+  async function invoke(name, args) {
     const result = await client.callTool({
-      name: "ghostly_test_e2e",
-      arguments: { mode, baseUrl, ...flow },
+      name,
+      arguments: args,
     });
     assert.equal(result.isError, undefined, JSON.stringify(result));
     return JSON.parse(result.content[0].text);
   }
-  async function reset(baseUrl, fakeSave = false) {
+  const call = (mode, baseUrl) => invoke("ghostly_test_e2e", { mode, baseUrl, ...flow });
+  async function reset(baseUrl) {
     assert.ok((await fetch(`${baseUrl}/api/reset`, { method: "POST" })).ok);
-    if (fakeSave) {
-      const response = await fetch(`${baseUrl}/api/config`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nonPersistingSave: true }),
-      });
-      assert.ok(response.ok);
+  }
+  async function withClientsPage(baseUrl, inspect) {
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(`${baseUrl}/login`);
+      await page.getByTestId("login-user").fill("fixture-user");
+      await page.getByTestId("login-password").fill("fixture-password");
+      await page.getByTestId("login-submit").click();
+      await inspect(page);
+    } finally {
+      await browser.close();
     }
   }
 
@@ -99,36 +105,57 @@ test("MCP freezes one browser test against three actual Playground variants", as
   assert.equal(plan.testFile, testFile);
   assert.deepEqual(plan.changedFiles, []);
   await assert.rejects(readFile(absolute), { code: "ENOENT" });
+  const unbound = await invoke("ghostly_test_e2e", {
+    mode: "plan", baseUrl: healthy, ...flow,
+    persistence: { ...flow.persistence, text: "Other fixture {{runId}}" },
+  });
+  assert.equal(unbound.status, "unsupported");
+
+  const request = { testType: "e2e", e2e: { baseUrl: healthy, ...flow } };
+  const brief = await invoke("ghostly_init", { mode: "plan", ...request });
+  assert.equal(brief.status, "ready", JSON.stringify(brief));
+  assert.deepEqual(brief.options[0].plannedFiles, [testFile]);
+  const approval = { mode: "apply", selection: "A", planToken: brief.planToken };
+  const changedRoute = await invoke("ghostly_init", {
+    ...approval, ...request, e2e: { ...request.e2e, route: "/clientes" },
+  });
+  assert.equal(changedRoute.status, "plan_changed");
+  await assert.rejects(readFile(absolute), { code: "ENOENT" });
 
   await reset(healthy);
-  const passed = await call("apply", healthy);
+  const passed = await invoke("ghostly_init", { ...approval, ...request });
   assert.equal(passed.status, "passed", JSON.stringify(passed));
+  assert.equal(passed.selection, "A");
   assert.deepEqual(passed.changedFiles, [testFile]);
   const frozen = await readFile(absolute, "utf8");
   assert.ok(!frozen.includes(healthy));
   assert.match(frozen, /process\.env\.GHOSTLY_E2E_BASE_URL/);
+  assert.match(frozen, /const runId = randomUUID\(\)/);
 
-  await reset(healthy, true);
+  const clients = await (await fetch(`${healthy}/api/clientes`)).json();
+  const oldRecord = clients.find(({ nombre }) => /^Ghostly Persistence Fixture [a-f0-9-]{36}$/.test(nombre));
+  assert.ok(oldRecord, "The first test must leave a runtime-generated record behind");
+  const config = await fetch(`${healthy}/api/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nonPersistingSave: true }),
+  });
+  assert.ok(config.ok);
   const failed = await call("apply", healthy);
   assert.equal(failed.status, "failed", JSON.stringify(failed));
   assert.match(failed.verification.output, /PERSISTENCE_ASSERTION/);
   assert.match(failed.verification.output, /ERR_ASSERTION/);
   assert.deepEqual(failed.changedFiles, []);
   assert.equal(await readFile(absolute, "utf8"), frozen);
+  await withClientsPage(healthy, async (page) => {
+    await page.getByTestId("clientes-table").getByText(oldRecord.nombre, { exact: true }).waitFor({ state: "visible" });
+  });
 
   const alternate = await start(true);
   await reset(alternate);
-  const browser = await chromium.launch();
-  try {
-    const page = await browser.newPage();
-    await page.goto(`${alternate}/login`);
-    await page.getByTestId("login-user").fill("fixture-user");
-    await page.getByTestId("login-password").fill("fixture-password");
-    await page.getByTestId("login-submit").click();
+  await withClientsPage(alternate, async (page) => {
     assert.equal(await page.getByTestId("cliente-crear").textContent(), "Agregar cliente");
-  } finally {
-    await browser.close();
-  }
+  });
   const changedUi = await call("apply", alternate);
   assert.equal(changedUi.status, "passed", JSON.stringify(changedUi));
   assert.deepEqual(changedUi.changedFiles, []);
@@ -142,5 +169,5 @@ test("MCP freezes one browser test against three actual Playground variants", as
   }).catch((error) => {
     assert.fail([error.message, error.stdout, error.stderr].filter(Boolean).join("\n"));
   });
-  assert.match(replay.stdout, /^ok 1 - client-persistence/m);
+  assert.match(replay.stdout, /client-persistence/);
 });

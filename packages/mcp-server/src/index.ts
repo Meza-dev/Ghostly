@@ -8,6 +8,7 @@ import { registerListGhostlyProjectsTool } from "./tools/list-ghostly-projects.j
 import { registerSubmitPlanTool } from "./tools/submit-plan.js";
 import { registerGetRunTool } from "./tools/get-run.js";
 import { registerTestWorkflowTools } from "./tools/test-unit.js";
+import { registerTestBriefingTool } from "./tools/test-briefing.js";
 import { registerE2ETestTool } from "./tools/test-e2e.js";
 import { registerSecurityAuditTool } from "./tools/security-audit.js";
 
@@ -149,6 +150,7 @@ registerSubmitPlanTool(server);
 registerListGhostlyProjectsTool(server);
 registerGetRunTool(server);
 registerTestWorkflowTools(server);
+registerTestBriefingTool(server);
 registerE2ETestTool(server);
 registerSecurityAuditTool(server);
 
